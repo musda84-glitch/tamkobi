@@ -307,8 +307,14 @@ def test_verified_identity_lists_link_only_after_accept(client, db):
     assert verify_token not in str(verify_row)
     queued = verify_mail
     assert queued["status"] == "pending"
-    confirmed = client.get(f"/api/public/b2b/verify-email/{verify_token}")
+    preview_mail = client.get(f"/api/public/b2b/verify-email/{verify_token}")
+    assert preview_mail.status_code == 200, preview_mail.text
+    assert preview_mail.json()["status"] == "pending"
+    assert db.b2b_identities.docs[0]["email_verified_at"] is None
+    confirmed = client.post(f"/api/public/b2b/verify-email/{verify_token}")
     assert confirmed.status_code == 200, confirmed.text
+    again_mail = client.post(f"/api/public/b2b/verify-email/{verify_token}")
+    assert again_mail.status_code == 400
     listed = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {token}"})
     assert listed.status_code == 200, listed.text
     assert _names(listed.json()) == {"Firma A", "<script>Firma B</script>"}
@@ -637,9 +643,67 @@ def test_change_password_cannot_take_over_identity(db, monkeypatch):
     assert any(row.get("accepted_at") and row.get("contact_id") == "cA" for row in db.b2b_link_acceptances.docs)
 
 
+def test_supplier_contact_password_does_not_accept_link(client, db, monkeypatch):
+    """Tedarikçi kurban e-postasına kendi şifresini koyup girince bağ kabul edilmez."""
+    import re
+    db.b2b_identities.docs.append(_identity_row())
+    for row in db.contacts.docs:
+        if row["_id"] == "cB":
+            row["b2b_password_hash"] = HASH_B
+    marked = []
+
+    async def spy(*_a, **_k):
+        marked.append(True)
+
+    monkeypatch.setattr(b2b_identity, "_mark_accepted", spy)
+    stolen = _login(client, password=PWD_B)
+    assert stolen.status_code == 200, stolen.text
+    assert _names(stolen.json()) == {"Firma B"}
+    assert marked == []
+    stolen_token = stolen.json()["select_token"]
+    monkeypatch.undo()
+    assert not any(
+        row.get("contact_id") == "cB" and row.get("accepted_at") for row in db.b2b_link_acceptances.docs
+    )
+
+    victim = _login(client)
+    assert victim.status_code == 200, victim.text
+    assert _names(victim.json()) == {"Firma A"}
+    token = victim.json()["select_token"]
+    started = client.post(
+        "/api/public/b2b/verify-email/start",
+        headers={"Authorization": f"B2bSession {token}"},
+    )
+    assert started.status_code == 200, started.text
+    mail = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_verify_email")
+    raw = re.search(r"verify-email/([A-Za-z0-9_\-]+)", mail["html"]).group(1)
+    preview = client.get(f"/api/public/b2b/verify-email/{raw}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["status"] == "pending"
+    assert db.b2b_identities.docs[0]["email_verified_at"] is None
+    confirmed = client.post(f"/api/public/b2b/verify-email/{raw}")
+    assert confirmed.status_code == 200, confirmed.text
+
+    again = _login(client)
+    assert again.status_code == 200, again.text
+    assert _names(again.json()) == {"Firma A"}
+    held = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {stolen_token}"})
+    assert held.status_code == 200, held.text
+    assert "Firma B" not in _names(held.json())
+    assert not any(
+        row.get("contact_id") == "cB" and row.get("accepted_at") for row in db.b2b_link_acceptances.docs
+    )
+
+
 def test_accept_link_post_is_atomic_and_expires(client, db):
     import asyncio
     import re
+    from pathlib import Path
+    src = Path(b2b_identity.__file__).read_text(encoding="utf-8")
+    body = src[src.index("async def accept_supplier_link"):src.index("async def start_email_verification")]
+    assert "update_one_atomic" in body
+    assert "find_one_and_update" not in body
+    assert '"_id": row["_id"]' in body
     db.b2b_identities.docs.append(_identity_row())
     contact = next(row for row in db.contacts.docs if row["_id"] == "cB")
     upd = {"b2b_login_email": "ali@example.com", "b2b_enabled": True}

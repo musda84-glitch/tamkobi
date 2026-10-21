@@ -234,13 +234,18 @@ def _contact_password_matches(password: str, contact: dict) -> bool:
 
 
 def _link_allowed(identity: dict, contact: dict, *, accepted: bool) -> bool:
-    """Doğrulanmış kimlik yalnız kabul edilmiş bağı görür. Doğrulanmamış yalnız şifresi tutanı."""
+    """Doğrulanmış kimlik yalnız kabul edilmiş bağı görür.
+
+    Doğrulanmamış oturum, şifresi tutan cariyi bu istekte gösterebilir.
+    Bu eşleşme kabul değildir. Doğrulama sonrası eski oturum kabul
+    edilmemiş cariyi taşımaz.
+    """
     verified = bool(identity.get("email_verified_at"))
     pw = _contact_password_matches(str(identity.get("_password") or ""), contact)
     cid = str(contact.get("_id") or "")
     sess = cid in {str(item) for item in (identity.get("_matched_contact_ids") or [])}
     if verified:
-        return accepted or pw or sess
+        return accepted or pw
     return pw or sess
 
 
@@ -605,7 +610,13 @@ def _burn_unknown(password: str) -> None:
     verify_password(password, _DUMMY_HASH)
 
 
-async def _accept_matches(db, email: str, meta: list) -> None:
+async def _accept_matches(db, email: str, meta: list, *, identity_password_ok: bool) -> None:
+    """Kabul yalnız kimlik şifresi doğrulanmışsa yazılır.
+
+    Tedarikçinin seçtiği cari şifresinin eşleşmesi kabul sayılmaz.
+    """
+    if not identity_password_ok:
+        return
     for row in meta:
         if not row.get("password_match"):
             continue
@@ -639,7 +650,6 @@ async def authenticate(db, req: dict, request: Request) -> dict:
                 if detail:
                     raise HTTPException(status_code=403, detail=detail)
                 await _reject_credentials(db, ip_id, acct_id, ident, request)
-            await _accept_matches(db, ident, meta)
             return await _finish_login(
                 db, request, ident, identity=None, email=ident, links=links,
                 ip_id=ip_id, acct_id=acct_id,
@@ -669,7 +679,7 @@ async def authenticate(db, req: dict, request: Request) -> dict:
             if not await _contacts_for_login_email(db, ident) and not await _legacy_email_contacts(db, ident):
                 _burn_unknown(password)
             await _reject_credentials(db, ip_id, acct_id, ident, request)
-        await _accept_matches(db, ident, meta)
+        await _accept_matches(db, ident, meta, identity_password_ok=bool(identity_ok))
         bound = identity if identity and (identity_ok or not verified) else None
         return await _finish_login(
             db, request, ident, identity=bound, email=ident, links=links,
@@ -689,7 +699,7 @@ async def authenticate(db, req: dict, request: Request) -> dict:
             raise HTTPException(status_code=403, detail=detail)
         _fail_log(ident, request)
         raise HTTPException(status_code=401, detail=_FAIL)
-    await _accept_matches(db, identity.get("email"), meta)
+    await _accept_matches(db, identity.get("email"), meta, identity_password_ok=True)
     return await _finish_login(
         db, request, ident, identity=identity, email=identity.get("email") or "",
         links=links, ip_id=ip_id, acct_id=acct_id,
@@ -1048,27 +1058,31 @@ async def preview_supplier_link(db, token: str) -> dict:
 
 
 async def accept_supplier_link(db, token: str) -> dict:
-    """POST tek kullanımlık. token_hash ve token_used_at boş kaydı atomik tüketir."""
+    """POST tek kullanımlık. MySQL update_one_atomic kaydı kilit altında tüketir."""
     raw = str(token or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
     digest = token_digest(raw)
     now = _iso()
-    updated = await db.b2b_link_acceptances.find_one_and_update(
-        {"token_hash": digest, "token_used_at": None, "expires_at": {"$gt": now}},
+    row = await db.b2b_link_acceptances.find_one({"token_hash": digest})
+    if not row or row.get("token_used_at") or not row.get("_id"):
+        raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    expires = row.get("expires_at")
+    if not expires:
+        raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    try:
+        if _parse_dt(expires) <= _now():
+            raise HTTPException(status_code=400, detail="Onay bağlantısının süresi doldu.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
+    result = await db.b2b_link_acceptances.update_one_atomic(
+        {"_id": row["_id"], "token_hash": digest, "token_used_at": None, "expires_at": {"$gt": now}},
         {"$set": {"accepted_at": now, "token_used_at": now, "token_hash": None}},
     )
-    if updated:
+    if getattr(result, "matched_count", 0):
         return {"status": "success", "message": "Tedarikçi bağlantısı onaylandı."}
-    row = await db.b2b_link_acceptances.find_one({"token_hash": digest})
-    if row and row.get("expires_at"):
-        try:
-            if _parse_dt(row.get("expires_at")) <= _now():
-                raise HTTPException(status_code=400, detail="Onay bağlantısının süresi doldu.")
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
     raise HTTPException(status_code=400, detail="Onay bağlantısı geçersiz.")
 
 
@@ -1123,7 +1137,7 @@ async def start_email_verification(db, request: Request, req: Optional[dict] = N
     return {"status": "ok", "message": "Doğrulama bağlantısı e-posta adresinize gönderildi."}
 
 
-async def confirm_email_verification(db, token: str) -> dict:
+async def _verification_row(db, token: str) -> dict:
     row = await db.b2b_email_verifications.find_one({"_id": token_digest(token)})
     if not row or row.get("used_at"):
         raise HTTPException(status_code=400, detail="Doğrulama bağlantısı geçersiz.")
@@ -1134,12 +1148,33 @@ async def confirm_email_verification(db, token: str) -> dict:
         raise
     except Exception:
         raise HTTPException(status_code=400, detail="Doğrulama bağlantısı geçersiz.")
+    return row
+
+
+async def preview_email_verification(db, token: str) -> dict:
+    """GET doğrulamaz. Onay sayfasının göstereceği bilgiyi döner."""
+    row = await _verification_row(db, token)
+    return {
+        "status": "pending",
+        "message": "Bu bağlantı e-posta adresini doğrulamak içindir. Onaylamak için formu gönderin.",
+        "expires_at": row.get("expires_at") or "",
+    }
+
+
+async def confirm_email_verification(db, token: str) -> dict:
+    """POST e-postayı doğrular. GET bu fonksiyonu çağırmaz."""
+    row = await _verification_row(db, token)
     identity = await db.b2b_identities.find_one({"_id": row.get("identity_id")})
     if not identity or _norm_email(identity.get("email")) != _norm_email(row.get("email")):
         raise HTTPException(status_code=400, detail="Doğrulama bağlantısı geçersiz.")
     now = _iso()
+    result = await db.b2b_email_verifications.update_one_atomic(
+        {"_id": row["_id"], "used_at": None},
+        {"$set": {"used_at": now}},
+    )
+    if not getattr(result, "matched_count", 0):
+        raise HTTPException(status_code=400, detail="Doğrulama bağlantısı geçersiz.")
     await db.b2b_identities.update_one({"_id": identity["_id"]}, {"$set": {"email_verified_at": now}})
-    await db.b2b_email_verifications.update_one({"_id": row["_id"]}, {"$set": {"used_at": now}})
     return {"status": "success", "message": "E-posta doğrulandı."}
 
 
@@ -1242,7 +1277,7 @@ async def b2b_verify_email_start(request: Request):
 
 @router.get("/public/b2b/verify-email/{token}")
 async def b2b_verify_email_get(token: str):
-    return await confirm_email_verification(get_db(), token)
+    return await preview_email_verification(get_db(), token)
 
 
 @router.post("/public/b2b/verify-email/{token}")
