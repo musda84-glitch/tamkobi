@@ -247,7 +247,13 @@ def db(monkeypatch):
     prev_tickets = (support_tickets._db, support_tickets._current_user)
     prev_notify = event_notify._db
     import storage_manager
+    import db_relocate
+    import platform_notices
+    import public_sites
     prev_storage = storage_manager._db
+    prev_sites = public_sites._db
+    prev_notices = platform_notices._db
+    prev_reloc = db_relocate._db
     store.init(fake)
     saas.init(fake, None)
     saas.invalidate()
@@ -258,6 +264,9 @@ def db(monkeypatch):
     support_tickets.init(fake, prev_tickets[1])
     event_notify.init(fake)
     storage_manager._db = fake
+    public_sites.init(fake)
+    platform_notices.init(fake)
+    db_relocate.init(fake)
     monkeypatch.setattr(comm_service, "encrypt", lambda v: "enc:" + (v or ""))
     monkeypatch.setattr(comm_service, "decrypt", lambda v: (v or "").removeprefix("enc:"))
     yield fake
@@ -272,6 +281,9 @@ def db(monkeypatch):
     support_tickets.init(prev_tickets[0], prev_tickets[1])
     event_notify.init(prev_notify)
     storage_manager._db = prev_storage
+    public_sites.init(prev_sites)
+    platform_notices.init(prev_notices)
+    db_relocate.init(prev_reloc)
     saas.invalidate()
 
 
@@ -916,6 +928,54 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
             "details": {"secret": "LEAK-AUDIT-SECRET", "token": "LEAK-TOKEN", "path": "/ok"},
             "ip": "",
         })
+        await db.platform_settings.insert_one({
+            "_id": "platform",
+            "brand_name": "TamKobi",
+            "public_url": "https://tamkobi.com",
+            "notify_order_batch_minutes_default": 10,
+            "maintenance": {
+                "enabled": False,
+                "title": "Planlı bakım",
+                "body": "Pencere",
+                "password": "LEAK-REQ-PASSWORD",
+                "token": "LEAK-TOKEN",
+                "smtp_pass": "LEAK-SMTP-PASS",
+                "secret_enc": "LEAK-SECRET-ENC",
+            },
+        })
+        await db.sites.insert_one({
+            "_id": "site_sec",
+            "slug": "gizli",
+            "brand_name": "Gizli Site",
+            "public_url": "https://gizli.example",
+            "theme": "corporate",
+            "active": True,
+            "hosts": ["gizli.example"],
+            "password": "LEAK-PASSWORD-HASH",
+            "password_enc": "LEAK-PASSWORD-ENC",
+            "token": "LEAK-TOKEN",
+            "secret_enc": "LEAK-SECRET-ENC",
+            "totp_secret": "LEAK-TOTP",
+        })
+        await db.site_content.insert_one({
+            "_id": "site_sec",
+            "site_id": "site_sec",
+            "pages": {},
+            "password": "LEAK-PASSWORD-HASH",
+            "token": "LEAK-TOKEN",
+        })
+        await db.database_settings.insert_one({
+            "_id": "current",
+            "host": "db.example.test",
+            "port": 3306,
+            "user": "app",
+            "password": "LEAK-PASSWORD-HASH",
+            "db": "tamkobi",
+            "ssl_mode": "required",
+            "token": "LEAK-TOKEN",
+            "secret_enc": "LEAK-SECRET-ENC",
+            "tables": {"docs": 2, "meta_indexes": 1, "system_logs": 0, "users": 99},
+        })
 
     asyncio.run(seed())
     # Ürün belgesine sır alanları: list_products hepsini kopyalar, redact düşürür.
@@ -990,6 +1050,24 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
     detail = json.loads(blobs[1])
     assert detail["item"]["einvoice"]["has_password"] is True
     assert "users" not in detail["item"]
+
+    for path in (
+        "/api/platform/admin-v1/sites",
+        "/api/platform/admin-v1/maintenance",
+        "/api/platform/admin-v1/database",
+    ):
+        body = json.loads(blobs[paths.index((path, None))])
+        dumped = json.dumps(body)
+        found = []
+        _walk_keys(body, found)
+        assert not any(_bad_key(key) for key in found), (path, [key for key in found if _bad_key(key)])
+        for leak in LEAKS:
+            assert leak not in dumped
+    database = json.loads(blobs[paths.index(("/api/platform/admin-v1/database", None))])
+    assert database["has_password"] is True
+    assert database["host"] == "db.example.test"
+    assert database["tables"] == {"docs": 2, "meta_indexes": 1, "system_logs": 0}
+    assert "users" not in database["tables"]
 
     for mock in sends.values():
         assert mock.await_count == 0

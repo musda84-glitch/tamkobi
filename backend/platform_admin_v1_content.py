@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -38,6 +39,7 @@ _HELP_FIELDS = (
     "status", "featured", "sort", "assistant",
 )
 _SITE_FIELDS = ("brand_name", "active", "theme")
+_SITE_CONTENT_FIELDS = ("pages", "services", "references", "products")
 _MAINT_FIELDS = (
     "enabled", "notify_popup", "notify_sms", "title", "body", "starts_at", "ends_at",
     "support_email", "support_phone", "audience", "company_ids",
@@ -189,10 +191,11 @@ async def admin_v1_site_save(slug: str, request: Request):
 @router.put("/platform/admin-v1/sites/{slug}/content")
 async def admin_v1_site_content(slug: str, request: Request):
     async def prepare(payload: Dict[str, Any]) -> List[str]:
-        if not isinstance(payload, dict) or not payload:
+        _reject_unknown(payload, _SITE_CONTENT_FIELDS)
+        if not payload:
             raise HTTPException(status_code=400, detail="Gövde boş olamaz.")
         await public_sites._require_site(slug)
-        return ["content"]
+        return _present(payload, _SITE_CONTENT_FIELDS)
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
         return _item(await public_sites.update_content(slug, payload, {}))
@@ -429,6 +432,12 @@ def _attachment_filename(name: Any) -> str:
     return (cleaned or "ek")[:180]
 
 
+def _content_disposition(filename: str) -> str:
+    """ASCII yedek ad + RFC 5987. Başlık latin-1'dir; 'ş' ham halde 500 üretir."""
+    ascii_name = filename.encode("ascii", "ignore").decode() or "ek"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+
 def _attachment_at(ticket: dict, message_id: str, index: int) -> dict:
     messages = ticket.get("messages") or []
     message = next((m for m in messages if str(m.get("id") or m.get("_id") or "") == message_id), None)
@@ -484,7 +493,7 @@ async def admin_v1_support_attachment(ticket_id: str, message_id: str, index: in
         content=data,
         media_type=media,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": _content_disposition(filename),
             "X-Content-Type-Options": "nosniff",
         },
     )
