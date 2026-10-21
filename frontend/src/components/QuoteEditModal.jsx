@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
 import { toast } from "sonner";
+import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
 import { X, Plus, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { fmtMoney } from "../utils/money";
@@ -22,8 +23,10 @@ export const QuoteEditModal = ({ quote, onClose, onSaved }) => {
   const save = async () => {
     try {
       const payload = { ...f, items: items.filter((i) => i.name).map((i) => ({ ...i, quantity: Number(i.quantity), unit_price: Number(i.unit_price), vat_rate: Number(i.vat_rate ?? 20), total: Number(i.quantity) * Number(i.unit_price) })) };
-      await axios.put(`${API_URL}/quotes/${quote.id}`, payload);
-      toast.success("Teklif güncellendi."); onSaved?.(); onClose();
+      const r = await axios.put(`${API_URL}/quotes/${quote.id}`, payload);
+      toast.success("Teklif güncellendi.");
+      notifyOrderSyncWarning(r.data);
+      onSaved?.(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
   };
   const cls = "w-full bg-slate-50 border rounded-lg p-2";

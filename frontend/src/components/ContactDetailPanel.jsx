@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
+import { notifyOrderSyncWarning } from "../utils/orderSyncWarning";
 import { X, FileText, Wallet, ShoppingCart, MessageSquare, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory, ChevronDown, CreditCard } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
@@ -277,6 +278,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       if (!editOrder.linesLocked) payload.items = items;
       const r = await axios.put(`${API_URL}/orders/${editOrder.id}`, payload);
       toast.success(r.data.message || "Sipariş güncellendi.");
+      notifyOrderSyncWarning(r.data);
       setEditOrder(null);
       await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders", "invoices"] });
       load();
@@ -684,8 +686,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           issue_time: (editInv.issue_time || "").slice(0, 8),
         };
     try {
-      await axios.put(`${API_URL}/invoices/${editInv.id}`, payload);
+      const savedInv = await axios.put(`${API_URL}/invoices/${editInv.id}`, payload);
       toast.success("Fatura güncellendi.");
+      notifyOrderSyncWarning(savedInv.data);
       setEditInv(null);
       await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders", "invoices"] });
       load();

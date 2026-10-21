@@ -1,8 +1,12 @@
 """Fatura / sipariş tutar farkı uyarısı."""
 from order_invoice_mismatch import (
+    FULFILLMENT_LINE_WARNING,
     attach_invoice_mismatch_warnings,
+    commercial_change_only,
     format_tl,
     mismatch_warning_text,
+    order_items_identity_signature,
+    order_items_price_signature,
     order_sync_skip_reason,
     totals_differ,
 )
@@ -47,3 +51,17 @@ def test_skip_reasons_do_not_touch_closed_or_marketplace():
     assert order_sync_skip_reason({**base, "order_status": "shipped"}, invoice, items_changed=True, pick_open=False) == "fulfillment"
     assert order_sync_skip_reason({**base, "order_status": "shipped"}, invoice, items_changed=False, pick_open=False) is None
     assert order_sync_skip_reason(base, invoice, items_changed=True, pick_open=True) == "fulfillment"
+    assert order_sync_skip_reason({**base, "order_status": "shipped"}, invoice, items_changed=True, pick_open=False, price_only=True) is None
+    assert order_sync_skip_reason(base, invoice, items_changed=True, pick_open=True, price_only=True) is None
+    assert order_sync_skip_reason({**base, "channel": "trendyol"}, invoice, items_changed=True, pick_open=False, price_only=True) == "marketplace"
+    assert "uygulanmadı" in FULFILLMENT_LINE_WARNING
+
+
+def test_price_only_signature_ignores_quantity_change():
+    before = [{"product_id": "p", "product_name": "Profil", "quantity": 4, "unit_price": 1000, "discount_rate": 0, "vat_rate": 20}]
+    price = [{**before[0], "unit_price": 5000, "discount_rate": 10, "vat_rate": 10}]
+    qty = [{**before[0], "quantity": 5, "unit_price": 5000}]
+    assert order_items_identity_signature(before) == order_items_identity_signature(price)
+    assert order_items_price_signature(before) != order_items_price_signature(price)
+    assert commercial_change_only(before, price) is True
+    assert commercial_change_only(before, qty) is False

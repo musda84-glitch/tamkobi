@@ -73,6 +73,9 @@ class Col:
             if "$push" in update:
                 for key, val in update["$push"].items():
                     doc.setdefault(key, []).append(val)
+            if "$inc" in update:
+                for key, val in update["$inc"].items():
+                    doc[key] = float(doc.get(key) or 0) + float(val)
             return
 
 
@@ -415,3 +418,375 @@ def test_list_and_detail_warning_uses_one_invoice_query():
     assert detail["invoice_mismatch_warning"] == "Fatura siparişten farklı (Fatura: 180,00 TL)"
     detail_finds = [q for q in db.invoices.find_queries if "$in" in str(q.get("_id"))]
     assert len(detail_finds) == 1
+
+
+SAME_LINE = {
+    "product_id": "p1",
+    "name": "Profil",
+    "product_name": "Profil",
+    "quantity": 4,
+    "unit_price": 1000,
+    "vat_rate": 20,
+    "discount_rate": 0,
+    "unit": "Adet",
+}
+
+
+def _priced(**extra):
+    row = dict(SAME_LINE)
+    row.update(extra)
+    return row
+
+
+def _edit_order(server, db, order, req):
+    from contextlib import ExitStack
+    stack = ExitStack()
+    for ctx in _patches(server, db, order):
+        stack.enter_context(ctx)
+    stack.__enter__()
+    try:
+        return _run(server.update_order("ord1", req, user={"is_super_admin": True}))
+    finally:
+        stack.__exit__(None, None, None)
+
+
+def _edit_quote(server, db, quote, req):
+    from contextlib import ExitStack
+    stack = ExitStack()
+    for ctx in _patches(server, db, quote):
+        stack.enter_context(ctx)
+    stack.__enter__()
+    try:
+        return _run(server.update_quote("q1", req, user={"is_super_admin": True}))
+    finally:
+        stack.__exit__(None, None, None)
+
+
+def _quote(**extra):
+    doc = {
+        "_id": "q1",
+        "company_id": "co",
+        "quote_number": "TKF-2026-0007",
+        "status": "accepted",
+        "invoice_id": "inv1",
+        "currency": "TRY",
+        "items": [_priced()],
+        "subtotal": 4000,
+        "vat_total": 800,
+        "grand_total": 4800,
+    }
+    doc.update(extra)
+    return doc
+
+
+def test_open_pick_price_discount_and_vat_update_order():
+    import server
+    from order_invoice_mismatch import FULFILLMENT_LINE_WARNING
+
+    invoice = _invoice(
+        currency="TRY",
+        fx_rate=1,
+        items=[_priced()],
+        grand_total=4800,
+    )
+    order = _order(
+        currency="TRY",
+        fx_rate=1,
+        order_status="preparing",
+        pick_status="picking",
+        items=[_priced(product_name="Profil")],
+        grand_total=4800,
+    )
+    ses = {"_id": "ses1", "company_id": "co", "order_id": "ord1", "status": "picking", "items": [{"ordered_qty": 4}]}
+    db = _db(invoice, order, sessions=[ses])
+    out = _edit(server, db, invoice, {"items": [_priced(unit_price=5000, discount_rate=10, vat_rate=10)]})
+    saved = db.orders.docs[0]
+    assert out.get("order_sync_warning") in (None, "")
+    assert saved["items"][0]["unit_price"] == pytest.approx(5000)
+    assert saved["items"][0]["discount_rate"] == pytest.approx(10)
+    assert saved["items"][0]["vat_rate"] == pytest.approx(10)
+    assert saved["items"][0]["quantity"] == pytest.approx(4)
+    assert saved["grand_total"] != pytest.approx(4800)
+    assert saved["order_history"][-1]["message"] == "Fatura TA2026000000007 düzenlemesinden güncellendi"
+    assert db.order_pick_sessions.updates == []
+    assert db.order_pick_sessions.docs[0]["items"] == [{"ordered_qty": 4}]
+    assert FULFILLMENT_LINE_WARNING not in str(out.get("order_sync_warning") or "")
+
+
+def test_open_pick_quantity_change_skips_order_and_warns():
+    import server
+    from order_invoice_mismatch import FULFILLMENT_LINE_WARNING
+
+    invoice = _invoice(currency="TRY", fx_rate=1, items=[_priced()], grand_total=4800)
+    order = _order(
+        currency="TRY",
+        fx_rate=1,
+        pick_status="picking",
+        items=[_priced(product_name="Profil")],
+        grand_total=4800,
+    )
+    ses = {"_id": "ses1", "company_id": "co", "order_id": "ord1", "status": "open", "items": [{"ordered_qty": 4}]}
+    db = _db(invoice, order, sessions=[ses])
+    out = _edit(server, db, invoice, {"items": [_priced(quantity=5)]})
+    assert out["order_sync_warning"] == FULFILLMENT_LINE_WARNING
+    assert db.orders.updates == []
+    assert db.orders.docs[0]["items"][0]["quantity"] == 4
+    assert db.order_pick_sessions.updates == []
+    assert db.invoices.docs[0]["items"][0]["quantity"] == 5
+
+
+def test_shipped_price_still_syncs_order():
+    import server
+
+    invoice = _invoice(currency="TRY", fx_rate=1, items=[_priced()], grand_total=4800)
+    order = _order(
+        currency="TRY",
+        fx_rate=1,
+        order_status="shipped",
+        items=[_priced(product_name="Profil")],
+        grand_total=4800,
+    )
+    db = _db(invoice, order)
+    _edit(server, db, invoice, {"items": [_priced(unit_price=5000)]})
+    saved = db.orders.docs[0]
+    assert saved["items"][0]["unit_price"] == pytest.approx(5000)
+    assert saved["items"][0]["quantity"] == pytest.approx(4)
+    assert saved["order_status"] == "shipped"
+
+
+def test_order_price_updates_unlocked_invoice_and_contact():
+    import server
+
+    invoice = _invoice(
+        currency="TRY",
+        fx_rate=1,
+        effects_applied=True,
+        paid_amount=12,
+        payment_status="paid",
+        contact_id="c1",
+        items=[{"name": "Profil", "quantity": 1, "unit_price": 10, "vat_rate": 20}],
+        grand_total=12,
+    )
+    order = _order(currency="TRY", fx_rate=1, items=[{"product_name": "Profil", "quantity": 1, "unit_price": 10, "vat_rate": 20}])
+    db = _db(invoice, order)
+    db.contacts = Col([{"_id": "c1", "company_id": "co", "balance": 12}])
+    out = _edit_order(server, db, order, {"items": [{
+        "product_name": "Profil",
+        "quantity": 1,
+        "unit_price": 20,
+        "vat_rate": 20,
+    }]})
+    saved_inv = db.invoices.docs[0]
+    assert saved_inv["grand_total"] == pytest.approx(24)
+    assert saved_inv["items"][0]["unit_price"] == pytest.approx(20)
+    assert saved_inv["payment_status"] == "partially_paid"
+    assert db.contacts.docs[0]["balance"] == pytest.approx(24)
+    assert db.orders.docs[0]["grand_total"] == pytest.approx(24)
+    assert len(db.orders.updates) == 1
+    assert out["order"]["grand_total"] == pytest.approx(24)
+    assert "order_sync_warning" not in out
+
+
+def test_gib_invoice_stays_while_order_change_is_kept():
+    import server
+
+    invoice = _invoice(
+        currency="TRY",
+        fx_rate=1,
+        einvoice_state="sent",
+        gib_status="Başarıyla Tamamlandı",
+        gib_tracking_id="EAR-1",
+        effects_applied=True,
+        items=[{"name": "Profil", "quantity": 1, "unit_price": 10, "vat_rate": 20}],
+    )
+    order = _order(currency="TRY", fx_rate=1, items=[{"product_name": "Profil", "quantity": 1, "unit_price": 10, "vat_rate": 20}])
+    quote = _quote(items=[{"name": "Profil", "quantity": 1, "unit_price": 10, "vat_rate": 20}], grand_total=12)
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    db.contacts = Col([{"_id": "c1", "company_id": "co", "balance": 12}])
+    _edit_order(server, db, order, {"items": [{
+        "product_name": "Profil",
+        "quantity": 1,
+        "unit_price": 50,
+        "vat_rate": 20,
+    }]})
+    assert db.invoices.docs[0]["items"][0]["unit_price"] == pytest.approx(10)
+    assert db.invoices.updates == []
+    assert db.orders.docs[0]["items"][0]["unit_price"] == pytest.approx(50)
+    assert db.quotes.docs[0]["items"][0]["unit_price"] == pytest.approx(10)
+    assert db.quotes.updates == []
+    assert db.contacts.updates == []
+
+
+def test_order_sync_does_not_loop_back_into_the_order():
+    import server
+
+    invoice = _invoice(
+        currency="TRY",
+        fx_rate=1,
+        effects_applied=False,
+        items=[{"name": "Profil", "quantity": 1, "unit_price": 10, "vat_rate": 20}],
+    )
+    order = _order(currency="TRY", fx_rate=1)
+    quote = _quote()
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    _edit_order(server, db, order, {"items": [{
+        "product_name": "Profil",
+        "quantity": 1,
+        "unit_price": 30,
+        "vat_rate": 20,
+    }]})
+    assert len(db.orders.updates) == 1
+    assert len([u for u in db.invoices.updates if "items" in (u[1].get("$set") or {})]) == 1
+    assert len(db.quotes.updates) == 1
+    assert db.quotes.docs[0]["quote_history"][-1]["message"].startswith("Sipariş")
+
+
+def test_other_company_invoice_is_not_updated_from_order():
+    import server
+
+    invoice = _invoice(company_id="other", currency="TRY", fx_rate=1)
+    order = _order(currency="TRY", fx_rate=1, invoice_id="inv1")
+    db = _db(invoice, order)
+    _edit_order(server, db, order, {"items": [{
+        "product_name": "Profil",
+        "quantity": 2,
+        "unit_price": 20,
+        "vat_rate": 20,
+    }]})
+    assert db.invoices.updates == []
+    assert db.invoices.docs[0]["company_id"] == "other"
+    assert db.invoices.docs[0]["items"][0]["name"] == "Eski"
+
+
+def test_invoice_price_updates_linked_quote():
+    import server
+
+    invoice = _invoice(currency="TRY", fx_rate=1, quote_id="q1", items=[_priced()], grand_total=4800)
+    order = _order(currency="TRY", fx_rate=1, items=[_priced(product_name="Profil")], grand_total=4800)
+    quote = _quote()
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    _edit(server, db, invoice, {"items": [_priced(unit_price=5000)]})
+    saved_q = db.quotes.docs[0]
+    assert saved_q["items"][0]["unit_price"] == pytest.approx(5000)
+    assert saved_q["quote_history"][-1]["message"] == "Fatura TA2026000000007 düzenlemesinden güncellendi"
+    assert db.orders.docs[0]["items"][0]["unit_price"] == pytest.approx(5000)
+    assert len(db.invoices.updates) == 1
+    assert len(db.quotes.updates) == 1
+
+
+def test_rejected_and_other_company_quote_stay():
+    import server
+
+    for status in ("rejected", "cancelled"):
+        invoice = _invoice(currency="TRY", fx_rate=1, quote_id="q1", items=[_priced()], grand_total=4800)
+        order = _order(currency="TRY", fx_rate=1, items=[_priced(product_name="Profil")], grand_total=4800)
+        quote = _quote(status=status)
+        db = _db(invoice, order)
+        db.quotes = Col([quote])
+        _edit(server, db, invoice, {"items": [_priced(unit_price=5000)]})
+        assert db.quotes.updates == [], status
+        assert db.quotes.docs[0]["items"][0]["unit_price"] == pytest.approx(1000)
+        assert db.orders.docs[0]["items"][0]["unit_price"] == pytest.approx(5000)
+
+    invoice = _invoice(currency="TRY", fx_rate=1, quote_id="q1", items=[_priced()], grand_total=4800)
+    order = _order(currency="TRY", fx_rate=1, items=[_priced(product_name="Profil")], grand_total=4800)
+    quote = _quote(company_id="other")
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    _edit(server, db, invoice, {"items": [_priced(unit_price=5000)]})
+    assert db.quotes.updates == []
+    assert db.quotes.docs[0]["company_id"] == "other"
+    assert db.quotes.docs[0]["items"][0]["unit_price"] == pytest.approx(1000)
+
+
+def test_quote_price_updates_order_and_invoice_contact():
+    import server
+
+    invoice = _invoice(
+        currency="TRY",
+        fx_rate=1,
+        quote_id="q1",
+        effects_applied=True,
+        contact_id="c1",
+        paid_amount=0,
+        items=[_priced()],
+        grand_total=4800,
+    )
+    order = _order(currency="TRY", fx_rate=1, items=[_priced(product_name="Profil")], grand_total=4800)
+    quote = _quote()
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    db.contacts = Col([{"_id": "c1", "company_id": "co", "balance": 4800}])
+    out = _edit_quote(server, db, quote, {"items": [_priced(unit_price=5000)]})
+    assert db.invoices.docs[0]["items"][0]["unit_price"] == pytest.approx(5000)
+    assert db.orders.docs[0]["items"][0]["unit_price"] == pytest.approx(5000)
+    assert db.orders.docs[0]["order_history"][-1]["message"] == "Teklif TKF-2026-0007 düzenlemesinden güncellendi"
+    assert db.contacts.docs[0]["balance"] != pytest.approx(4800)
+    assert len(db.quotes.updates) == 1
+    assert "order_sync_warning" not in out
+
+
+def test_quote_quantity_skips_open_pick_and_warns():
+    import server
+    from order_invoice_mismatch import FULFILLMENT_LINE_WARNING
+
+    invoice = _invoice(currency="TRY", fx_rate=1, quote_id="q1", items=[_priced()], grand_total=4800)
+    order = _order(
+        currency="TRY",
+        fx_rate=1,
+        pick_status="picking",
+        items=[_priced(product_name="Profil")],
+        grand_total=4800,
+    )
+    quote = _quote()
+    db = _db(invoice, order, sessions=[{"_id": "ses1", "company_id": "co", "order_id": "ord1", "status": "picking", "items": [{"ordered_qty": 4}]}])
+    db.quotes = Col([quote])
+    out = _edit_quote(server, db, quote, {"items": [_priced(quantity=5)]})
+    assert out["order_sync_warning"] == FULFILLMENT_LINE_WARNING
+    assert db.orders.docs[0]["items"][0]["quantity"] == 4
+    assert db.orders.updates == []
+    assert db.invoices.docs[0]["items"][0]["quantity"] == 5
+    assert db.order_pick_sessions.updates == []
+
+
+def test_quote_does_not_change_gib_invoice_or_loop():
+    import server
+
+    invoice = _invoice(
+        currency="TRY",
+        fx_rate=1,
+        quote_id="q1",
+        einvoice_state="sent",
+        gib_tracking_id="EAR-9",
+        gib_status="GİB'e Gönderildi",
+        items=[_priced()],
+        grand_total=4800,
+    )
+    order = _order(currency="TRY", fx_rate=1, items=[_priced(product_name="Profil")], grand_total=4800)
+    quote = _quote()
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    _edit_quote(server, db, quote, {"items": [_priced(unit_price=5000)]})
+    assert db.invoices.updates == []
+    assert db.invoices.docs[0]["items"][0]["unit_price"] == pytest.approx(1000)
+    assert db.orders.updates == []
+    assert db.orders.docs[0]["items"][0]["unit_price"] == pytest.approx(1000)
+    assert len(db.quotes.updates) == 1
+    assert db.quotes.docs[0]["items"][0]["unit_price"] == pytest.approx(5000)
+
+
+def test_rejected_quote_edit_does_not_propagate():
+    import server
+
+    invoice = _invoice(currency="TRY", fx_rate=1, quote_id="q1", items=[_priced()], grand_total=4800)
+    order = _order(currency="TRY", fx_rate=1, items=[_priced(product_name="Profil")], grand_total=4800)
+    quote = _quote(status="rejected")
+    db = _db(invoice, order)
+    db.quotes = Col([quote])
+    _edit_quote(server, db, quote, {"items": [_priced(unit_price=5000)]})
+    assert db.invoices.updates == []
+    assert db.orders.updates == []
+    assert db.quotes.docs[0]["items"][0]["unit_price"] == pytest.approx(5000)
