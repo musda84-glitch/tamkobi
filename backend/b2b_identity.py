@@ -506,6 +506,22 @@ async def _open_session(db, identity_id: str, email: str, contact_ids: list) -> 
     return raw
 
 
+async def _drop_one_session(db, token: str) -> None:
+    """Verilen select_token satırını hash ile siler. Ham token loglanmaz, yazılmaz."""
+    raw = str(token or "").strip()
+    if not raw:
+        return
+    digest = _sha256(raw)
+    coll = db.b2b_sessions
+    delete_one = getattr(coll, "delete_one", None)
+    if delete_one is not None:
+        await delete_one({"_id": digest})
+        return
+    docs = getattr(coll, "docs", None)
+    if isinstance(docs, list):
+        coll.docs = [row for row in docs if str(row.get("_id") or "") != digest]
+
+
 async def _drop_sessions(db, *, identity_id: str = "", email: str = "") -> None:
     coll = db.b2b_sessions
     identity_id = str(identity_id or "")
@@ -790,6 +806,16 @@ async def list_suppliers_for_session(db, request: Request) -> dict:
     row, identity = await _load_session_identity(db, token)
     links = await _links_for_session(db, row, identity)
     return {"suppliers": [_public_link(item) for item in links]}
+
+
+async def logout_session(db, request: Request, body: Optional[dict] = None) -> dict:
+    """Seçim oturumunu kapatır. Token yoksa veya geçersizse de aynı yanıt; başka kayda dokunmaz."""
+    token = _session_token(request, body if isinstance(body, dict) else None)
+    try:
+        await _drop_one_session(db, token)
+    except Exception as exc:
+        logger.warning("b2b logout failed: %s", type(exc).__name__)
+    return {"status": "success"}
 
 
 async def _auth_hashes(db, contact: dict) -> list:
@@ -1289,6 +1315,18 @@ async def b2b_select_supplier(req: dict):
 @router.get("/public/b2b/suppliers")
 async def b2b_suppliers(request: Request):
     return await list_suppliers_for_session(get_db(), request)
+
+
+@router.post("/public/b2b/logout")
+async def b2b_logout(request: Request):
+    body = None
+    try:
+        parsed = await request.json()
+        if isinstance(parsed, dict):
+            body = parsed
+    except Exception:
+        body = None
+    return await logout_session(get_db(), request, body)
 
 
 @router.post("/public/b2b/verify-email/start")

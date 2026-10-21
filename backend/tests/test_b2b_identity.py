@@ -880,6 +880,103 @@ def test_verify_start_is_rate_limited_and_reset_token_is_hashed(client, db):
     assert again.status_code == 200, again.text
 
 
+def test_logout_drops_only_that_session_and_keeps_portal_token(client, db, caplog, monkeypatch):
+    import asyncio
+    import copy
+    import logging
+
+    import addons
+    import server
+
+    res = _login(client)
+    assert res.status_code == 200, res.text
+    token = res.json()["select_token"]
+    other = "other-user-select-token"
+    future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    db.b2b_sessions.docs.append({
+        "_id": b2b_identity._sha256(other),
+        "identity_id": "someone-else",
+        "email": "veli@example.com",
+        "expires_at": future,
+        "created_at": future,
+        "contact_ids": ["cOther"],
+    })
+    contacts_before = copy.deepcopy(db.contacts.docs)
+    attempts_before = copy.deepcopy(db.login_attempts.docs)
+    portal_token = next(row["b2b_token"] for row in db.contacts.docs if row["_id"] == "cA")
+
+    with caplog.at_level(logging.DEBUG):
+        out = client.post("/api/public/b2b/logout", headers={"Authorization": f"B2BSession {token}"})
+    assert out.status_code == 200, out.text
+    assert out.json() == {"status": "success"}
+    assert token not in out.text
+    assert token not in caplog.text
+    assert other not in out.text
+    ids = {row["_id"] for row in db.b2b_sessions.docs}
+    assert b2b_identity._sha256(token) not in ids
+    assert b2b_identity._sha256(other) in ids
+    denied = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2BSession {token}"})
+    assert denied.status_code == 401
+    assert db.contacts.docs == contacts_before
+    assert next(row["b2b_token"] for row in db.contacts.docs if row["_id"] == "cA") == portal_token
+    assert db.login_attempts.docs == attempts_before
+
+    again = client.post("/api/public/b2b/logout", headers={"Authorization": f"B2BSession {token}"})
+    assert again.status_code == 200
+    assert again.json() == {"status": "success"}
+    assert token not in again.text
+    assert b2b_identity._sha256(other) in {row["_id"] for row in db.b2b_sessions.docs}
+
+    second = _login(client)
+    body_token = second.json()["select_token"]
+    via_body = client.post("/api/public/b2b/logout", json={"select_token": body_token})
+    assert via_body.status_code == 200, via_body.text
+    assert via_body.json() == {"status": "success"}
+    assert body_token not in via_body.text
+    assert body_token not in caplog.text
+    assert b2b_identity._sha256(body_token) not in {row["_id"] for row in db.b2b_sessions.docs}
+    assert b2b_identity._sha256(other) in {row["_id"] for row in db.b2b_sessions.docs}
+
+    async def _off(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(addons, "is_on", _off)
+    portal = asyncio.run(server.b2b_portal(portal_token))
+    assert portal["contact"]["name"] == "Cari A"
+    assert portal["company"]["name"] == "Firma A"
+    blob = str(portal)
+    assert token not in blob
+    assert body_token not in blob
+
+
+def test_logout_invalid_or_missing_token_deletes_nothing(client, db, caplog):
+    import copy
+    import logging
+
+    res = _login(client)
+    token = res.json()["select_token"]
+    sessions_before = copy.deepcopy(db.b2b_sessions.docs)
+    contacts_before = copy.deepcopy(db.contacts.docs)
+    with caplog.at_level(logging.DEBUG):
+        missing = client.post("/api/public/b2b/logout")
+        bad = client.post("/api/public/b2b/logout", json={"select_token": "not-a-real-session"})
+        blank = client.post("/api/public/b2b/logout", headers={"Authorization": "B2BSession "})
+    assert missing.status_code == 200
+    assert missing.json() == {"status": "success"}
+    assert bad.status_code == 200
+    assert bad.json() == {"status": "success"}
+    assert blank.status_code == 200
+    assert blank.json() == {"status": "success"}
+    assert "not-a-real-session" not in bad.text
+    assert "not-a-real-session" not in caplog.text
+    assert token not in missing.text
+    assert db.b2b_sessions.docs == sessions_before
+    assert db.contacts.docs == contacts_before
+    still = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {token}"})
+    assert still.status_code == 200
+
+
 def test_removed_b2b_tenant_keys_are_gone():
     import tenant_scope_allowlist as allowlist
     removed = (

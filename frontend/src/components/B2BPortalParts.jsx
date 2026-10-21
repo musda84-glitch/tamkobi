@@ -2,7 +2,7 @@
 import React, { useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer, LogOut } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
@@ -19,6 +19,7 @@ import { DocumentFormModal } from "./DocumentFormModal";
 import { B2BCardPay } from "./B2BCardPay";
 import { StatementTxList } from "./StatementTxList";
 import { StatementPrint } from "./StatementShare";
+import { logoutB2B } from "../utils/b2bSession";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -150,8 +151,8 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged, switcher
           <div className="min-w-0"><div className="font-bold leading-tight text-sm sm:text-base truncate">{company.name} <span className="text-[10px] bg-emerald-600 rounded px-1.5 py-0.5 ml-1 align-middle">B2B</span></div><div className="text-[11px] sm:text-xs text-slate-400 truncate">{[company.phone, company.email].filter(Boolean).join(" • ")}</div></div>
         </div>
         {switcher}
-        <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs min-w-0 w-full sm:w-auto">
-          <div className="min-w-0">
+        <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 border-t border-white/10 sm:border-0 pt-2 sm:pt-0 text-xs min-w-0 w-full sm:w-auto">
+          <div className="min-w-0 flex-1 sm:flex-none">
             <div className="font-bold text-sm truncate" data-testid="b2b-contact-name">{contact.name}</div>
             {token && (
               <button type="button" onClick={() => setOpen(true)} className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-slate-300 hover:text-white underline decoration-dotted" data-testid="b2b-change-password-btn">
@@ -159,7 +160,18 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged, switcher
               </button>
             )}
           </div>
-          <div className="text-right shrink-0"><div className="text-slate-400">Bakiye</div><div className={`font-bold ${bal > 0 ? "text-rose-300" : "text-emerald-300"}`} data-testid="b2b-balance">{fmt(Math.abs(bal))} {bal > 0 ? "borç" : bal < 0 ? "alacak" : ""}</div>{contact.discount > 0 && <span className="inline-block mt-0.5 bg-emerald-600/30 text-emerald-200 rounded px-1.5 text-[10px]">Size özel %{contact.discount} indirim</span>}</div>
+          <div className="flex items-center justify-end gap-2 shrink-0">
+            <div className="text-right shrink-0"><div className="text-slate-400">Bakiye</div><div className={`font-bold ${bal > 0 ? "text-rose-300" : "text-emerald-300"}`} data-testid="b2b-balance">{fmt(Math.abs(bal))} {bal > 0 ? "borç" : bal < 0 ? "alacak" : ""}</div>{contact.discount > 0 && <span className="inline-block mt-0.5 bg-emerald-600/30 text-emerald-200 rounded px-1.5 text-[10px]">Size özel %{contact.discount} indirim</span>}</div>
+            <button
+              type="button"
+              onClick={logoutB2B}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/20 px-3 py-1.5 min-h-9 text-xs font-bold text-white hover:bg-white/10 whitespace-nowrap shrink-0"
+              data-testid="b2b-header-logout"
+              aria-label="Çıkış"
+            >
+              <LogOut className="w-3.5 h-3.5 shrink-0" /> Çıkış
+            </button>
+          </div>
         </div>
       </div>
       {open && (

@@ -122,13 +122,23 @@ test("boş liste erişim mesajını gösterir", async () => {
 test("çıkış seçim oturumunu siler, sepeti ve çerezi bırakır", async () => {
   axios.get.mockResolvedValue({ data: { suppliers: SUPPLIERS } });
   localStorage.setItem("b2b_cart_tok-a", JSON.stringify({ p1: { productId: "p1", qty: 2, note: "" } }));
+  localStorage.setItem("b2b_held_carts_tok-a", JSON.stringify([{ id: "h1" }]));
+  localStorage.setItem("b2b_contact_portals", JSON.stringify({ cA: "tok-a" }));
+  localStorage.setItem("token", "panel-local");
+  sessionStorage.setItem("token", "panel-session");
   document.cookie = "tamkobi_app=stay";
   await show();
   await act(async () => { host.querySelector('[data-testid="b2b-logout"]').click(); });
   expect(sessionStorage.getItem("b2b_session")).toBeNull();
   expect(sessionStorage.getItem("b2b_session_email")).toBeNull();
   expect(localStorage.getItem("b2b_cart_tok-a")).toContain("p1");
+  expect(localStorage.getItem("b2b_held_carts_tok-a")).toContain("h1");
+  expect(localStorage.getItem("b2b_contact_portals")).toBeNull();
+  expect(localStorage.getItem("token")).toBe("panel-local");
+  expect(sessionStorage.getItem("token")).toBe("panel-session");
   expect(document.cookie).toContain("tamkobi_app=stay");
   expect(goSpy).toHaveBeenCalledWith("/b2b/giris");
-  expect(axios.post).not.toHaveBeenCalled();
+  expect(axios.post).toHaveBeenCalledWith("/api/public/b2b/logout", {}, {
+    headers: { Authorization: "B2bSession select-secret" },
+  });
 });

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { toast } from "sonner";
 import { API_URL } from "../api/client";
 import { parseStoredCart } from "./b2bCart";
 
@@ -63,8 +64,39 @@ export const b2bNav = {
   },
 };
 
+function anyLocalCartHasItems() {
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i) || "";
+      if (!key.startsWith("b2b_cart_")) continue;
+      const cart = parseStoredCart(localStorage.getItem(key) || "{}");
+      if (Object.values(cart).some((row) => (Number(row?.qty) || 0) > 0)) return true;
+    }
+  } catch { /* gizli mod */ }
+  return false;
+}
+
+function clearContactPortals() {
+  try { localStorage.removeItem(B2B_PORTAL_MAP_KEY); } catch { /* gizli mod */ }
+}
+
+/** Seçim oturumunu kapatır. Sepetler ve panel çerezi kalır. Sunucu hatası yönlendirmeyi durdurmaz. */
 export function logoutB2B() {
+  const selectToken = readB2BSession();
+  const cartKept = anyLocalCartHasItems();
   clearB2BSession();
+  clearContactPortals();
+  if (selectToken) {
+    try {
+      const pending = axios.post(`${API_URL}/public/b2b/logout`, {}, {
+        headers: b2bSessionHeaders(selectToken),
+      });
+      if (pending && typeof pending.catch === "function") pending.catch(() => {});
+    } catch { /* yerel temizlik sürer */ }
+  }
+  if (cartKept) {
+    try { toast.message("Sepetiniz bu cihazda saklandı."); } catch { /* toast yok */ }
+  }
   b2bNav.go("/b2b/giris");
 }
 
