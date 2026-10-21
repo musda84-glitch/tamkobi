@@ -139,36 +139,37 @@ def test_select_supplier_rejects_foreign_and_expired_and_hides_other_token(clien
     assert "PRICE-SECRET" not in picked.text
     assert HASH not in picked.text
 
+    raw = res.json()["select_token"]
+    assert raw not in {row["_id"] for row in db.b2b_sessions.docs}
+    assert b2b_identity._sha256(raw) in {row["_id"] for row in db.b2b_sessions.docs}
     past = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    expired_raw = "expired-session"
     db.b2b_sessions.docs.append({
-        "_id": "expired-session",
+        "_id": b2b_identity._sha256(expired_raw),
         "identity_id": "none",
+        "email": "ali@example.com",
         "expires_at": past,
         "created_at": past,
         "contact_ids": ["cA"],
     })
     expired = client.post("/api/public/b2b/select-supplier", json={
-        "select_token": "expired-session", "contact_id": "cA",
+        "select_token": expired_raw, "contact_id": "cA",
     })
     assert expired.status_code == 401
 
 
-def test_lazy_migration_then_identity_password(client, db):
+def test_login_without_identity_does_not_seed_other_password(client, db):
+    for row in db.contacts.docs:
+        if row["_id"] == "cB":
+            row["b2b_password_hash"] = HASH_B
     first = _login(client)
-    assert first.status_code == 200
-    rows = [row for row in db.b2b_identities.docs if row["email"] == "ali@example.com"]
-    assert len(rows) == 1
-    assert rows[0]["email_verified_at"] is None
-    assert rows[0]["password_hash"] == HASH
-    contact_hash = next(row["b2b_password_hash"] for row in db.contacts.docs if row["_id"] == "cA")
-    assert contact_hash == HASH
-
-    rows[0]["password_hash"] = hash_password("secret-2")
-    rows[0]["email_verified_at"] = datetime.now(timezone.utc).isoformat()
-    old = _login(client, password=PWD)
-    assert old.status_code == 401
-    nxt = _login(client, password="secret-2")
-    assert nxt.status_code == 200, nxt.text
+    assert first.status_code == 200, first.text
+    assert _names(first.json()) == {"Firma A"}
+    assert db.b2b_identities.docs == []
+    second = _login(client, password=PWD_B)
+    assert second.status_code == 200, second.text
+    assert _names(second.json()) == {"Firma B"}
+    assert db.b2b_identities.docs == []
     assert next(row["b2b_password_hash"] for row in db.contacts.docs if row["_id"] == "cA") == HASH
 
 
@@ -179,8 +180,15 @@ def test_brute_force_locks_on_the_attempt_after_five(client, db):
         assert res.json()["detail"] == b2b_identity._FAIL
     locked = _login(client, email="yok@example.com", password="wrong")
     assert locked.status_code == 429
-    attempt = next(row for row in db.login_attempts.docs if "yok@example.com" in row["identifier"])
-    attempt["last_attempt"] = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    past = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    digest = b2b_identity._sha256("yok@example.com")
+    touched = [row for row in db.login_attempts.docs if digest in row["identifier"]]
+    assert len(touched) >= 2
+    assert any(row["identifier"].startswith("b2b:acct:") for row in touched)
+    assert any(row["identifier"].startswith("b2b:ip:") for row in touched)
+    assert "yok@example.com" not in "".join(row["identifier"] for row in db.login_attempts.docs)
+    for row in touched:
+        row["last_attempt"] = past
     again = _login(client, email="yok@example.com", password="wrong")
     assert again.status_code == 401
 
@@ -200,11 +208,28 @@ def test_single_supplier_keeps_redirect(client, db):
 def test_vkn_requires_single_existing_identity(client, db):
     missing = client.post("/api/public/b2b/login", json={"email": "1111111111", "password": PWD})
     assert missing.status_code == 401
-    _login(client)
+    scans = []
+    original = db.companies.find
+
+    def _find(query=None, *args, **kwargs):
+        scans.append(query)
+        return original(query, *args, **kwargs)
+
+    db.companies.find = _find
+    db.b2b_identities.docs.append({
+        "_id": "id-ali",
+        "email": "ali@example.com",
+        "password_hash": HASH,
+        "email_verified_at": datetime.now(timezone.utc).isoformat(),
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
     by_tax = client.post("/api/public/b2b/login", json={"email": "1111111111", "password": PWD})
     assert by_tax.status_code == 200, by_tax.text
     assert _names(by_tax.json()) == {"Firma A", "Firma B"}
     assert "portal-secret-vkn" not in by_tax.text
+    assert scans == []
 
     db.b2b_identities.docs.append({
         "_id": "id-other",
@@ -225,24 +250,41 @@ def test_vkn_requires_single_existing_identity(client, db):
     assert split.status_code == 401
 
 
-def test_unverified_hides_other_password_until_verified(client, db):
+def test_verified_identity_lists_link_only_after_accept(client, db):
     for row in db.contacts.docs:
         if row["_id"] == "cB":
             row["b2b_password_hash"] = HASH_B
+            row["name"] = "<b>Cari B</b>"
+    db.companies.docs[1]["name"] = "<script>Firma B</script>"
+    db.b2b_identities.docs.append({
+        "_id": "id-ali",
+        "email": "ali@example.com",
+        "password_hash": HASH,
+        "email_verified_at": None,
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
     res = _login(client)
     assert res.status_code == 200, res.text
     assert _names(res.json()) == {"Firma A"}
     token = res.json()["select_token"]
     hidden = client.post("/api/public/b2b/select-supplier", json={"select_token": token, "contact_id": "cB"})
     assert hidden.status_code == 403
-
-    sent = {}
-
-    async def capture(**kwargs):
-        sent.update(kwargs)
-        return True
-
-    b2b_identity.set_mailer(capture)
+    notice = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice")
+    assert notice["status"] == "pending"
+    assert "<script>" not in notice["html"]
+    assert "<b>" not in notice["html"]
+    assert "&lt;script&gt;" in notice["html"]
+    assert "&lt;b&gt;" in notice["html"]
+    import re
+    accept_token = re.search(r"accept-link/([A-Za-z0-9_\-]+)", notice["html"]).group(1)
+    accepted = client.get(f"/api/public/b2b/accept-link/{accept_token}")
+    assert accepted.status_code == 200, accepted.text
+    stored = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert stored["accepted_at"]
+    still = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {token}"})
+    assert _names(still.json()) == {"Firma A"}
     started = client.post(
         "/api/public/b2b/verify-email/start",
         headers={"Authorization": f"B2bSession {token}"},
@@ -251,11 +293,13 @@ def test_unverified_hides_other_password_until_verified(client, db):
     assert "ali@example.com" not in started.text or "gönderildi" in started.text
     verify_row = db.b2b_email_verifications.docs[-1]
     assert verify_row["_id"] not in started.text
+    queued = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_verify_email")
+    assert queued["status"] == "pending"
     confirmed = client.get(f"/api/public/b2b/verify-email/{verify_row['_id']}")
     assert confirmed.status_code == 200, confirmed.text
     listed = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2bSession {token}"})
     assert listed.status_code == 200, listed.text
-    assert _names(listed.json()) == {"Firma A", "Firma B"}
+    assert _names(listed.json()) == {"Firma A", "<script>Firma B</script>"}
     chosen = client.post("/api/public/b2b/select-supplier", json={"select_token": token, "contact_id": "cB"})
     assert chosen.status_code == 200, chosen.text
     assert chosen.json()["redirect"] == "/portal/portal-secret-b"
@@ -270,7 +314,15 @@ def test_reset_updates_identity_and_keeps_contact_hash(db):
         return await b2b_identity.apply_password_reset(db, contact, "yeni-sifre")
 
     import asyncio
+    db.b2b_sessions.docs.append({
+        "_id": "sess-old",
+        "identity_id": "old",
+        "email": "ali@example.com",
+        "expires_at": datetime.now(timezone.utc).isoformat(),
+        "contact_ids": ["cA"],
+    })
     identity = asyncio.run(run())
+    assert all(row.get("email") != "ali@example.com" for row in db.b2b_sessions.docs)
     assert contact["b2b_password_hash"] == before
     assert identity["email_verified_at"]
     assert verify_password("yeni-sifre", identity["password_hash"])
@@ -284,7 +336,8 @@ def test_reset_updates_identity_and_keeps_contact_hash(db):
     assert asyncio.run(check("yeni-sifre", "yeni-sifre")) == "Yeni şifre mevcut şifreyle aynı olamaz."
 
 
-def test_link_notice_emails_identity_owner_once(db):
+def test_link_notice_queues_once_without_smtp(db, monkeypatch):
+    import mail_service
     db.b2b_identities.docs.append({
         "_id": "id-ali",
         "email": "ali@example.com",
@@ -294,14 +347,13 @@ def test_link_notice_emails_identity_owner_once(db):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "last_login_at": None,
     })
-    calls = []
 
-    async def capture(**kwargs):
-        calls.append(kwargs)
-        return True
+    def boom(*_a, **_k):
+        raise AssertionError("smtp")
 
-    b2b_identity.set_mailer(capture)
+    monkeypatch.setattr(mail_service, "send_mail", boom)
     contact = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    contact["name"] = "<i>Cari</i>"
     upd = {"b2b_login_email": "ali@example.com", "b2b_enabled": True}
 
     async def run():
@@ -310,11 +362,14 @@ def test_link_notice_emails_identity_owner_once(db):
     import asyncio
     asyncio.run(run())
     assert upd["b2b_link_notified_email"] == "ali@example.com"
-    assert calls and calls[0]["to"] == "ali@example.com"
-    assert "Firma B" in calls[0]["subject"]
-    assert "secret" not in calls[0]["body"]
+    notes = [row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice"]
+    assert len(notes) == 1
+    assert notes[0]["status"] == "pending"
+    assert notes[0]["to"] == ["ali@example.com"]
+    assert "<i>" not in notes[0]["html"]
+    assert "secret" not in notes[0]["text"]
     asyncio.run(run())
-    assert len(calls) == 1
+    assert len([row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice"]) == 1
 
 
 def test_inactive_contact_keeps_403(client, db):
@@ -331,3 +386,145 @@ def test_link_method_keeps_403(client, db):
     res = client.post("/api/public/b2b/login", json={"email": "link@example.com", "password": PWD})
     assert res.status_code == 403
     assert "kişiye özel link" in res.json()["detail"]
+
+
+def test_supplier_write_does_not_change_identity_password(client, db):
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1].joinpath("server.py").read_text(encoding="utf-8")
+    for name in ("update_contact", "contact_b2b_access", "put_contact_b2b_portal"):
+        start = src.index(f"async def {name}(")
+        end = src.index("\nasync def ", start + 10)
+        body = src[start:end]
+        assert "sync_identity_password" not in body
+        assert "change_own_password" not in body
+        assert "b2b_identities" not in body
+    db.b2b_identities.docs.append({
+        "_id": "id-ali",
+        "email": "ali@example.com",
+        "password_hash": HASH,
+        "email_verified_at": datetime.now(timezone.utc).isoformat(),
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    })
+    import asyncio
+    contact = next(row for row in db.contacts.docs if row["_id"] == "cA")
+    asyncio.run(b2b_identity._mark_accepted(db, "ali@example.com", contact))
+    contact["b2b_password_hash"] = HASH_B
+    kept = _login(client)
+    assert kept.status_code == 200, kept.text
+    assert db.b2b_identities.docs[0]["password_hash"] == HASH
+    stolen = _login(client, password=PWD_B)
+    assert stolen.status_code == 401
+
+
+def test_account_lock_and_duplicate_key_and_403_keeps_counter(client, db):
+    from mysql_store import DuplicateKeyError
+    now = datetime.now(timezone.utc).isoformat()
+    acct = b2b_identity._acct_lock_id("kilit@example.com")
+    db.login_attempts.docs.append({"_id": acct, "identifier": acct, "count": 5, "last_attempt": now})
+    locked = _login(client, email="kilit@example.com", password="wrong")
+    assert locked.status_code == 429
+    db.contacts.docs.clear()
+    db.contacts.docs.append(_contact("pasif", "coA", "Pasif", login_email="pasif@example.com", active=False))
+    db.login_attempts.docs.clear()
+    for _ in range(2):
+        bad = client.post("/api/public/b2b/login", json={"email": "pasif@example.com", "password": "wrong"})
+        assert bad.status_code == 401
+    acct_pasif = b2b_identity._acct_lock_id("pasif@example.com")
+    before = next(row["count"] for row in db.login_attempts.docs if row["identifier"] == acct_pasif)
+    blocked = client.post("/api/public/b2b/login", json={"email": "pasif@example.com", "password": PWD})
+    assert blocked.status_code == 403
+    after = next(row["count"] for row in db.login_attempts.docs if row["identifier"] == acct_pasif)
+    assert after == before == 2
+
+    async def boom(*_a, **_k):
+        raise DuplicateKeyError("dup")
+
+    db.login_attempts.update_one = boom
+    dup = client.post("/api/public/b2b/login", json={"email": "yok@example.com", "password": "wrong"})
+    assert dup.status_code == 401
+
+
+def test_legacy_email_login_and_reset_queue(db, client, monkeypatch):
+    import asyncio
+    import mail_service
+    db.companies.docs[4]["name"] = "<script>Firma</script>"
+    db.contacts.docs.append(_contact(
+        "cLeg", "coC", "<b>Eski</b>", login_email="", email="Eski@Example.com", token="portal-secret-legacy",
+    ))
+
+    def boom(*_a, **_k):
+        raise AssertionError("smtp")
+
+    monkeypatch.setattr(mail_service, "send_mail", boom)
+    res = client.post("/api/public/b2b/login", json={"email": "eski@example.com", "password": PWD})
+    assert res.status_code == 200, res.text
+    assert res.json()["redirect"] == "/portal/portal-secret-legacy"
+    assert db.b2b_identities.docs == []
+
+    async def run():
+        contact = await b2b_identity.find_legacy_contact(db, "eski@example.com")
+        assert contact["_id"] == "cLeg"
+        return await b2b_identity.finish_b2b_forgot(
+            db, "eski@example.com", None, {"ok": True},
+            {"status": "ok", "message": "x", "channel": "email"}, contact,
+        )
+
+    out = asyncio.run(run())
+    assert out["status"] == "ok"
+    queued = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_password_reset")
+    assert queued["status"] == "pending"
+    assert queued["to"] == ["eski@example.com"]
+    assert "<script>" not in queued["html"]
+    assert "<b>" not in queued["html"]
+    assert "&lt;script&gt;" in queued["html"]
+    assert "&lt;b&gt;" in queued["html"]
+
+
+def test_unknown_login_uses_dummy_bcrypt_and_hides_ident(client, monkeypatch):
+    import applog
+    seen = []
+    real = b2b_identity.verify_password
+
+    def wrapped(plain, hashed):
+        seen.append(hashed)
+        return real(plain, hashed)
+
+    monkeypatch.setattr(b2b_identity, "verify_password", wrapped)
+    logged = []
+
+    def capture(event, message="", **fields):
+        logged.append((event, message, fields))
+
+    monkeypatch.setattr(b2b_identity.applog, "log_auth", capture)
+    unknown = _login(client, email="yok@example.com", password="wrong")
+    assert unknown.status_code == 401
+    assert b2b_identity._DUMMY_HASH in seen
+    tax = client.post("/api/public/b2b/login", json={"email": "9999999999", "password": PWD})
+    assert tax.status_code == 401
+    blob = str(logged)
+    assert "yok@example.com" not in blob
+    assert "9999999999" not in blob
+    assert "b2b:email:" in blob
+    assert "b2b:tax:" in blob
+    _ = applog
+
+
+def test_removed_b2b_tenant_keys_are_gone():
+    import tenant_scope_allowlist as allowlist
+    removed = (
+        ("server.py", "_b2b_find_contact", "contacts", "find_one"),
+        ("server.py", "b2b_login", "contacts", "find_one"),
+        ("server.py", "b2b_login", "contacts", "update_one"),
+        ("server.py", "b2b_reset_get", "contacts", "find_one"),
+        ("server.py", "b2b_reset_post", "contacts", "find_one"),
+        ("server.py", "b2b_reset_post", "contacts", "update_one"),
+        ("server.py", "contact_b2b_access", "contacts", "find_one"),
+        ("server.py", "contact_b2b_access", "contacts", "update_one"),
+        ("server.py", "put_contact_b2b_portal", "contacts", "find_one"),
+        ("server.py", "put_contact_b2b_portal", "contacts", "update_one"),
+    )
+    base = allowlist.TENANT_SCOPE_BASELINE
+    present = [key for key in removed if key in base]
+    assert present == []

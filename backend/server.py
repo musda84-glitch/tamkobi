@@ -365,6 +365,8 @@ async def startup_event():
             await db.recipes.create_index([("company_id", 1), ("created_at", -1)])
             await db.login_attempts.create_index("identifier")
             await db.b2b_identities.create_index("email", unique=True)
+            await db.b2b_link_acceptances.create_index("token_hash")
+            await db.b2b_sessions.create_index("identity_id")
             await company_audit.ensure_indexes(db)
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
@@ -5207,8 +5209,6 @@ async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = 
         updated["b2b_login_email"] = str(updated.get("b2b_login_email") or "").strip().lower()
     await b2b_identity.consider_link_notice(db, doc, {**doc, **updated}, updated)
     await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": updated})
-    if updated.get("b2b_password_hash"):
-        await b2b_identity.sync_identity_password(db, {**doc, **updated}, updated["b2b_password_hash"])
     res = await db.contacts.find_one({"_id": contact_id, "company_id": cid})
     return clean_doc(res)
 
@@ -5426,8 +5426,6 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any], user: dict = 
         upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
     await b2b_identity.consider_link_notice(db, c, {**c, **upd}, upd)
     await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": upd})
-    if upd.get("b2b_password_hash"):
-        await b2b_identity.sync_identity_password(db, {**c, **upd}, upd["b2b_password_hash"])
     base = (req.get("base_url") or "").rstrip("/")
     refreshed = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) or {**c, **upd}
     company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
@@ -5471,8 +5469,6 @@ async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any], user: dic
         upd["b2b_portal_settings"] = merge_contact_b2b_settings(c.get("b2b_portal_settings"), req["settings"])
     await b2b_identity.consider_link_notice(db, c, {**c, **upd}, upd)
     await db.contacts.update_one({"_id": contact_id, "company_id": cid}, {"$set": upd})
-    if upd.get("b2b_password_hash"):
-        await b2b_identity.sync_identity_password(db, {**c, **upd}, upd["b2b_password_hash"])
     refreshed = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) or {**c, **upd}
     company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
     base = (req.get("base_url") or "").rstrip("/")
@@ -5538,7 +5534,7 @@ async def b2b_reset_post(token: str, req: Dict[str, Any]):
             {"$set": {"b2b_token": portal}},
         )
         c["b2b_token"] = portal
-    await b2b_identity.apply_password_reset(db, c, pwd)
+    await b2b_identity.apply_password_reset(db, c, pwd, email=row.get("email"))
     await db.b2b_password_resets.update_one({"_id": token}, {"$set": {"used_at": datetime.now(timezone.utc).isoformat()}})
     return {"status": "success", "message": "Şifreniz güncellendi.", "redirect": f"/portal/{c['b2b_token']}", "token": c["b2b_token"], "name": c.get("name")}
 
@@ -6653,7 +6649,7 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
         {"_id": c["_id"]},
         {"$set": {"b2b_password_hash": new_hash, "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
-    await b2b_identity.sync_identity_password(db, c, new_hash)
+    await b2b_identity.change_own_password(db, c, new_hash)
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
 def _decorate_b2b_held_order(o: Dict[str, Any]) -> Dict[str, Any]:

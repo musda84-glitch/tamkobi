@@ -39,6 +39,8 @@ STARTUP_INDEXES = (
     {"collection": "purchase_orders", "name": "order_number", "fields": ("order_number",), "unique": False},
     {"collection": "login_attempts", "name": "identifier", "fields": ("identifier",), "unique": False},
     {"collection": "b2b_identities", "name": "email", "fields": ("email",), "unique": True},
+    {"collection": "b2b_link_acceptances", "name": "token_hash", "fields": ("token_hash",), "unique": False},
+    {"collection": "b2b_sessions", "name": "identity_id", "fields": ("identity_id",), "unique": False},
     {"collection": "help_articles", "name": "slug", "fields": ("slug",), "unique": True},
 )
 
@@ -807,9 +809,15 @@ COLLECTIONS = {
     },
     "b2b_sessions": {
         "scope": SCOPE_PLATFORM,
-        "description": "B2B seçim oturumu. 15 dakika geçerli, tek kullanımlık değil; httpOnly çerez yok.",
-        "keys": ("_id", "identity_id", "expires_at", "created_at", "contact_ids"),
+        "description": "B2B seçim oturumu. _id select_token'ın SHA-256 özeti. 15 dakika, tek kullanımlık değil; httpOnly çerez yok.",
+        "keys": ("_id", "identity_id", "email", "expires_at", "created_at", "contact_ids"),
         "refs": ("b2b_identities._id",),
+    },
+    "b2b_link_acceptances": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Tedarikçi cari bağının müşteri onayı. accepted_at doluysa doğrulanmış kimlik listeler.",
+        "keys": ("_id", "email", "contact_id", "company_id", "accepted_at", "token_hash", "created_at"),
+        "refs": ("b2b_identities.email", "contacts._id"),
     },
     "b2b_email_verifications": {
         "scope": SCOPE_PLATFORM,

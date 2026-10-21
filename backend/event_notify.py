@@ -98,6 +98,8 @@ EVENT_LABELS = {
     "overtime_request": "Fazla mesai / yevmiye onayı",
 }
 DIGEST_MODES = ("instant", "hourly", "daily", "batch")
+# B2B müşteri postası: alıcı satırdaki to listesi, firma tercihleri değil. SMTP flush'ta.
+_B2B_DIRECT_EVENTS = frozenset({"b2b_link_notice", "b2b_verify_email", "b2b_password_reset"})
 EMAIL_FROM_MODES = ("platform", "company")
 DEFAULT_CHANNEL = {"inapp": True, "email": True, "sms": False, "digest": "instant"}
 _NEW_EVENT_CHANNEL = {"inapp": True, "email": False, "sms": False, "digest": "instant"}
@@ -2839,6 +2841,46 @@ async def _deliver_morning_summary(company_id: str, rows: List[dict], claim_id: 
         return 0
 
 
+async def _deliver_direct_customer_mail(company_id: str, rows: List[dict], claim_id: str) -> int:
+    """B2B onay, doğrulama ve şifre sıfırlama. Alıcı satırdaki to; istek içinde SMTP yok."""
+    try:
+        pending = [row for row in rows if (row.get("channels") or {}).get("email") and not row.get("email_sent")]
+        if not pending:
+            await _mark_rows(rows, claim_id, "skipped")
+            return len(rows)
+        company = await _db.companies.find_one({"_id": company_id}, {"name": 1}) or {}
+        company_name = str(company.get("name") or "TamKobi").strip() or "TamKobi"
+        delivered = 0
+        for row in pending:
+            to = _morning_summary_recipients(row)
+            if not to:
+                await _mark_rows([row], claim_id, "skipped")
+                delivered += 1
+                continue
+            result = await mail_service.send_mail(
+                to,
+                str(row.get("subject") or ""),
+                str(row.get("text") or ""),
+                html=str(row.get("html") or ""),
+                purpose="transactional",
+                company_id=company_id,
+                reply_to=await _company_reply_to(company_id, {}),
+                from_name=company_name,
+            )
+            if (result or {}).get("status") != "sent":
+                await _retry_rows([row], claim_id)
+                continue
+            sent_to = result.get("to") or to
+            await _record_notify_mail(company_id, list(sent_to), str(row.get("subject") or ""))
+            await _mark_rows([row], claim_id, "sent", {"email_sent": True})
+            delivered += 1
+        return delivered
+    except Exception:
+        logger.exception("notify direct customer mail company=%s", company_id)
+        await _retry_rows(rows, claim_id)
+        return 0
+
+
 async def flush_notify_outbox(*, force: bool = False) -> dict:
     """Saatlik/günlük özet ve order_new gruplamasını claim ile işler."""
     await _release_stale_sending()
@@ -2885,6 +2927,8 @@ async def flush_notify_outbox(*, force: bool = False) -> dict:
             flushed += await _deliver_order_batch(cid, claimed, claim_id)
         elif ev == "morning_summary":
             flushed += await _deliver_morning_summary(cid, claimed, claim_id)
+        elif ev in _B2B_DIRECT_EVENTS:
+            flushed += await _deliver_direct_customer_mail(cid, claimed, claim_id)
         else:
             flushed += await _deliver_generic(cid, ev, claimed, claim_id)
     return {"flushed": flushed, "at": _now()}
