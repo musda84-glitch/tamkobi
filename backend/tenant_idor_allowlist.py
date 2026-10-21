@@ -100,6 +100,14 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("PUT", "/platform/admin-v1/platform-users/{user_id}"),
     ("PUT", "/platform/admin-v1/api-keys/{key_id}/scopes"),
     ("POST", "/platform/admin-v1/api-keys/{key_id}/rotate"),
+    # Entegrasyon kimliği — HMAC platform_admin, şirket oturumu yok.
+    ("GET", "/platform/admin-v1/companies/{company_id}/einvoice"),
+    ("PUT", "/platform/admin-v1/companies/{company_id}/einvoice/credentials"),
+    ("PUT", "/platform/admin-v1/mail/servers/{server_id}"),
+    ("POST", "/platform/admin-v1/mail/servers/{server_id}/delete"),
+    ("POST", "/platform/admin-v1/mail/servers/{server_id}/test"),
+    ("PUT", "/platform/admin-v1/mail/mailboxes/{box_id}"),
+    ("POST", "/platform/admin-v1/mail/mailboxes/{box_id}/delete"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -152,4 +160,11 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("PUT", "/platform/admin-v1/platform-users/{user_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("PUT", "/platform/admin-v1/api-keys/{key_id}/scopes"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("POST", "/platform/admin-v1/api-keys/{key_id}/rotate"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("GET", "/platform/admin-v1/companies/{company_id}/einvoice"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("PUT", "/platform/admin-v1/companies/{company_id}/einvoice/credentials"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("PUT", "/platform/admin-v1/mail/servers/{server_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/mail/servers/{server_id}/delete"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/mail/servers/{server_id}/test"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("PUT", "/platform/admin-v1/mail/mailboxes/{box_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/mail/mailboxes/{box_id}/delete"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
 }

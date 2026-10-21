@@ -468,11 +468,23 @@ async def update_server(server_id: str, req: Dict[str, Any], _: dict = Depends(s
         upd["smtp_port"] = int(req["smtp_port"] or 587)
     if "is_active" in req:
         upd["is_active"] = bool(req["is_active"])
+    host_changed = "smtp_host" in upd and upd["smtp_host"] != str(cur.get("smtp_host") or "").strip()
+    user_changed = "smtp_user" in upd and upd["smtp_user"] != str(cur.get("smtp_user") or "").strip()
     pwd = (req.get("password") or "").strip()
+    unset = None
     if pwd:
         upd["password_enc"] = comm_service.encrypt(pwd)
-    await _db.platform_mail_servers.update_one({"_id": server_id}, {"$set": upd})
-    return _public_server({**cur, **upd})
+    elif host_changed or user_changed:
+        # Kayıtlı SMTP şifresi yeni hosta veya yeni kullanıcıya gitmez.
+        unset = {"password_enc": ""}
+    write: Dict[str, Any] = {"$set": upd}
+    if unset:
+        write["$unset"] = unset
+    await _db.platform_mail_servers.update_one({"_id": server_id}, write)
+    merged = {**cur, **upd}
+    if unset:
+        merged.pop("password_enc", None)
+    return _public_server(merged)
 
 
 @router.delete("/system/mail/servers/{server_id}")

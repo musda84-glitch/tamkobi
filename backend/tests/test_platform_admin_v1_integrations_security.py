@@ -12,8 +12,10 @@ import os
 import sys
 from pathlib import Path
 
+import pyotp
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock
 
 os.environ.setdefault("JWT_SECRET", "test-admin-v1-integrations-security-jwt-not-default")
 os.environ.setdefault("TAMKOBI_BACKGROUND_JOBS", "0")
@@ -25,10 +27,14 @@ sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 
 import ai_service  # noqa: E402
 import comm_service  # noqa: E402
+import gib_credits  # noqa: E402
+import platform_mail  # noqa: E402
+import public_sites  # noqa: E402
 import platform_store as store  # noqa: E402
 import saas  # noqa: E402
 import saas_billing  # noqa: E402
 import saas_extras  # noqa: E402
+import superadmin_2fa  # noqa: E402
 from test_platform_admin_v1 import FakeDB, _detail, _issue, _signed_headers  # noqa: E402
 
 _COMPANY = "comp_security"
@@ -41,6 +47,11 @@ _EI_PASS = "enc:stored-ei-pass"
 _EI_KEY = "enc:stored-ei-key"
 _PAYTR_KEY = "enc:stored-merchant-key"
 _PAYTR_SALT = "enc:stored-merchant-salt"
+_OPERATOR = "ops@example.com"
+_TOTP = pyotp.random_base32()
+_REASON = "Canli adresi ve 2FA zorunlulugunu onayli degistir"
+_SMTP_SECRET = "stored-smtp-secret"
+_NEW_URL = "https://app.example.test"
 
 
 def _send(client, secret, key_id, method, path, payload=None, *, idem="idem-1"):
@@ -73,6 +84,8 @@ def sec(monkeypatch):
         "billing": saas_billing._db,
         "billing_deps": dict(saas_billing._deps),
         "extras": saas_extras._db,
+        "mail": platform_mail._db,
+        "credits": gib_credits._db,
         "server": server.db,
     }
     store.init(fake)
@@ -80,10 +93,15 @@ def sec(monkeypatch):
     saas.invalidate()
     saas_billing.init(fake, {})
     saas_extras.init(fake, {})
+    platform_mail.init(fake)
+    gib_credits.init(fake)
     server.db = fake
     monkeypatch.setattr(comm_service, "encrypt", lambda value: "enc:" + (value or ""))
     monkeypatch.setattr(comm_service, "decrypt", lambda value: (value or "").removeprefix("enc:"))
+    monkeypatch.setattr(superadmin_2fa, "decrypt", lambda value: (value or "").removeprefix("enc:"))
+    monkeypatch.setattr(superadmin_2fa, "encrypt", lambda value: "enc:" + (value or ""))
     monkeypatch.setattr(ai_service, "make_chat", _make_chat)
+    monkeypatch.setattr(public_sites, "sync_tamkobi_from_settings", AsyncMock())
 
     async def seed():
         await fake.companies.insert_one({"_id": _COMPANY, "name": "Guvenlik", "license_id": _COMPANY})
@@ -115,6 +133,30 @@ def sec(monkeypatch):
                 "base_url": _STORED_URL,
                 "api_key_enc": "enc:" + _STORED_AI,
             },
+            "public_url": "https://tamkobi.com",
+            "require_superadmin_2fa": False,
+            "brand_name": "TamKobi",
+        })
+        await fake.users.insert_one({
+            "_id": "usr_ops",
+            "name": "Operator",
+            "email": _OPERATOR,
+            "role": "admin",
+            "company_ids": [],
+            "is_super_admin": True,
+            "is_active": True,
+            "totp_enabled": True,
+            "totp_secret": "enc:" + _TOTP,
+        })
+        await fake.platform_mail_servers.insert_one({
+            "_id": "pms_sec",
+            "name": "Posta",
+            "provider": "custom",
+            "smtp_host": "smtp.stored.example",
+            "smtp_port": 587,
+            "smtp_user": "ada@stored.example",
+            "password_enc": "enc:" + _SMTP_SECRET,
+            "is_active": True,
         })
 
     asyncio.run(seed())
@@ -135,6 +177,8 @@ def sec(monkeypatch):
         saas_billing._deps.clear()
         saas_billing._deps.update(prev["billing_deps"])
         saas_extras.init(prev["extras"], {})
+        platform_mail.init(prev["mail"])
+        gib_credits.init(prev["credits"])
         server.db = prev["server"]
         saas.invalidate()
 
@@ -256,3 +300,280 @@ def test_blank_secret_fields_require_secrets_write(sec):
     assert _settings(db)["legal_iban"] == _IBAN
     assert _settings(db)["legal_name"] == "TamKobi"
     assert calls == []
+
+
+def _otp():
+    return pyotp.TOTP(_TOTP).now()
+
+
+def _danger(client, secret, key_id, action, body, confirm_text, db, *, prep_idem, conf_idem):
+    prepared = _send(
+        client, secret, key_id, "POST",
+        f"/api/platform/admin-v1/danger/{action}/prepare",
+        body,
+        idem=prep_idem,
+    )
+    assert prepared.status_code == 200, prepared.text
+    db.users.docs["usr_ops"]["totp_last_counter"] = None
+    confirmed = _send(
+        client, secret, key_id, "POST",
+        f"/api/platform/admin-v1/danger/{action}/confirm",
+        {
+            "confirmation_token": prepared.json()["confirmation_token"],
+            "confirm_text": confirm_text,
+            "operator_otp": _otp(),
+        },
+        idem=conf_idem,
+    )
+    return prepared, confirmed
+
+
+def test_endpoint_change_without_secret_drops_the_stored_secret(sec, monkeypatch):
+    client, db, calls = sec
+    writer, writer_secret = _issue(
+        db,
+        [store.SCOPE_ADMIN_EINVOICE_WRITE, store.SCOPE_ADMIN_AI_WRITE, store.SCOPE_ADMIN_SETTINGS_WRITE],
+        name="endpoint-writer",
+    )
+    einvoice_denied = _send(
+        client, writer_secret, writer["id"], "PUT",
+        f"/api/platform/admin-v1/companies/{_COMPANY}/einvoice/credentials",
+        {"api_url": "https://evil.example/einvoice"},
+        idem="ei-url-denied",
+    )
+    assert einvoice_denied.status_code == 403
+    assert _detail(einvoice_denied) == "Kapsam yetersiz"
+    kept = db.einvoice_settings.docs["ei1"]
+    assert kept["password_enc"] == _EI_PASS
+    assert kept["api_key_enc"] == _EI_KEY
+    assert kept.get("api_url") in (None, "")
+
+    ai_denied = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/ai",
+        {"base_url": _EVIL_URL},
+        idem="ai-url-denied",
+    )
+    assert ai_denied.status_code == 403
+    assert _detail(ai_denied) == "Kapsam yetersiz"
+    assert _settings(db)["ai"]["api_key_enc"] == "enc:" + _STORED_AI
+    assert _settings(db)["ai"]["base_url"] == _STORED_URL
+    assert _STORED_AI not in ai_denied.text
+
+    provider_denied = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/ai",
+        {"provider": "openai"},
+        idem="ai-provider-denied",
+    )
+    assert provider_denied.status_code == 403
+    assert _settings(db)["ai"]["provider"] == "custom"
+    assert _settings(db)["ai"]["api_key_enc"] == "enc:" + _STORED_AI
+
+    mail_denied = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/mail/servers/pms_sec",
+        {"smtp_host": "smtp.evil.example"},
+        idem="smtp-host-denied",
+    )
+    assert mail_denied.status_code == 403
+    assert _detail(mail_denied) == "Kapsam yetersiz"
+    assert db.platform_mail_servers.docs["pms_sec"]["password_enc"] == "enc:" + _SMTP_SECRET
+    assert db.platform_mail_servers.docs["pms_sec"]["smtp_host"] == "smtp.stored.example"
+
+    user_denied = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/mail/servers/pms_sec",
+        {"smtp_user": "eve@evil.example"},
+        idem="smtp-user-denied",
+    )
+    assert user_denied.status_code == 403
+    assert db.platform_mail_servers.docs["pms_sec"]["smtp_user"] == "ada@stored.example"
+
+    holder, holder_secret = _issue(
+        db,
+        [
+            store.SCOPE_ADMIN_EINVOICE_WRITE,
+            store.SCOPE_ADMIN_AI_WRITE,
+            store.SCOPE_ADMIN_SETTINGS_WRITE,
+            store.SCOPE_ADMIN_SECRETS_WRITE,
+        ],
+        name="endpoint-secrets",
+    )
+    cleared = _send(
+        client, holder_secret, holder["id"], "PUT",
+        f"/api/platform/admin-v1/companies/{_COMPANY}/einvoice/credentials",
+        {"api_url": "https://evil.example/einvoice", "efatura_url": "https://evil.example/efatura"},
+        idem="ei-url-clear",
+    )
+    assert cleared.status_code == 200, cleared.text
+    doc = db.einvoice_settings.docs["ei1"]
+    assert doc.get("api_url") == "https://evil.example/einvoice"
+    assert "password_enc" not in doc
+    assert "api_key_enc" not in doc
+    assert _EI_PASS not in cleared.text
+    assert "stored-ei-pass" not in cleared.text
+
+    import isnet
+    import server
+    probed = []
+
+    async def _probe(settings, password):
+        probed.append({"api_url": settings.get("api_url"), "password": password, "api_key": settings.get("api_key")})
+        return {"ok": True}
+
+    monkeypatch.setattr(isnet, "test_connection", _probe)
+    asyncio.run(server.test_einvoice_connection(_COMPANY, {"is_super_admin": True, "company_ids": [_COMPANY]}))
+    assert probed
+    assert probed[0]["api_url"] == "https://evil.example/einvoice"
+    assert probed[0]["password"] == ""
+    assert "stored-ei-pass" not in json.dumps(probed)
+    assert _EI_KEY not in json.dumps(probed)
+
+    replaced = _send(
+        client, holder_secret, holder["id"], "PUT",
+        f"/api/platform/admin-v1/companies/{_COMPANY}/einvoice/credentials",
+        {"api_url": "https://next.example/einvoice", "password": "yeni-ei-sifre"},
+        idem="ei-url-replace",
+    )
+    assert replaced.status_code == 200, replaced.text
+    doc = db.einvoice_settings.docs["ei1"]
+    assert doc["password_enc"] == "enc:yeni-ei-sifre"
+    assert "api_key_enc" not in doc
+    assert "yeni-ei-sifre" not in replaced.text
+
+    seen = []
+
+    async def _make_chat(*_args, **kwargs):
+        cfg = await ai_service.load_ai_settings()
+        seen.append({
+            "api_key": kwargs.get("api_key"),
+            "base_url": kwargs.get("base_url"),
+            "loaded_key": cfg.get("api_key"),
+            "loaded_url": cfg.get("base_url"),
+        })
+        return _Chat()
+
+    monkeypatch.setattr(ai_service, "make_chat", _make_chat)
+    ai_cleared = _send(
+        client, holder_secret, holder["id"], "PUT", "/api/platform/admin-v1/ai",
+        {"base_url": _EVIL_URL},
+        idem="ai-url-clear",
+    )
+    assert ai_cleared.status_code == 200, ai_cleared.text
+    stored_ai = _settings(db)["ai"]
+    assert "api_key_enc" not in stored_ai
+    assert _EVIL_URL in str(stored_ai.get("base_url") or "")
+    assert _STORED_AI not in ai_cleared.text
+    dial = _send(
+        client, holder_secret, holder["id"], "POST", "/api/platform/admin-v1/ai/test",
+        {},
+        idem="ai-dial-after-clear",
+    )
+    assert dial.status_code == 200, dial.text
+    blob = json.dumps(seen)
+    assert _STORED_AI not in blob
+    assert _EVIL_URL.split("://", 1)[1].split("/", 1)[0] in blob
+    assert "stored.example" not in blob
+
+    smtp = AsyncMock(return_value={"ok": True, "message": "ok"})
+    monkeypatch.setattr(comm_service, "smtp_login_test", smtp)
+    host_cleared = _send(
+        client, holder_secret, holder["id"], "PUT", "/api/platform/admin-v1/mail/servers/pms_sec",
+        {"smtp_host": "smtp.evil.example"},
+        idem="smtp-host-clear",
+    )
+    assert host_cleared.status_code == 200, host_cleared.text
+    assert "password_enc" not in db.platform_mail_servers.docs["pms_sec"]
+    assert db.platform_mail_servers.docs["pms_sec"]["smtp_host"] == "smtp.evil.example"
+    assert _SMTP_SECRET not in host_cleared.text
+    probed_mail = _send(
+        client, holder_secret, holder["id"], "POST",
+        "/api/platform/admin-v1/mail/servers/pms_sec/test",
+        {},
+        idem="smtp-dial",
+    )
+    assert probed_mail.status_code == 400
+    assert smtp.await_count == 0
+    assert _SMTP_SECRET not in probed_mail.text
+
+    asyncio.run(db.platform_mail_servers.update_one(
+        {"_id": "pms_sec"},
+        {"$set": {"password_enc": "enc:" + _SMTP_SECRET, "smtp_host": "smtp.kept.example"}},
+    ))
+    user_cleared = _send(
+        client, holder_secret, holder["id"], "PUT", "/api/platform/admin-v1/mail/servers/pms_sec",
+        {"smtp_user": "eve@evil.example"},
+        idem="smtp-user-clear",
+    )
+    assert user_cleared.status_code == 200, user_cleared.text
+    assert db.platform_mail_servers.docs["pms_sec"]["smtp_user"] == "eve@evil.example"
+    assert "password_enc" not in db.platform_mail_servers.docs["pms_sec"]
+    assert _SMTP_SECRET not in user_cleared.text
+
+
+def test_settings_flags_require_danger(sec):
+    client, db, _calls = sec
+    writer, writer_secret = _issue(db, [store.SCOPE_ADMIN_SETTINGS_WRITE], name="settings-writer")
+    blocked_url = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/settings",
+        {"public_url": "https://evil.example", "brand_name": "Baska"},
+        idem="url-direct",
+    )
+    assert blocked_url.status_code == 403
+    assert _detail(blocked_url) == "public_url danger/settings.public_url ile değişir."
+    assert _settings(db).get("public_url") == "https://tamkobi.com"
+    assert _settings(db).get("brand_name") == "TamKobi"
+
+    blocked_2fa = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/settings",
+        {"require_superadmin_2fa": True},
+        idem="2fa-direct",
+    )
+    assert blocked_2fa.status_code == 403
+    assert "danger/settings.require_superadmin_2fa" in _detail(blocked_2fa)
+    assert _settings(db).get("require_superadmin_2fa") is False
+
+    renamed = _send(
+        client, writer_secret, writer["id"], "PUT", "/api/platform/admin-v1/settings",
+        {"brand_name": "Yeni Marka"},
+        idem="brand-ok",
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert _settings(db).get("brand_name") == "Yeni Marka"
+    assert _settings(db).get("public_url") == "https://tamkobi.com"
+
+    both, both_secret = _issue(
+        db,
+        [store.SCOPE_ADMIN_SETTINGS_WRITE, store.SCOPE_ADMIN_DANGEROUS],
+        name="settings-danger",
+    )
+    _prepared, url_ok = _danger(
+        client, both_secret, both["id"], "settings.public_url",
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "public_url": _NEW_URL,
+        },
+        _NEW_URL,
+        db,
+        prep_idem="url-prep",
+        conf_idem="url-conf",
+    )
+    assert url_ok.status_code == 200, url_ok.text
+    assert _settings(db).get("public_url") == _NEW_URL
+    assert url_ok.json()["item"]["public_url"] == _NEW_URL
+
+    _prepared, flag_ok = _danger(
+        client, both_secret, both["id"], "settings.require_superadmin_2fa",
+        {
+            "target_id": "platform",
+            "reason": _REASON,
+            "operator_email": _OPERATOR,
+            "require_superadmin_2fa": True,
+        },
+        "true",
+        db,
+        prep_idem="2fa-prep",
+        conf_idem="2fa-conf",
+    )
+    assert flag_ok.status_code == 200, flag_ok.text
+    assert _settings(db).get("require_superadmin_2fa") is True
+    assert flag_ok.json()["item"]["require_superadmin_2fa"] is True

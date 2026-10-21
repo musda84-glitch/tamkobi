@@ -829,6 +829,18 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
         sends[name] = AsyncMock()
         monkeypatch.setattr(comm_service, name, sends[name])
     monkeypatch.setattr(platform_mail, "dispatch_password_reset_mail", AsyncMock())
+    import isnet
+    monkeypatch.setattr(
+        isnet,
+        "isnet_ip_registration_info",
+        AsyncMock(return_value={
+            "egress_ips": [],
+            "production_host": "example.test",
+            "production_ips": [],
+            "same_as_production": False,
+            "support_email": "destek@example.test",
+        }),
+    )
 
     async def seed():
         await db.companies.insert_one({

@@ -611,8 +611,14 @@ async def put_system_ai(req: Dict[str, Any], _: dict = Depends(saas.require_supe
             cur.pop("base_url", None)
         cur["provider"] = provider
     for field in ("advisor_model", "extract_model", "base_url"):
-        if field in req:
-            cur[field] = str(req.get(field) or "").strip()
+        if field not in req:
+            continue
+        value = str(req.get(field) or "").strip()
+        # Uç nokta değişince eski anahtar taşınmaz. Yeni adres kendi api_key değerini ister.
+        if field == "base_url" and _ai_endpoint(value) != _ai_endpoint(cur.get("base_url")):
+            cur.pop("api_key_enc", None)
+            cur.pop("last_test", None)
+        cur[field] = value
     incoming_key = _ai_key_payload(req.get("api_key"))
     if incoming_key:
         cur["api_key_enc"] = comm_service.encrypt(incoming_key)

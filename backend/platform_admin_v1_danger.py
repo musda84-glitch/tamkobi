@@ -16,6 +16,7 @@ from client_ip import request_ip
 import applog
 import company_reset
 import saas
+import saas_billing
 import saas_extras
 import superadmin_2fa
 import support_access
@@ -249,6 +250,8 @@ _ACTIONS = (
     "platform_user.create",
     "platform_user.password",
     "platform_user.email",
+    "settings.public_url",
+    "settings.require_superadmin_2fa",
     "maintenance.enable",
     "gib.gift",
 )
@@ -271,6 +274,8 @@ _PREPARE_EXTRA = {
     "platform_user.create": ("name", "email", "password", "is_active"),
     "platform_user.password": ("password",),
     "platform_user.email": ("email",),
+    "settings.public_url": ("public_url",),
+    "settings.require_superadmin_2fa": ("require_superadmin_2fa",),
     "maintenance.enable": (
         "title", "body", "starts_at", "ends_at", "notify_popup", "notify_sms",
         "audience", "company_ids", "support_email", "support_phone",
@@ -310,6 +315,8 @@ def _target_type(action: str) -> str:
         return "api_key"
     if action == "maintenance.enable":
         return "maintenance"
+    if action.startswith("settings."):
+        return "settings"
     return "company"
 
 
@@ -336,6 +343,8 @@ def _hint_for(action: str) -> str:
         return _KEY_HINT
     if action == "maintenance.enable":
         return _MAINTENANCE_HINT
+    if action.startswith("settings."):
+        return "yeni değeri birebir yazın"
     return _USER_HINT
 
 
@@ -350,6 +359,8 @@ def _text_error(action: str) -> str:
         return _KEY_TEXT_ERROR
     if action == "maintenance.enable":
         return _MAINTENANCE_TEXT_ERROR
+    if action.startswith("settings."):
+        return "Onay için yeni değeri birebir yazın."
     return _USER_TEXT_ERROR
 
 
@@ -410,6 +421,10 @@ def _preview_summary(action: str, preview: Dict[str, Any]) -> Dict[str, Any]:
         return {"email": preview.get("email"), "name": preview.get("name")}
     if action in ("platform_user.password", "platform_user.email"):
         return {"email": preview.get("email")}
+    if action == "settings.public_url":
+        return {"public_url": preview.get("public_url")}
+    if action == "settings.require_superadmin_2fa":
+        return {"require_superadmin_2fa": preview.get("require_superadmin_2fa")}
     if action == "maintenance.enable":
         return {"title": preview.get("title")}
     if action == "gib.gift":
@@ -440,6 +455,10 @@ def _result_summary(action: str, result: Dict[str, Any]) -> Dict[str, Any]:
         return {"id": result.get("id"), "scopes": list(result.get("scopes") or [])}
     if action in ("platform_user.create", "platform_user.password", "platform_user.email"):
         return {"id": result.get("id"), "email": result.get("email")}
+    if action == "settings.public_url":
+        return {"public_url": result.get("public_url")}
+    if action == "settings.require_superadmin_2fa":
+        return {"require_superadmin_2fa": result.get("require_superadmin_2fa")}
     if action == "maintenance.enable":
         return {"enabled": result.get("enabled")}
     if action == "gib.gift":
@@ -895,6 +914,49 @@ async def _validate_product_scopes(key_id: str, params: Dict[str, Any]) -> dict:
     }
 
 
+async def _validate_settings_public_url(params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_SETTINGS_WRITE),
+    )
+    raw = params.get("public_url")
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=400, detail="public_url zorunlu.")
+    url = raw.strip()[:500]
+    from platform_admin_v1_write import _http_url
+    if not _http_url(url):
+        raise HTTPException(status_code=400, detail="public_url http veya https olmalı.")
+    st = await saas_billing.settings()
+    current = str(st.get("public_url") or "").strip()
+    params["public_url"] = url
+    return {
+        "label": url,
+        "fp": _fp({"id": "platform", "public_url": current, "next": url}),
+        "preview": {"public_url": url},
+        "scopes": None,
+    }
+
+
+async def _validate_settings_2fa(params: Dict[str, Any]) -> dict:
+    await _caller_doc(
+        str(params.get("_caller_key_id") or ""),
+        (store.SCOPE_ADMIN_DANGEROUS, store.SCOPE_ADMIN_SETTINGS_WRITE),
+    )
+    flag = params.get("require_superadmin_2fa")
+    if not isinstance(flag, bool):
+        raise HTTPException(status_code=400, detail="require_superadmin_2fa boolean olmalı.")
+    st = await saas_billing.settings()
+    current = bool(st.get("require_superadmin_2fa"))
+    params["require_superadmin_2fa"] = flag
+    label = "true" if flag else "false"
+    return {
+        "label": label,
+        "fp": _fp({"id": "platform", "require_superadmin_2fa": current, "next": flag}),
+        "preview": {"require_superadmin_2fa": flag},
+        "scopes": None,
+    }
+
+
 async def _validate_maintenance(params: Dict[str, Any]) -> dict:
     import platform_notices
     title = str(params.get("title") or "").strip()
@@ -968,6 +1030,10 @@ async def _validate_action(action: str, target_id: str, operator_email: str, par
         return await _validate_platform_user_password(target_id, params)
     if action == "platform_user.email":
         return await _validate_platform_user_email(target_id, params)
+    if action == "settings.public_url":
+        return await _validate_settings_public_url(params)
+    if action == "settings.require_superadmin_2fa":
+        return await _validate_settings_2fa(params)
     if action == "maintenance.enable":
         return await _validate_maintenance(params)
     if action == "gib.gift":
@@ -982,7 +1048,7 @@ def _text_matches(action: str, label: str, text: Any) -> bool:
         "plan.delete", "product.delete", "key.revoke", "key.admin_create", "key.admin_scopes",
         "key.product_create", "key.product_scopes",
         "maintenance.enable", "gib.gift",
-    ):
+    ) or action.startswith("settings."):
         return text.strip() == (label or "").strip()
     return text.strip().lower() == (label or "").strip().lower()
 
@@ -1197,6 +1263,13 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
     if action == "platform_user.email":
         row = await saas.system_update_user(target_id, {"email": params.get("email")}, {})
         return {"id": row.get("id"), "email": row.get("email")}
+    if action == "settings.public_url":
+        await saas_billing.put_settings({"public_url": params.get("public_url")}, {})
+        return {"public_url": params.get("public_url")}
+    if action == "settings.require_superadmin_2fa":
+        flag = bool(params.get("require_superadmin_2fa"))
+        await saas_billing.put_settings({"require_superadmin_2fa": flag}, {})
+        return {"require_superadmin_2fa": flag}
     if action == "maintenance.enable":
         import platform_notices
         body = {k: v for k, v in params.items() if not str(k).startswith("_")}
@@ -1367,6 +1440,20 @@ async def admin_v1_danger_prepare(action: str, request: Request):
             params["_caller_key_id"] = caller_id
         if action == "platform_user.email":
             params["email"] = payload.get("email")
+            params["_caller_key_id"] = caller_id
+        if action == "settings.public_url":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            if not isinstance(payload.get("public_url"), str):
+                raise HTTPException(status_code=400, detail="public_url zorunlu.")
+            params["public_url"] = payload.get("public_url")
+            params["_caller_key_id"] = caller_id
+        if action == "settings.require_superadmin_2fa":
+            if tid != "platform":
+                raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+            if not isinstance(payload.get("require_superadmin_2fa"), bool):
+                raise HTTPException(status_code=400, detail="require_superadmin_2fa boolean olmalı.")
+            params["require_superadmin_2fa"] = payload.get("require_superadmin_2fa")
             params["_caller_key_id"] = caller_id
         if action == "gib.gift":
             credits = payload.get("credits")
