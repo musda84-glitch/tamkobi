@@ -632,6 +632,70 @@ def test_company_pagination_and_detail(db):
     assert "secret" not in json.dumps(rows[-1]["details"])
 
 
+def test_admin_v1_company_no_list_detail_and_exact_search(db):
+    async def seed():
+        await db.companies.insert_one({
+            "_id": "comp_n1",
+            "name": "Beta Ticaret",
+            "company_no": 100001,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        })
+        await db.companies.insert_one({
+            "_id": "comp_n2",
+            "name": "Beta 10000",
+            "company_no": 100010,
+            "created_at": "2026-02-01T00:00:00+00:00",
+        })
+        await db.companies.insert_one({
+            "_id": "comp_plain",
+            "name": "Numarasiz",
+            "created_at": "2026-03-01T00:00:00+00:00",
+        })
+
+    asyncio.run(seed())
+    before_counters = copy.deepcopy(db.counters.docs)
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_COMPANIES_READ], name="cno")
+    client = _client()
+
+    listed, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/companies")
+    assert listed.status_code == 200, listed.text
+    by_id = {item["id"]: item for item in listed.json()["items"]}
+    assert set(by_id) == {"comp_n1", "comp_n2", "comp_plain"}
+    assert by_id["comp_n1"]["company_no"] == 100001
+    assert by_id["comp_n2"]["company_no"] == 100010
+    assert by_id["comp_plain"]["company_no"] is None
+    assert by_id["comp_n1"]["id"] == "comp_n1"
+
+    exact, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/companies", params={"q": "100001"},
+    )
+    assert exact.status_code == 200, exact.text
+    assert [item["id"] for item in exact.json()["items"]] == ["comp_n1"]
+    assert exact.json()["total"] == 1
+
+    prefix, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/companies", params={"q": "10000"},
+    )
+    assert prefix.status_code == 200, prefix.text
+    assert [item["id"] for item in prefix.json()["items"]] == ["comp_n2"]
+    assert prefix.json()["items"][0]["company_no"] == 100010
+
+    named, _, _ = _get(
+        client, secret, pub["id"], "/api/platform/admin-v1/companies", params={"q": "beta"},
+    )
+    assert {item["id"] for item in named.json()["items"]} == {"comp_n1", "comp_n2"}
+
+    detail, _, _ = _get(client, secret, pub["id"], "/api/platform/admin-v1/companies/comp_n2")
+    assert detail.status_code == 200, detail.text
+    item = detail.json()["item"]
+    assert item["id"] == "comp_n2"
+    assert item["company_no"] == 100010
+    assert "users" not in item
+    assert db.counters.docs == before_counters
+    assert db.companies.docs["comp_plain"].get("company_no") is None
+    assert db.companies.docs["comp_n1"]["company_no"] == 100001
+
+
 def test_audit_cursor(db):
     async def seed():
         for i in range(1, 6):

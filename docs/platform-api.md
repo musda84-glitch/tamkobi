@@ -107,18 +107,18 @@ Ortak hatalar: **401** eksik/bozuk imza, geçersiz anahtar, tekrarlanan nonce; *
 
 ### GET `/api/platform/admin-v1/companies`
 
-Kapsam: `admin.companies:read`. Parametreler: `limit`, `offset`, isteğe bağlı `q` (ad içinde arama). Her satır `saas._company_row` çıktısıdır (plan, lisans, kullanım).
+Kapsam: `admin.companies:read`. Parametreler: `limit`, `offset`, isteğe bağlı `q`. `q` şirket adında alt dizgi arar. `q` aynı zamanda `company_no` ile birebir eşleşir (`100001` tutar, `10000` `100001` ile eşleşmez). Her satır `saas._company_row` çıktısıdır (plan, lisans, kullanım) ve `company_no` taşır. `company_no` Şirket ID'dir: 100001'den başlayan tamsayı. Birincil anahtar değildir; `id` `comp_…` kalır. Kayıtta numara yoksa `company_no` `null` döner. Bu GET numara yazmaz.
 
 ```json
-{"items": [{"id": "comp_…", "name": "…", "membership": {"plan_id": "plan_pro", "status": "active"}, "einvoice": {"has_password": false}}], "limit": 50, "offset": 0, "total": 1}
+{"items": [{"id": "comp_…", "company_no": 100001, "name": "…", "membership": {"plan_id": "plan_pro", "status": "active"}, "einvoice": {"has_password": false}}], "limit": 50, "offset": 0, "total": 1}
 ```
 
 ### GET `/api/platform/admin-v1/companies/{company_id}`
 
-Kapsam: `admin.companies:read`. `saas.company_detail(..., include_users=false)`: `_company_row` + `quota_usage` + üyelik sayıları + son 20 yükseltme talebi. `users` alanı dönmez. Yoksa **404**.
+Kapsam: `admin.companies:read`. `saas.company_detail(..., include_users=false)`: `_company_row` (`company_no` dahil) + `quota_usage` + üyelik sayıları + son 20 yükseltme talebi. `users` alanı dönmez. `id` `comp_…` kalır. Yoksa **404**.
 
 ```json
-{"item": {"id": "comp_…", "name": "…", "requests": [], "quota_usage": {"product_count": 0, "contact_count": 0, "storage_bytes": 0}, "membership": {"plan_id": "plan_pro"}}}
+{"item": {"id": "comp_…", "company_no": 100001, "name": "…", "requests": [], "quota_usage": {"product_count": 0, "contact_count": 0, "storage_bytes": 0}, "membership": {"plan_id": "plan_pro"}}}
 ```
 
 ### GET `/api/platform/admin-v1/companies/{company_id}/users`
@@ -326,7 +326,7 @@ Kapsam: `admin.integrators:write`. Audit: `admin_v1.write.product.update`. İzin
 
 ### POST `/api/platform/admin-v1/companies`
 
-Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.create`, `target_id` yeni şirket. İzinli alanlar: `name`, `admin_email`, `admin_password` (zorunlu; şifre en az 6), `tax_number`, `tax_office`, `address`, `city`, `phone`, `admin_name`, `plan_id`, `trial_days` (tamsayı `0..3650`), `expires_at` (ISO veya yok), `billing_period` (`monthly`|`yearly`), `notes`. İş `saas.validate_new_company` + `saas.apply_create_company`. `/system/companies` aynı yardımcıları çağırır ve gevşek gövdeyi kabul etmeye devam eder. Yanıt `{"item": _company_row}`. `admin_password` ve `password_hash` yanıtta ve audit `fields` listesinde yoktur. E-posta zaten varsa **400** `Bu e-posta ile kullanıcı zaten var.`. Paket yoksa **400** `Geçersiz paket.`.
+Kapsam: `admin.licenses:write`. Audit: `admin_v1.write.company.create`, `target_id` yeni şirket. İzinli alanlar: `name`, `admin_email`, `admin_password` (zorunlu; şifre en az 6), `tax_number`, `tax_office`, `address`, `city`, `phone`, `admin_name`, `plan_id`, `trial_days` (tamsayı `0..3650`), `expires_at` (ISO veya yok), `billing_period` (`monthly`|`yearly`), `notes`. İş `saas.validate_new_company` + `saas.apply_create_company`. Yeni şirkete `company_no` atomik sayaçtan yazılır; `id` yine `comp_…` olur. `/system/companies` aynı yardımcıları çağırır ve gevşek gövdeyi kabul etmeye devam eder. Yanıt `{"item": _company_row}` (`company_no` dahil). `admin_password` ve `password_hash` yanıtta ve audit `fields` listesinde yoktur. E-posta zaten varsa **400** `Bu e-posta ile kullanıcı zaten var.`. Paket yoksa **400** `Geçersiz paket.`.
 
 ### POST `/api/platform/admin-v1/companies/{company_id}/companies`
 

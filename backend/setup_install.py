@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 import db_ssl
 import user_numbers
+import company_numbers
 from auth_utils import hash_password
 from mysql_store import MySQLDatabase
 from setup_state import (
@@ -230,6 +231,7 @@ async def perform_install(req: InstallRequest) -> dict:
                 "currency": "TRY",
                 "created_at": _now(),
                 "license_id": company_id,
+                "company_no": await company_numbers.next_company_no(local),
                 "allow_platform_access": False,
             }
         )

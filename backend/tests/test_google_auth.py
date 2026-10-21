@@ -199,6 +199,7 @@ def test_new_user_signup_complete(monkeypatch):
     monkeypatch.setattr(server.attendance, "employee_for_user", AsyncMock(return_value=None))
     monkeypatch.setattr(server.user_numbers, "next_user_number", AsyncMock(return_value=42))
     monkeypatch.setattr(server.user_numbers, "ensure_user_number", AsyncMock(return_value=42))
+    monkeypatch.setattr(server.company_numbers, "next_company_no", AsyncMock(return_value=100001))
     monkeypatch.setattr(server.saas, "start_trial", AsyncMock())
     monkeypatch.setattr(server.saas, "effective", AsyncMock(return_value={"plan_name": "Deneme", "days_left": 14}))
     monkeypatch.setattr(server.saas_billing, "settings", AsyncMock(return_value={"trial_days": 14, "trial_plan_id": "plan_trial"}))
@@ -220,6 +221,8 @@ def test_new_user_signup_complete(monkeypatch):
     assert created["user"]["auth_provider"] == "google"
     assert created["user"]["google_sub"] == "google-sub-123"
     assert created["company"]["name"] == "Yeni AŞ"
+    assert created["company"]["_id"].startswith("comp_")
+    assert created["company"]["company_no"] == 100001
     assert out.get("status") == "success" or out.get("user")
 
 

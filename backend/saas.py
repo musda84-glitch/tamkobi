@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 import rbac
 import user_numbers
+import company_numbers
 import applog
 import perfmon
 import tenant_access
@@ -717,6 +718,7 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
         "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "",
         "email": admin_email or req.get("email") or parent.get("email") or "", "currency": parent.get("currency") or "TRY",
         "license_id": lid, "parent_company_id": parent_company_id, "created_at": _now(),
+        "company_no": await company_numbers.next_company_no(_db),
         "allow_platform_access": False,
     })
     await rbac.ensure_roles(cid)
@@ -856,6 +858,7 @@ async def _company_row(c: dict) -> Dict[str, Any]:
     raw_lic = await _db.company_licenses.find_one({"_id": lid}, {"started_at": 1, "created_at": 1}) or {}
     return {
         "id": c["_id"],
+        "company_no": company_numbers.as_int(c.get("company_no")),
         "name": c.get("name"),
         "tax_number": c.get("tax_number"),
         "tax_office": c.get("tax_office") or "",
@@ -1535,7 +1538,7 @@ async def apply_create_company(req: Dict[str, Any]) -> dict:
     name = (req.get("name") or "").strip(); email = (req.get("admin_email") or "").strip().lower(); pwd = req.get("admin_password") or ""
     plan_id = req.get("plan_id") or "plan_standard"
     cid = f"comp_{uuid.uuid4().hex[:8]}"
-    await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "created_at": _now(), "allow_platform_access": False})
+    await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "company_no": await company_numbers.next_company_no(_db), "created_at": _now(), "allow_platform_access": False})
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": (req.get("admin_name") or name).strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "user_number": await user_numbers.next_user_number(_db), "created_at": _now()})
     trial_days = int(req.get("trial_days") or 0)

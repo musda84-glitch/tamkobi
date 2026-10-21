@@ -18,6 +18,7 @@ import platform_auth
 import platform_mail
 import platform_sms
 import platform_store as store
+import company_numbers
 import saas
 import saas_billing
 import support_tickets
@@ -112,7 +113,11 @@ async def admin_v1_companies(
     rows = await saas._db.companies.find({}).sort("created_at", -1).to_list(5000)
     needle = (q or "").strip().casefold()
     if needle:
-        rows = [c for c in rows if needle in str(c.get("name") or "").casefold()]
+        rows = [
+            c for c in rows
+            if needle in str(c.get("name") or "").casefold()
+            or company_numbers.matches_exact(c.get("company_no"), needle)
+        ]
     page, total = _window(rows, limit, offset)
     items = [await saas._company_row(c) for c in page]
     return _page(items, limit, offset, total)

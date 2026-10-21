@@ -3,7 +3,7 @@ import { MoneyInput, parseTrNumber } from "../components/MoneyInput";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Monitor, Bell, CreditCard } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Monitor, Bell, CreditCard, Copy } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, resolveSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
@@ -45,17 +45,30 @@ const EinvoiceDesignSupportNote = () => (
 );
 const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["vpos", "Sanal POS", CreditCard], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
-const CompanyForm = ({ companyId }) => {
+export const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (!companyId) return undefined; axios.get(`${API_URL}/companies/${companyId}`).then((r) => setC(r.data)); return undefined; }, [companyId]);
   if (!c) return null;
   const set = (k, v) => setC({ ...c, [k]: v });
+  const companyNo = c.company_no ? String(c.company_no) : "";
+  const copyCompanyNo = async () => {
+    if (!companyNo) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("copy");
+      await navigator.clipboard.writeText(companyNo);
+      toast.success("Şirket ID kopyalandı.");
+    } catch {
+      toast.error("Kopyalanamadı.");
+    }
+  };
   const save = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
-      const r = await axios.put(`${API_URL}/companies/${companyId}`, c);
+      const payload = { ...c };
+      delete payload.company_no;
+      const r = await axios.put(`${API_URL}/companies/${companyId}`, payload);
       setC(r.data);
       window.dispatchEvent(new CustomEvent("tamkobi-company-updated", { detail: r.data }));
       toast.success("Şirket bilgileri kaydedildi.");
@@ -81,6 +94,15 @@ const CompanyForm = ({ companyId }) => {
       <div className="flex items-center gap-4">
         <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden">{c.logo_url ? <img src={resolveImageUrl(c.logo_url)} alt="logo" className="w-full h-full object-contain" /> : <Building2 className="w-8 h-8 text-slate-300" />}</div>
         <label className="flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold"><Upload className="w-3.5 h-3.5" /> Logo Yükle<input type="file" accept="image/*" className="hidden" onChange={uploadLogo} data-testid="company-logo-input" /></label>
+      </div>
+      <div className="flex flex-wrap items-end gap-2" data-testid="company-no-row">
+        <div className="min-w-[10rem] flex-1">
+          <label className="block font-semibold text-slate-700 mb-1" htmlFor="company-no-input">Şirket ID</label>
+          <input id="company-no-input" readOnly value={companyNo || "—"} className={`${inputCls} font-mono bg-slate-100 text-slate-800`} data-testid="company-no-input" />
+        </div>
+        <button type="button" onClick={copyCompanyNo} disabled={!companyNo} className="inline-flex items-center gap-1 px-3 py-2 border border-slate-300 rounded-lg font-semibold disabled:opacity-50" data-testid="company-no-copy">
+          <Copy className="w-3.5 h-3.5" /> Kopyala
+        </button>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{fields.map(([k, l]) => <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input value={c[k] || ""} onChange={(e) => set(k, e.target.value)} className={inputCls} data-testid={`company-${k}-input`} /></div>)}</div>
       <div className="border border-slate-200 rounded-xl p-3 bg-slate-50" data-testid="company-price-decimals">
