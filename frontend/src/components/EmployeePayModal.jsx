@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Banknote, Plus, X } from "lucide-react";
+import { Banknote, Check, Plus, Printer, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
@@ -42,6 +42,28 @@ function newIdemKey() {
   return `pay_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function accountTitle(accounts, id) {
+  const row = (accounts || []).find((a) => String(a.id || a._id || "") === String(id || ""));
+  return row?.account_name || row?.name || "";
+}
+
+function savedPaymentSummary(employee, lines, accounts, data) {
+  const serverLines = Array.isArray(data?.lines) ? data.lines : [];
+  const serverAccounts = [...new Set(serverLines.map((l) => String(l.account_name || "").trim()).filter(Boolean))];
+  const localAccounts = [...new Set((lines || []).map((l) => accountTitle(accounts, l.accountId)).filter(Boolean))];
+  const totalFromServer = serverLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  const totalFromLocal = (lines || []).reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  const overpaid = Boolean(data?.overpaid);
+  return {
+    name: employee?.full_name || employee?.name || "",
+    total: serverLines.length ? totalFromServer : totalFromLocal,
+    account: (serverAccounts.length ? serverAccounts : localAccounts).join(", "),
+    overpaid,
+    excess: overpaid ? Math.abs(Number(data?.remaining_after) || 0) : 0,
+    receiptId: data?.receipt_id || "",
+  };
+}
+
 function emptyLine(kind, accountId) {
   return {
     key: newIdemKey(),
@@ -66,7 +88,6 @@ function expenseOptionLabel(exp) {
 }
 
 export const EmployeePayModal = ({ employee, companyId, accounts, card, initialKind, sgkSalaryBankOnly = true, onClose, onDone }) => {
-  useEscape(onClose);
   const e = employee || {};
   const empId = e.id || e._id;
   const [month, setMonth] = useState(() => card?.balance?.month || istanbulPeriod());
@@ -77,6 +98,12 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
   const [openDebts, setOpenDebts] = useState([]);
   const [categories, setCategories] = useState(REIMBURSE_CATEGORIES);
   const [idemKey] = useState(newIdemKey);
+  const [saved, setSaved] = useState(null);
+  const dismiss = () => {
+    if (saved) onDone?.();
+    onClose?.();
+  };
+  useEscape(dismiss);
 
   const preferred = useMemo(() => defaultPayAccount(accounts), [accounts]);
 
@@ -176,23 +203,67 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
         headers: { "Idempotency-Key": idemKey },
       });
       toast.success(r.data?.message || "Ödeme kaydedildi.");
-      if (r.data?.receipt_id && typeof window !== "undefined" && window.open) {
-        window.open(`${API_URL}/personnel/receipts/${r.data.receipt_id}`, "_blank", "noopener");
-      }
+      setSaved(savedPaymentSummary(e, lines, accounts, r.data));
       await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] });
-      onDone?.();
-      onClose();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Ödeme yapılamadı.");
     } finally { setBusy(false); }
   };
 
+  const printReceipt = () => {
+    if (!saved?.receiptId || typeof window === "undefined" || typeof window.open !== "function") return;
+    window.open(`${API_URL}/personnel/receipts/${saved.receiptId}`, "_blank", "noopener");
+  };
+
+  if (saved) {
+    return (
+      <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); dismiss(); })} data-testid="emp-pay-modal">
+        <div onClick={(ev) => ev.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md p-4 sm:p-6 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="emp-pay-saved">
+          <div className="flex items-start gap-3">
+            <div className="shrink-0 w-11 h-11 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+              <Check className="w-6 h-6" strokeWidth={3} />
+            </div>
+            <div className="min-w-0 pt-0.5">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900">Ödeme kaydedildi</h3>
+              <p className="text-sm text-slate-500 truncate">{saved.name}</p>
+            </div>
+          </div>
+          <dl className="mt-4 divide-y divide-slate-100 text-sm">
+            <div className="flex items-start justify-between gap-3 py-2.5">
+              <dt className="text-slate-500 shrink-0">Personel</dt>
+              <dd className="font-semibold text-slate-900 text-right break-words" data-testid="emp-pay-saved-person">{saved.name}</dd>
+            </div>
+            <div className="flex items-start justify-between gap-3 py-2.5">
+              <dt className="text-slate-500 shrink-0">Tutar</dt>
+              <dd className="font-semibold text-slate-900 text-right" data-testid="emp-pay-saved-amount">{fmt(saved.total)} ₺</dd>
+            </div>
+            <div className="flex items-start justify-between gap-3 py-2.5">
+              <dt className="text-slate-500 shrink-0">Hesap</dt>
+              <dd className="font-semibold text-slate-900 text-right break-words" data-testid="emp-pay-saved-account">{saved.account || "—"}</dd>
+            </div>
+          </dl>
+          {saved.overpaid ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm leading-snug" data-testid="emp-pay-saved-overpay">
+              Fazla ödeme {fmt(saved.excess)} ₺ — sonraki maaştan düşülecek
+            </div>
+          ) : null}
+          <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <button type="button" onClick={dismiss} className="w-full sm:w-auto min-h-11 px-4 py-2.5 border border-slate-200 rounded-lg font-semibold text-sm text-slate-700" data-testid="emp-pay-saved-close">Kapat</button>
+            <button type="button" onClick={printReceipt} disabled={!saved.receiptId} className="w-full sm:w-auto min-h-11 px-4 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold text-sm inline-flex items-center justify-center gap-1.5 disabled:opacity-50" data-testid="emp-pay-saved-print">
+              <Printer className="w-4 h-4" /> Makbuzu yazdır
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); onClose(); })} data-testid="emp-pay-modal">
-      <form onSubmit={submit} onClick={(ev) => ev.stopPropagation()} className="bg-white rounded-2xl w-full max-w-xl p-5 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto">
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); dismiss(); })} data-testid="emp-pay-modal">
+      <form onSubmit={submit} onClick={(ev) => ev.stopPropagation()} className="bg-white rounded-2xl w-full max-w-xl p-4 sm:p-5 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b pb-2">
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Banknote className="w-4 h-4 text-emerald-600" /> {employeePayModalTitle(initialKind, e)}</h3>
-          <button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={dismiss} className="text-slate-400"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="flex items-center justify-between gap-2" data-testid="emp-pay-period">
@@ -277,7 +348,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
             </div>
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button type="button" className="px-3 py-1.5 border rounded-lg font-semibold inline-flex items-center gap-1" onClick={() => setRows((prev) => [...prev, emptyLine("salary", accountIdOf(preferred))])} data-testid="emp-pay-add-line"><Plus className="w-3.5 h-3.5" /> Satır ekle</button>
           <button type="button" className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" onClick={fillRemaining} data-testid="emp-pay-fill-remaining">Kalanı öde</button>
         </div>
@@ -302,9 +373,9 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2 border-t">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
-          <button type="submit" disabled={busy || !payable || Boolean(sgkWarn) || Boolean(cashWarn)} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-pay-submit">{busy ? "…" : "Öde"}</button>
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 border-t">
+          <button type="button" onClick={dismiss} className="w-full sm:w-auto min-h-11 px-3 py-2 border rounded-lg">İptal</button>
+          <button type="submit" disabled={busy || !payable || Boolean(sgkWarn) || Boolean(cashWarn)} className="w-full sm:w-auto min-h-11 px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-pay-submit">{busy ? "…" : "Öde"}</button>
         </div>
       </form>
     </div>

@@ -1206,3 +1206,34 @@ def test_unpaid_bonus_follows_employee_to_trash_and_restores():
     assert db.employees.docs[0]["_id"] == "e1"
     assert {b["_id"] for b in db.bonus_payments.docs} == {"b_pending", "b_other"}
     assert db.trash.docs == []
+
+
+def test_receipt_no_increments_per_company_and_stays_isolated():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc())
+    db.bank_accounts.docs.append(_acc("bank-b", company_id="c2", account_name="Diğer", current_balance=8000))
+    bal = {"remaining": 1000, "unpaid_payroll": 1000, "meal_due": 0, "transport_due": 0}
+    line = [{"kind": "salary", "amount": 100, "account_id": "bank"}]
+    first = _run(db, _emp(), line, key="pay-a", balance=bal)
+    second = _run(db, _emp(), line, key="pay-b", balance=bal)
+    other = _run(
+        db, _emp(company_id="c2", _id="e2"),
+        [{"kind": "salary", "amount": 100, "account_id": "bank-b"}],
+        key="pay-c", balance=bal,
+    )
+    replay = _run(db, _emp(), line, key="pay-a", balance=bal)
+    assert first["receipt_no"] == "PM-2026-0001"
+    assert second["receipt_no"] == "PM-2026-0002"
+    assert other["receipt_no"] == "PM-2026-0001"
+    assert replay["receipt_no"] == first["receipt_no"]
+    assert replay["receipt_id"] == first["receipt_id"]
+    assert [d["receipt_no"] for d in db.personnel_receipts.docs] == [
+        "PM-2026-0001", "PM-2026-0002", "PM-2026-0001",
+    ]
+    assert {d["_id"] for d in db.counters.docs} == {"PM-2026-c1", "PM-2026-c2"}
+    own = next(d for d in db.counters.docs if d["_id"] == "PM-2026-c1")
+    other_counter = next(d for d in db.counters.docs if d["_id"] == "PM-2026-c2")
+    assert int(own["seq"]) == 2
+    assert int(other_counter["seq"]) == 1
+    assert db.personnel_receipts.docs[0]["company_id"] == "c1"
+    assert db.personnel_receipts.docs[2]["company_id"] == "c2"

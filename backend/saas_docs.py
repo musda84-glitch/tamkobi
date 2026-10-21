@@ -22,16 +22,17 @@ router = APIRouter(prefix="/api")
 _db = None
 logger = logging.getLogger("TamKobiERP")
 
-# Helvetica/WinAnsi has no Ğ/İ/Ş/ı — Turkish glyphs need a bundled TTF.
+# Helvetica/WinAnsi has no Ğ/İ/Ş/ı or ₺ (U+20BA). DejaVu Sans has both and comes first.
+_FONT_DIR = Path(__file__).resolve().parent / "fonts"
 _FONT_PAIRS = (
-    (Path(__file__).resolve().parent / "fonts" / "LiberationSans-Regular.ttf",
-     Path(__file__).resolve().parent / "fonts" / "LiberationSans-Bold.ttf"),
+    (_FONT_DIR / "DejaVuSans.ttf", _FONT_DIR / "DejaVuSans-Bold.ttf"),
+    (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+    (_FONT_DIR / "LiberationSans-Regular.ttf", _FONT_DIR / "LiberationSans-Bold.ttf"),
     (Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
      Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")),
     (Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
      Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf")),
-    (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
 )
 
 
