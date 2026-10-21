@@ -21949,13 +21949,13 @@ async def _enrich_orders_production_flags(
 async def _mark_sales_order_sent_to_production(
     order_id: str,
     *,
+    company_id: str,
     recipe_id: Optional[str] = None,
     production_order_id: Optional[str] = None,
-    company_id: Optional[str] = None,
 ) -> None:
     if not order_id:
         return
-    cid = str(company_id or "").strip()
+    cid = str(company_id).strip()
     patch = opr.production_mark_for_order(
         recipe_id=recipe_id,
         production_order_id=production_order_id,
