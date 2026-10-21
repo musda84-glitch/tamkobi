@@ -10679,7 +10679,7 @@ async def _commit_invoice_effects_update(inv: dict, invoice_id: str, allowed: di
     belge eski hâline döner.
     """
     company_id = inv.get("company_id")
-    q = _invoice_id_query(invoice_id, company_id)
+    q = {"_id": invoice_id, "company_id": company_id}
     if reapply_effects:
         try:
             await _reverse_invoice_effects(inv)
@@ -17158,7 +17158,10 @@ async def update_order(order_id: str, req: Dict[str, Any], user: dict = Depends(
             propagated = await _propagate_order_commercial(refreshed, update["items"])
             warning = (propagated or {}).get("warning")
         except HTTPException:
-            await db.orders.update_one({"_id": order_id}, {"$set": prior_lines})
+            await db.orders.update_one(
+                {"_id": order_id, "company_id": company_id},
+                {"$set": prior_lines},
+            )
             raise
         except Exception:
             logging.getLogger(__name__).exception("Sipariş ticari senkronu başarısız: %s", order_id)
