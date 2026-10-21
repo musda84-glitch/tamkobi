@@ -3,6 +3,7 @@ import {
   buildProductLabel,
   buildShipmentBatch,
   buildShipmentLabel,
+  buildTemplateLabel,
   buildTestLabel,
   buildWorkOrderLabel,
   ean13CheckDigit,
@@ -96,6 +97,59 @@ describe("product label", () => {
     const bmp = renderTextBitmap("A");
     expect(bmp.data.some((b) => b !== 0)).toBe(true);
     expect(job.bytes.length).toBeGreaterThan(job.source.length / 2);
+  });
+});
+
+describe("template label", () => {
+  const stock = {
+    width_mm: 60,
+    height_mm: 40,
+    elements: [
+      { type: "field", field: "name", x: 2, y: 1.5, font: 10 },
+      { type: "field", field: "price", x: 30, y: 2, font: 12 },
+      { type: "barcode", x: 2, y: 9, h: 12, showText: true },
+      { type: "qr", x: 40, y: 4 },
+    ],
+  };
+
+  it("places template elements at the template size", () => {
+    const job = buildTemplateLabel({
+      product: {
+        name: "Şişe",
+        sku: "S1",
+        barcode: "DL-120",
+        sale_price: 12.5,
+        vat_rate: 20,
+        price_includes_vat: false,
+      },
+      tpl: stock,
+      copies: 2,
+      size: { widthMm: 100, heightMm: 50, gapMm: 2, dpi: 203 },
+      textMode: "codepage",
+    });
+    expect(job.source).toContain("SIZE 60 mm,40 mm");
+    expect(job.source).not.toContain("SIZE 100 mm,50 mm");
+    expect(job.source).toContain("CODEPAGE 1254");
+    expect(job.source).toContain("Şişe");
+    expect(job.source).toContain("15.00 TL");
+    expect(job.source).toContain('"128"');
+    expect(job.source).toContain("DL-120");
+    expect(job.source).toContain("QRCODE ");
+    expect(job.source).toContain("PRINT 2,1");
+    const encoded = encodeWindows1254("Şişe");
+    expect(Array.from(job.bytes)).toEqual(expect.arrayContaining(Array.from(encoded || [])));
+  });
+
+  it("draws template text as BITMAP when textMode is bitmap", () => {
+    const job = buildTemplateLabel({
+      product: { name: "ÇĞİÖŞÜ", sku: "TR", barcode: "ABC" },
+      tpl: { width_mm: 50, height_mm: 30, elements: [{ type: "field", field: "name", x: 2, y: 2, font: 10 }] },
+      size,
+      textMode: "bitmap",
+    });
+    expect(job.source).toContain("SIZE 50 mm,30 mm");
+    expect(job.source).toContain("BITMAP");
+    expect(job.source).not.toContain("TEXT ");
   });
 });
 

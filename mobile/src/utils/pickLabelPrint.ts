@@ -2,7 +2,7 @@ import { Alert, Platform } from "react-native";
 import { get } from "../api/client";
 import type { ApiClient } from "../api/client";
 import { tryPrintLabelEthernet } from "./ethernetPrinter";
-import { printProductLabel, resolveLabelPrinter } from "./labelPrinter";
+import { printTemplateLabel, resolveLabelPrinter } from "./labelPrinter";
 import { embedLabelHtmlImages } from "./labelMedia";
 import { htmlToPdfFile, printHtmlNative } from "./nativePrint";
 import { safePrintFilename } from "./orderPrint";
@@ -224,18 +224,25 @@ export async function printPickProductLabels(
   }
   if (!jobs.length) return { count: 0, ok: false };
 
-  // Yazıcılar ekranındaki IP ayarı (LABEL_PRINTER_KEY). Host varsa ürün etiketi TSPL gider;
-  // hata olursa sistem yazıcısına düşülmez.
+  // Yazıcılar ekranındaki IP (LABEL_PRINTER_KEY). Host varsa her grubun çözülmüş
+  // şablonu (atanan → varsayılan → ilk → hazır) boyut ve öğeleriyle TSPL gider.
+  // Hata olursa sistem yazıcısına düşülmez. Koli etiketi bu yola girmez.
   if (opts?.client) {
     const settings = await resolveLabelPrinter(
       opts.client,
       opts.companyId || companyObj?.id || companyObj?._id,
     );
     if (String(settings.host || "").trim()) {
-      const groups = new Map<string, { product: (typeof jobs)[number]["product"]; copies: number }>();
+      const groups = new Map<string, {
+        tpl: LabelTemplateLike;
+        product: (typeof jobs)[number]["product"];
+        copies: number;
+      }>();
       for (const job of jobs) {
         const product = job.product;
+        const tplId = String(job.tpl.id || job.tpl._id || `${job.tpl.width_mm || ""}x${job.tpl.height_mm || ""}`);
         const key = [
+          tplId,
           product.id || product._id || "",
           product.sku || "",
           product.barcode || "",
@@ -244,18 +251,15 @@ export async function printPickProductLabels(
         ].join("\u0001");
         const group = groups.get(key);
         if (group) group.copies += 1;
-        else groups.set(key, { product, copies: 1 });
+        else groups.set(key, { tpl: job.tpl, product, copies: 1 });
       }
       for (const group of groups.values()) {
-        await printProductLabel({
+        await printTemplateLabel({
           settings,
           copies: group.copies,
-          product: {
-            name: group.product.name,
-            sku: group.product.sku,
-            barcode: group.product.barcode || group.product.sku,
-            price: Number(group.product.sale_price) || null,
-          },
+          tpl: group.tpl,
+          companyName: companyObj?.name || undefined,
+          product: group.product,
         });
       }
       return { count: jobs.length, ok: true };

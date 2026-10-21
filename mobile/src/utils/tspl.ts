@@ -331,6 +331,174 @@ function footer(copies: number | undefined): Piece[] {
   return [{ t: "line", s: `PRINT ${clampCopies(copies)},1` }];
 }
 
+export type TemplateLabelProduct = {
+  name?: string | null;
+  sku?: string | null;
+  barcode?: string | null;
+  sale_price?: number | null;
+  price?: number | null;
+  vat_rate?: number | null;
+  currency?: string | null;
+  price_includes_vat?: boolean | null;
+  category?: string | null;
+  variant_name?: string | null;
+  tags?: Array<string | null> | null;
+};
+
+export type TemplateLabelTpl = {
+  width_mm?: number;
+  height_mm?: number;
+  page?: { gap_mm?: number } | null;
+  elements?: Array<Record<string, unknown>> | null;
+};
+
+function elNum(el: Record<string, unknown>, key: string, fallback: number): number {
+  const n = Number(el[key]);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Etiket tasarımı punto → TSPL font (2/3/4), ethernet buildTsplLabel ile aynı eşik. */
+function tsplFont(font: unknown): string {
+  const n = Number(font);
+  if (!Number.isFinite(n)) return "2";
+  if (n >= 14) return "4";
+  if (n >= 10) return "3";
+  return "2";
+}
+
+function templatePriceText(el: Record<string, unknown>, product: TemplateLabelProduct): string {
+  const raw = product.sale_price != null ? product.sale_price : product.price;
+  if (raw == null || !Number.isFinite(Number(raw))) return "";
+  const vatRate = Number(product.vat_rate ?? 20);
+  const vat = Number.isFinite(vatRate) ? vatRate : 20;
+  const base = Number(raw);
+  const includes = Boolean(product.price_includes_vat);
+  const amount = el.vat === "excl"
+    ? (includes ? base / (1 + vat / 100) : base)
+    : (includes ? base : base * (1 + vat / 100));
+  if (!Number.isFinite(amount)) return "";
+  const custom = String(el.currency || "").trim();
+  const code = String(product.currency || "").trim();
+  let suffix = custom || (!code || code === "TRY" || code === "₺" ? "TL" : code);
+  if (suffix === "₺") suffix = "TL";
+  const prefix = String(el.prefix || "");
+  const kdv = el.vat === "excl" ? " +KDV" : "";
+  return `${prefix}${amount.toFixed(2)} ${suffix}${kdv}`;
+}
+
+function templateFieldText(
+  el: Record<string, unknown>,
+  product: TemplateLabelProduct,
+  companyName?: string | null,
+): string {
+  const field = String(el.field || "");
+  const tags = Array.isArray(product.tags) ? product.tags : [];
+  const map: Record<string, string> = {
+    name: String(product.name || ""),
+    sku: String(product.sku || ""),
+    barcode_text: String(product.barcode || ""),
+    price: templatePriceText(el, product),
+    company: String(companyName || ""),
+    text: String(el.text || ""),
+    category: String(product.category || ""),
+    variant: String(product.variant_name || ""),
+    label_1: String(tags[0] || ""),
+    label_2: String(tags[1] || ""),
+    label_3: String(tags[2] || ""),
+  };
+  return map[field] ?? String(el.text || "");
+}
+
+/**
+ * Stok kartı etiket şablonunu TSPL'e çevirir.
+ * Boyut ve öğe yerleşimi şablondan; CODEPAGE 1254 / BITMAP, buildProductLabel ile aynı derleyiciden.
+ * Öğesiz şablonda sabit ürün yerleşimi, şablonun eni ve boyuyla basılır.
+ */
+export function buildTemplateLabel(input: {
+  product: TemplateLabelProduct;
+  companyName?: string | null;
+  tpl?: TemplateLabelTpl | null;
+  copies?: number;
+  size: LabelSize;
+  textMode?: TextMode;
+}): TsplJob {
+  const dpi = input.size.dpi === 300 ? 300 : 203;
+  const mode = input.textMode === "bitmap" ? "bitmap" : "codepage";
+  const width = clampMm(input.tpl?.width_mm ?? input.size.widthMm, input.size.widthMm || 50, 20, 120);
+  const height = clampMm(input.tpl?.height_mm ?? input.size.heightMm, input.size.heightMm || 30, 10, 300);
+  const pageGap = input.tpl?.page?.gap_mm;
+  const size: LabelSize = {
+    widthMm: width,
+    heightMm: height,
+    gapMm: pageGap == null ? input.size.gapMm : pageGap,
+    dpi,
+  };
+  const elements = Array.isArray(input.tpl?.elements) ? input.tpl!.elements! : [];
+  if (!elements.length) {
+    const priceRaw = input.product.sale_price != null ? input.product.sale_price : input.product.price;
+    return buildProductLabel({
+      name: input.product.name,
+      sku: input.product.sku,
+      barcode: input.product.barcode || input.product.sku,
+      price: priceRaw == null ? null : Number(priceRaw),
+      copies: input.copies,
+      size,
+      textMode: mode,
+    });
+  }
+  const pieces: Piece[] = [...sizeHeader(size)];
+  for (const el of elements) {
+    const type = String(el.type || "");
+    const x = dots(elNum(el, "x", 2), dpi);
+    const y = dots(elNum(el, "y", 2), dpi);
+    if (type === "barcode") {
+      const code = barcodeSymbology(input.product.barcode || input.product.sku);
+      if (!code) continue;
+      pieces.push({
+        t: "barcode",
+        x,
+        y,
+        kind: code.kind,
+        h: Math.max(40, dots(elNum(el, "h", 12), dpi)),
+        data: code.data,
+        readable: el.showText !== false,
+      });
+      continue;
+    }
+    if (type === "qr") {
+      const data = String(input.product.barcode || input.product.sku || input.product.name || "");
+      if (!data.trim()) continue;
+      pieces.push({ t: "qr", x, y, data });
+      continue;
+    }
+    if (type === "line") {
+      const w = Math.max(1, dots(elNum(el, "w", 10), dpi));
+      const h = Math.max(1, dots(elNum(el, "h", 0.3), dpi));
+      pieces.push({ t: "line", s: `BAR ${x},${y},${w},${h}` });
+      continue;
+    }
+    if (type === "box") {
+      const x2 = dots(elNum(el, "x", 2) + elNum(el, "w", 10), dpi);
+      const y2 = dots(elNum(el, "y", 2) + elNum(el, "h", 10), dpi);
+      pieces.push({ t: "line", s: `BOX ${x},${y},${x2},${y2},2` });
+      continue;
+    }
+    if (type !== "field" && type !== "text") continue;
+    const text = templateFieldText(el, input.product, input.companyName);
+    if (!text.trim()) continue;
+    pieces.push({
+      t: "text",
+      x,
+      y,
+      font: tsplFont(el.font),
+      mul: el.bold ? 2 : 1,
+      text,
+    });
+  }
+  pieces.push(...footer(input.copies));
+  return compile(pieces, mode);
+}
+
 export function buildProductLabel(input: ProductLabelInput): TsplJob {
   const dpi = input.size.dpi === 300 ? 300 : 203;
   const mode = input.textMode === "bitmap" ? "bitmap" : "codepage";
