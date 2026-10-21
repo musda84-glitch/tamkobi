@@ -33,6 +33,7 @@ import tenant_access
 from client_ip import request_ip
 
 from . import iyzico as iyzico_family
+from . import kuveytturk as kuveytturk_family
 from . import paytr as paytr_family
 from .base import MISMATCH_ERRORS, VposStartError, get_adapter
 from .collect import post_collection
@@ -194,6 +195,11 @@ def public_config(doc: Optional[dict]) -> dict:
         "no_installment": bool(doc.get("no_installment")),
         "has_api_key": bool(doc.get("api_key")),
         "has_secret_key": bool(doc.get("secret_key_enc")),
+        "customer_id": doc.get("customer_id") or "",
+        "api_username": doc.get("api_username") or "",
+        "api_client_id_set": bool(doc.get("api_client_id")),
+        "kt_password_set": bool(doc.get("kt_password_enc")),
+        "api_client_secret_set": bool(doc.get("api_client_secret_enc")),
         "account_id": doc.get("account_id") or "",
         "enabled": bool(doc.get("enabled")),
         "created_at": doc.get("created_at") or "",
@@ -477,7 +483,8 @@ async def _result_redirect(app_base: str, intent_id: str, *, company_id: str) ->
 
 _MERCHANT_ID = re.compile(r"^\d{1,32}$")
 _API_KEY = re.compile(r"^[A-Za-z0-9_.:-]{4,128}$")
-OPEN_FAMILIES = frozenset({"nestpay", "paytr", "iyzico"})
+_API_CLIENT_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+OPEN_FAMILIES = frozenset({"nestpay", "paytr", "iyzico", "kuveytturk"})
 
 
 def _mode_only(mode: str) -> str:
@@ -567,6 +574,8 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
     api_user = ""
     gateway = ""
     merchant_id = ""
+    customer_id = ""
+    api_username = ""
     max_installment = 0
     no_installment = False
     if family == "nestpay":
@@ -582,6 +591,19 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail="Mağaza numarası yalnız rakam olmalı.")
         max_installment = _installment(body.get("max_installment"))
         no_installment = bool(body.get("no_installment"))
+    elif family == "kuveytturk":
+        mode = _mode_only(str(body.get("mode") or "test"))
+        merchant_id = str(body.get("merchant_id") or "").strip()
+        customer_id = str(body.get("customer_id") or "").strip()
+        if not _MERCHANT_ID.match(merchant_id):
+            raise HTTPException(status_code=400, detail="Mağaza numarası yalnız rakam olmalı.")
+        if not _MERCHANT_ID.match(customer_id):
+            raise HTTPException(status_code=400, detail="Müşteri numarası yalnız rakam olmalı.")
+        merchant_id = str(int(merchant_id))
+        customer_id = str(int(customer_id))
+        api_username = str(body.get("api_username") or "").strip()
+        if any(ch in api_username for ch in "\r\n\t") or len(api_username) > 64:
+            raise HTTPException(status_code=400, detail="API kullanıcı adı en fazla 64 karakter olabilir.")
     else:
         mode = _mode_only(str(body.get("mode") or "test"))
     store_enc = _secret_enc(existing, "store_key_enc", body, "store_key", family == "nestpay", same_family)
@@ -590,14 +612,28 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
     merchant_salt_enc = _secret_enc(existing, "merchant_salt_enc", body, "merchant_salt", family == "paytr", same_family)
     secret_key_enc = _secret_enc(existing, "secret_key_enc", body, "secret_key", family == "iyzico", same_family)
     api_key = _plain_value(existing, "api_key", body, "api_key", family == "iyzico", same_family)
+    kt_active = family == "kuveytturk"
+    kt_password_enc = _secret_enc(existing, "kt_password_enc", body, "kt_password", kt_active, same_family)
+    api_client_secret_enc = _secret_enc(existing, "api_client_secret_enc", body, "api_client_secret", kt_active, same_family)
+    api_client_id = _plain_value(existing, "api_client_id", body, "api_client_id", kt_active, same_family).strip()
     if family == "iyzico" and api_key and not _API_KEY.match(api_key):
         raise HTTPException(status_code=400, detail="API anahtarı geçersiz.")
+    if api_client_id and not _API_CLIENT_ID.match(api_client_id):
+        raise HTTPException(status_code=400, detail="API istemci numarası geçersiz.")
     if enabled and family == "nestpay" and not store_enc:
         raise HTTPException(status_code=400, detail="Store key gerekli.")
     if enabled and family == "paytr" and not (merchant_key_enc and merchant_salt_enc):
         raise HTTPException(status_code=400, detail="PayTR mağaza anahtarı ve salt gerekli.")
     if enabled and family == "iyzico" and not (api_key and secret_key_enc):
         raise HTTPException(status_code=400, detail="iyzico API anahtarı ve secret key gerekli.")
+    if enabled and family == "kuveytturk" and not api_username:
+        raise HTTPException(status_code=400, detail="API kullanıcı adı gerekli.")
+    if enabled and family == "kuveytturk" and not kt_password_enc:
+        raise HTTPException(status_code=400, detail="API şifresi gerekli.")
+    if enabled and family == "kuveytturk" and not api_client_id:
+        raise HTTPException(status_code=400, detail="API istemci numarası gerekli.")
+    if enabled and family == "kuveytturk" and not api_client_secret_enc:
+        raise HTTPException(status_code=400, detail="API istemci sırrı gerekli.")
     now = _iso()
     doc = {
         "_id": existing.get("_id") or str(uuid.uuid4()),
@@ -617,6 +653,11 @@ async def put_vpos_config(body: Dict[str, Any], request: Request):
         "no_installment": no_installment,
         "api_key": api_key,
         "secret_key_enc": secret_key_enc,
+        "customer_id": customer_id,
+        "api_username": api_username,
+        "kt_password_enc": kt_password_enc,
+        "api_client_id": api_client_id,
+        "api_client_secret_enc": api_client_secret_enc,
         "account_id": account_id,
         "enabled": enabled,
         "created_at": existing.get("created_at") or now,
@@ -652,6 +693,16 @@ async def _runtime_config(cfg: dict) -> dict:
         runtime["api_key"] = str(cfg.get("api_key") or "")
         if not runtime["secret_key"] or not runtime["api_key"]:
             raise HTTPException(status_code=400, detail="iyzico anahtarı gerekli.")
+    elif family == "kuveytturk":
+        runtime["kt_password"] = await _decrypt_secret(str(cfg.get("kt_password_enc") or ""), "API şifresi")
+        runtime["api_client_secret"] = await _decrypt_secret(str(cfg.get("api_client_secret_enc") or ""), "API istemci sırrı")
+        runtime["api_client_id"] = str(cfg.get("api_client_id") or "")
+        runtime["api_username"] = str(cfg.get("api_username") or "")
+        runtime["customer_id"] = str(cfg.get("customer_id") or "")
+        if not runtime["kt_password"] or not runtime["api_client_secret"] or not runtime["api_client_id"]:
+            raise HTTPException(status_code=400, detail="Kuveyt Türk API bilgisi gerekli.")
+        if not runtime["api_username"] or not str(cfg.get("merchant_id") or "").strip() or not runtime["customer_id"]:
+            raise HTTPException(status_code=400, detail="Kuveyt Türk API bilgisi gerekli.")
     else:
         raise HTTPException(status_code=400, detail="Bu ödeme ailesi henüz açık değil.")
     return runtime
@@ -685,12 +736,21 @@ def _payment_ctx(
     ip = request_ip(request) or ""
     if not ip or ip == "unknown":
         ip = "127.0.0.1"
+    if family == "nestpay":
+        callback_url = ok_url = fail_url = callback
+    elif family == "iyzico":
+        callback_url = f"{app_base}/api/vpos/iyzico/callback/{intent_id}"
+        ok_url = fail_url = shown
+    elif family == "kuveytturk":
+        ok_url = f"{app_base}/api/vpos/kuveytturk/return/{intent_id}?r=ok"
+        fail_url = f"{app_base}/api/vpos/kuveytturk/return/{intent_id}?r=fail"
+        callback_url = ok_url
+    else:
+        callback_url = ok_url = fail_url = shown
     ctx = {
-        "callback_url": callback if family == "nestpay" else (
-            f"{app_base}/api/vpos/iyzico/callback/{intent_id}" if family == "iyzico" else shown
-        ),
-        "ok_url": callback if family == "nestpay" else shown,
-        "fail_url": callback if family == "nestpay" else shown,
+        "callback_url": callback_url,
+        "ok_url": ok_url,
+        "fail_url": fail_url,
         "user_ip": ip,
         "email": email,
         "name": name,
@@ -1157,6 +1217,83 @@ async def iyzico_callback(intent_id: str, request: Request):
         logger.info("vpos iyzico callback id=%s status=%s repeat=1", intent_id, final)
         await _retry_paid_collection(intent_id, company_id=intent_cid)
     return await _result_redirect(app_base, intent_id, company_id=intent_cid)
+
+
+async def _kuveytturk_return(intent_id: str, request: Request):
+    """Banka successUrl/failUrl dönüşü.
+
+    ``r=ok|fail`` kanıt değildir. Karar getMerchantOrderDetail yanıtındadır.
+    """
+    if not _allow_callback(request_ip(request) or "unknown"):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme. Biraz sonra tekrar deneyin.")
+    if str(getattr(request, "method", "") or "").upper() == "POST":
+        try:
+            _form_dict(await request.form())
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    db = _require_db()
+    # tenant-ok: Kuveyt Türk dönüşü oturumsuz; company_id intent'ten çıkar, cfg.company_id eşleşmesi (company_mismatch) ve getMerchantOrderDetail doğrulanır.
+    intent = await db.payment_intents.find_one({"_id": intent_id})
+    if not intent:
+        raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
+    intent_cid = str(intent.get("company_id") or "")
+    app_base = await _app_base(request)
+    status = str(intent.get("status") or "")
+    if status in TERMINAL_STATUSES or status != "pending":
+        logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", "repeat")
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
+    cfg = None
+    cfg_id = intent.get("vpos_config_id")
+    if cfg_id:
+        cfg = await db.vpos_configs.find_one({"_id": cfg_id, "company_id": intent_cid})
+    same_company = bool(cfg) and str(cfg.get("company_id") or "") == intent_cid
+    if not same_company or str(cfg.get("family") or "") != "kuveytturk":
+        await _claim_finish(intent_id, "failed", {"error": "company_mismatch"})
+        logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", "company_mismatch")
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
+    try:
+        runtime = await _runtime_config(cfg)
+    except HTTPException:
+        logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", "config")
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
+    verdict = await kuveytturk_family.ADAPTER.confirm(runtime, intent, {}, client=_outbound_client)
+    if verdict.get("retryable"):
+        logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", "query_failed")
+        return await _result_redirect(app_base, intent_id, company_id=intent_cid)
+    error = str(verdict.get("error") or "")
+    if not verdict.get("ok"):
+        final = "failed"
+        result = {"error": error or "declined"}
+    elif verdict.get("approved"):
+        final = "paid"
+        result = _safe_result(verdict)
+        result.pop("error", None)
+    else:
+        final = "failed"
+        result = {"error": error or "declined"}
+    wrote = await _claim_finish(intent_id, final, result)
+    if wrote and final == "paid":
+        await _record_paid_collection(intent_id, company_id=intent_cid)
+    code = str(verdict.get("proc_return_code") or error or final)[:32]
+    if wrote:
+        logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", code)
+    else:
+        logger.info("vpos kuveytturk return id=%s family=%s code=%s", intent_id, "kuveytturk", "repeat")
+        await _retry_paid_collection(intent_id, company_id=intent_cid)
+    return await _result_redirect(app_base, intent_id, company_id=intent_cid)
+
+
+@router.get("/vpos/kuveytturk/return/{intent_id}")
+async def kuveytturk_return_get(intent_id: str, request: Request):
+    return await _kuveytturk_return(intent_id, request)
+
+
+@router.post("/vpos/kuveytturk/return/{intent_id}")
+async def kuveytturk_return_post(intent_id: str, request: Request):
+    return await _kuveytturk_return(intent_id, request)
 
 
 def _token_equal(left: str, right: str) -> bool:
