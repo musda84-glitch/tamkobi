@@ -487,10 +487,10 @@ def _capture_logs(monkeypatch):
 def test_identityless_single_contact_can_login_after_reset(client, db, monkeypatch):
     """Kimliği olmayan tek eski cari sıfırlama sonrası girer.
 
-    Kabul postası notify_outbox'tadır. Token ve şifre loglanmaz. SMTP çağrılmaz.
+    Tek cari otomatik kabul edilir; bu yolda kabul postası kuyruğa yazılmaz.
+    Şifre loglanmaz. SMTP çağrılmaz.
     """
     import asyncio
-    import re
     import mail_service
 
     def boom(*_a, **_k):
@@ -524,60 +524,54 @@ def test_identityless_single_contact_can_login_after_reset(client, db, monkeypat
     assert not verify_password(password, fresh["b2b_password_hash"])
     accepted = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cEski")
     assert accepted.get("accepted_at")
-    notice = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice")
-    assert notice["status"] == "pending"
-    assert notice["to"] == ["eski@example.com"]
-    assert notice["company_id"] == "coA"
-    assert password not in notice["html"]
-    assert password not in notice["text"]
-    raw = re.search(r"accept-link/([A-Za-z0-9_\-]+)", notice["html"]).group(1)
-    assert accepted["token_hash"] == b2b_identity.token_digest(raw)
-    assert accepted["token_hash"] != raw
-    assert raw not in str(accepted)
-    expires = datetime.fromisoformat(accepted["expires_at"])
-    assert timedelta(hours=71) < expires - datetime.now(timezone.utc) < timedelta(hours=73)
-    blob = str(logged)
-    assert password not in blob
-    assert raw not in blob
+    assert not accepted.get("token_hash")
+    assert not any(row.get("event") == "b2b_link_notice" for row in db.notify_outbox.docs)
+    assert "accept-link/" not in str(db.notify_outbox.docs)
+    assert password not in str(logged)
+    assert password not in str(db.notify_outbox.docs)
     logged_in = client.post("/api/public/b2b/login", json={"email": "eski@example.com", "password": password})
     assert logged_in.status_code == 200, logged_in.text
     assert logged_in.json()["redirect"] == "/portal/portal-secret-eski"
     assert password not in str(logged)
-    assert raw not in str(logged)
+    assert not any(row.get("event") == "b2b_link_notice" for row in db.notify_outbox.docs)
 
 
-def test_reset_accepts_matching_own_email_but_not_injected_login(db, monkeypatch):
-    """Kendi e-postası hedefle eşleşen cari kabul edilir; yalnız giriş e-postası yazılmış cari edilmez."""
+def test_copied_own_email_is_not_auto_accepted_without_prior_accept(db, monkeypatch):
+    """Kurbanın hiç kabulü yokken B kendi e-posta alanını kurban adresine koyarsa cB kabul edilmez.
+
+    Otomatik kabul yalnız tek caridedir. Birden fazla cari varsa yalnız 72 saatlik link kuyruğa yazılır.
+    """
     import asyncio
+    import re
     import mail_service
 
     def boom(*_a, **_k):
         raise AssertionError("smtp")
 
     monkeypatch.setattr(mail_service, "send_mail", boom)
-    db.contacts.docs.clear()
-    db.contacts.docs.append(_contact(
-        "cOwn", "coA", "Kendi", email="ali@example.com", login_email="ali@example.com", token="portal-own",
-    ))
-    db.contacts.docs.append(_contact(
-        "cInj", "coB", "Enjekte", email="supplier@evil.test", login_email="ali@example.com", token="portal-inj",
-    ))
+    assert not any(row.get("accepted_at") for row in db.b2b_link_acceptances.docs)
+    supplier_b = next(row for row in db.contacts.docs if row["_id"] == "cB")
+    supplier_b["email"] = "ali@example.com"
+    supplier_b["b2b_login_email"] = "ali@example.com"
 
-    async def reset(contact_id, company_id):
-        contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
-        return await b2b_identity.apply_password_reset(db, contact, "yeni-sifre-3", email="ali@example.com")
+    async def run():
+        contact = await db.contacts.find_one({"_id": "cB", "company_id": "coB"})
+        return await b2b_identity.apply_password_reset(db, contact, "yeni-sifre-4", email="ali@example.com")
 
-    asyncio.run(reset("cInj", "coB"))
-    injected = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cInj")
-    assert not injected.get("accepted_at")
-    asyncio.run(reset("cOwn", "coA"))
-    own = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cOwn")
-    assert own.get("accepted_at")
-    assert not next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cInj").get("accepted_at")
-    notes = [row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice"]
-    assert len(notes) == 2
-    assert all(row["status"] == "pending" and row["to"] == ["ali@example.com"] for row in notes)
-    assert all("yeni-sifre-3" not in row["html"] and "yeni-sifre-3" not in row["text"] for row in notes)
+    asyncio.run(run())
+    pending = next(row for row in db.b2b_link_acceptances.docs if row.get("contact_id") == "cB")
+    assert not pending.get("accepted_at")
+    assert not any(row.get("accepted_at") for row in db.b2b_link_acceptances.docs)
+    notice = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_link_notice")
+    assert notice["status"] == "pending"
+    assert notice["to"] == ["ali@example.com"]
+    assert "yeni-sifre-4" not in notice["html"]
+    assert "yeni-sifre-4" not in notice["text"]
+    raw = re.search(r"accept-link/([A-Za-z0-9_\-]+)", notice["html"]).group(1)
+    assert pending["token_hash"] == b2b_identity.token_digest(raw)
+    assert raw not in str(pending)
+    expires = datetime.fromisoformat(pending["expires_at"])
+    assert timedelta(hours=71) < expires - datetime.now(timezone.utc) < timedelta(hours=73)
 
 
 def test_link_notice_queues_once_without_smtp(db, monkeypatch):
