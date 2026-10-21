@@ -50,14 +50,16 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
             company_id = await partner_pay._partner_company_id(db, partner_id)
         except Exception:
             company_id = None
+    cid = str(company_id or "").strip()
+    if not cid:
+        return 0
     q: Dict[str, Any] = {
+        "company_id": cid,
         "$or": [
             {"source": "bank_match"},
             {"related_bank_tx_id": {"$exists": True, "$nin": [None, ""]}},
-        ]
+        ],
     }
-    if company_id:
-        q["company_id"] = company_id
     if partner_id:
         q["partner_id"] = partner_id
     txs = await db.partner_transactions.find(q).to_list(20000)
@@ -74,7 +76,7 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
     if need_bank_ids:
         uniq = list(dict.fromkeys(need_bank_ids))
         brows = await db.bank_transactions.find(
-            {"_id": {"$in": uniq}},
+            {"company_id": cid, "_id": {"$in": uniq}},
             {"_id": 1, "type": 1},
         ).to_list(len(uniq))
         for row in brows or []:
@@ -105,7 +107,10 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
                 patch["legacy_bank_match_outflow_credit_undone_at"] = now
         if not patch:
             continue
-        await db.partner_transactions.update_one({"_id": tx["_id"]}, {"$set": patch})
+        await db.partner_transactions.update_one(
+            {"_id": tx["_id"], "company_id": cid},
+            {"$set": patch},
+        )
         if "type" in patch:
             fixed += 1
     return fixed

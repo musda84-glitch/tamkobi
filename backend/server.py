@@ -13609,13 +13609,18 @@ async def _execute_virman_contact(
     if via_customer_card:
         pool = await bank_guard.ensure_customer_card_pool(db, company_id)
 
+    def _own_contact(contact: Dict[str, Any]) -> Dict[str, Any]:
+        if str((contact or {}).get("company_id") or "").strip() != str(company_id or "").strip():
+            raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+        return contact
+
     if s_kind == "contact" and t_kind == "contact":
-        src = await _virman_load_contact(company_id, s_id)
-        tgt = await _virman_load_contact(company_id, t_id)
+        src = _own_contact(await _virman_load_contact(company_id, s_id))
+        tgt = _own_contact(await _virman_load_contact(company_id, t_id))
         src_name = _contact_display_name(src)
         tgt_name = _contact_display_name(tgt)
-        await db.contacts.update_one({"_id": s_id}, {"$inc": {"balance": -amount}})
-        await db.contacts.update_one({"_id": t_id}, {"$inc": {"balance": amount}})
+        await db.contacts.update_one({"_id": s_id, "company_id": company_id}, {"$inc": {"balance": -amount}})
+        await db.contacts.update_one({"_id": t_id, "company_id": company_id}, {"$inc": {"balance": amount}})
         await _insert_cari_virman_ledger_pair(
             company_id=company_id,
             amount=amount,
@@ -13636,6 +13641,7 @@ async def _execute_virman_contact(
             msg = f"{amount:,.2f} TL cari virman tamamlandı ({src_name} → {tgt_name}); Müşteri Kartları kasasına işlendi."
         return {"status": "success", "message": msg}
     if s_kind == "contact" and t_kind == "partner":
+        _own_contact(await _virman_load_contact(company_id, s_id))
         result = await _execute_contact_partner_payment({
             "contact_id": s_id, "partner_id": t_id, "type": "inflow",
             "amount": amount, "description": desc, "date": today,
@@ -13654,6 +13660,7 @@ async def _execute_virman_contact(
             )
         return result
     if s_kind == "partner" and t_kind == "contact":
+        _own_contact(await _virman_load_contact(company_id, t_id))
         result = await _execute_contact_partner_payment({
             "contact_id": t_id, "partner_id": s_id, "type": "outflow",
             "amount": amount, "description": desc, "date": today,
@@ -13672,8 +13679,8 @@ async def _execute_virman_contact(
             )
         return result
     if s_kind == "contact" and t_kind == "account":
-        contact = await _virman_load_contact(company_id, s_id)
-        acc = await db.bank_accounts.find_one({"_id": t_id})
+        contact = _own_contact(await _virman_load_contact(company_id, s_id))
+        acc = await db.bank_accounts.find_one({"_id": t_id, "company_id": company_id})
         if not acc:
             raise HTTPException(status_code=404, detail="Hedef hesap bulunamadı.")
         if bank_guard.is_customer_card_pool(acc):
@@ -13681,8 +13688,8 @@ async def _execute_virman_contact(
         await bank_guard.assert_manual_allowed(db, t_id)
         await bank_guard.assert_collection_allowed(db, t_id)
         name = _contact_display_name(contact)
-        await db.bank_accounts.update_one({"_id": t_id}, {"$inc": {"current_balance": amount}})
-        await db.contacts.update_one({"_id": s_id}, {"$inc": {"balance": -amount}})
+        await db.bank_accounts.update_one({"_id": t_id, "company_id": company_id}, {"$inc": {"current_balance": amount}})
+        await db.contacts.update_one({"_id": s_id, "company_id": company_id}, {"$inc": {"balance": -amount}})
         tx_doc = {
             "_id": str(uuid.uuid4()),
             "company_id": company_id,
@@ -13717,17 +13724,17 @@ async def _execute_virman_contact(
             msg = f"{amount:,.2f} TL virman tamamlandı (cari → hesap); Müşteri Kartları kasasına işlendi."
         return {"status": "success", "message": msg}
     if s_kind == "account" and t_kind == "contact":
-        contact = await _virman_load_contact(company_id, t_id)
-        acc = await db.bank_accounts.find_one({"_id": s_id})
+        contact = _own_contact(await _virman_load_contact(company_id, t_id))
+        acc = await db.bank_accounts.find_one({"_id": s_id, "company_id": company_id})
         if not acc:
             raise HTTPException(status_code=404, detail="Kaynak hesap bulunamadı.")
         if bank_guard.is_customer_card_pool(acc):
             raise HTTPException(status_code=400, detail="Müşteri Kredi Kartları kasası virman kaynağı olamaz; «müşteri kredi kartı ile» seçeneğini kullanın.")
         await bank_guard.assert_manual_allowed(db, s_id)
         name = _contact_display_name(contact)
-        await db.bank_accounts.update_one({"_id": s_id}, {"$inc": {"current_balance": -amount}})
-        await db.contacts.update_one({"_id": t_id}, {"$inc": {"balance": amount}})
-        tx_doc = {
+        await db.bank_accounts.update_one({"_id": s_id, "company_id": company_id}, {"$inc": {"current_balance": -amount}})
+        await db.contacts.update_one({"_id": t_id, "company_id": company_id}, {"$inc": {"balance": amount}})
+        out_tx = {
             "_id": str(uuid.uuid4()),
             "company_id": company_id,
             "account_id": s_id,
@@ -13743,10 +13750,10 @@ async def _execute_virman_contact(
             "date": today,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        await _apply_virman_customer_card(acc, None, amount, tx_doc, payee_contact_id=t_id)
+        await _apply_virman_customer_card(acc, None, amount, out_tx, payee_contact_id=t_id)
         if pool:
-            _stamp_via_customer_card_pool(tx_doc, pool, desc)
-        await db.bank_transactions.insert_one(tx_doc)
+            _stamp_via_customer_card_pool(out_tx, pool, desc)
+        await db.bank_transactions.insert_one(out_tx)
         if pool:
             await _insert_pool_display_mirror(
                 pool,
@@ -13815,16 +13822,16 @@ async def _execute_virman(req: Dict[str, Any]):
         tgt_name = await partner_pay.move(db, company_id, t_id, amount, "capital_in", f"Virman ← ortak ({src_name}): {desc}", today)
         return {"status": "success", "message": f"{amount:,.2f} TL ortaklar arası virman tamamlandı ({src_name} → {tgt_name})."}
 
-    source_acc = await db.bank_accounts.find_one({"_id": s_id})
-    target_acc = await db.bank_accounts.find_one({"_id": t_id})
+    source_acc = await db.bank_accounts.find_one({"_id": s_id, "company_id": company_id})
+    target_acc = await db.bank_accounts.find_one({"_id": t_id, "company_id": company_id})
 
     if not source_acc or not target_acc:
         raise HTTPException(status_code=404, detail="Kaynak veya hedef hesap bulunamadı.")
     await bank_guard.assert_manual_allowed(db, s_id)
     await bank_guard.assert_manual_allowed(db, t_id)
 
-    await db.bank_accounts.update_one({"_id": s_id}, {"$inc": {"current_balance": -amount}})
-    await db.bank_accounts.update_one({"_id": t_id}, {"$inc": {"current_balance": amount}})
+    await db.bank_accounts.update_one({"_id": s_id, "company_id": company_id}, {"$inc": {"current_balance": -amount}})
+    await db.bank_accounts.update_one({"_id": t_id, "company_id": company_id}, {"$inc": {"current_balance": amount}})
 
     tx_doc = {
         "_id": str(uuid.uuid4()),
@@ -15032,15 +15039,16 @@ async def _apply_personnel_bank_match(tx: dict, emp: dict, kind: str, amount: fl
         update["category"] = f"Personel {labels[kind]}"
         return f"Personel {labels[kind]}"
     # salary — ödenmemiş bordroyu işaretle veya oluştur (bakiye hareketine dokunma)
-    pending = await db.payrolls.find({"employee_id": emp["_id"], "status": {"$ne": "paid"}}).to_list(20)
+    payroll_q = {"company_id": tx["company_id"], "employee_id": emp["_id"], "status": {"$ne": "paid"}}
+    pending = await db.payrolls.find(payroll_q).to_list(20)
     if not pending:
         await generate_payroll({"company_id": emp.get("company_id") or tx["company_id"], "period": period, "employee_id": emp["_id"]})
-        pending = await db.payrolls.find({"employee_id": emp["_id"], "status": {"$ne": "paid"}}).to_list(20)
+        pending = await db.payrolls.find(payroll_q).to_list(20)
     if not pending:
         raise HTTPException(status_code=400, detail="Ödenecek maaş bordrosu oluşturulamadı.")
     payroll = min(pending, key=lambda p: abs(float(p.get("final_payable") or p.get("net_salary") or 0) - float(amount)))
     await db.payrolls.update_one(
-        {"_id": payroll["_id"]},
+        {"_id": payroll["_id"], "company_id": tx["company_id"]},
         {"$set": {
             "status": "paid",
             "paid_date": today,
@@ -15070,7 +15078,7 @@ async def _apply_personnel_reimburse_match(tx: dict, emp: dict, amount: float, u
     except (TypeError, ValueError):
         pay_amount = 0.0
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
-    pay_q = {"employee_id": emp.get("_id"), "company_id": emp.get("company_id")} if emp.get("company_id") else {"employee_id": emp.get("_id")}
+    pay_q = {"employee_id": emp.get("_id"), "company_id": emp.get("company_id") or tx.get("company_id")}
     payrolls = await db.payrolls.find(pay_q).to_list(60)
     bonuses = await db.bonus_payments.find(pay_q).to_list(200)
     balance = await _employee_receivable(emp, payrolls, bonuses, period)
@@ -15184,31 +15192,39 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     import duplicate_guard
     link_existing = None
     if link_existing_id:
-        link_existing = await db.bank_transactions.find_one({"_id": link_existing_id})
+        link_existing = await db.bank_transactions.find_one({"_id": link_existing_id, "company_id": tx.get("company_id")})
         if not link_existing:
             raise HTTPException(status_code=404, detail="Bağlanacak kayıt bulunamadı.")
         contact_id = contact_id or link_existing.get("contact_id")
     if invoice_id and not link_existing:
-        inv = await db.invoices.find_one({"_id": invoice_id})
+        inv = await db.invoices.find_one({"_id": invoice_id, "company_id": tx.get("company_id")})
         if not inv:
             raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
         if duplicate_guard.invoice_payment_exceeds(inv, amount):
             raise HTTPException(status_code=400, detail="Ödeme fatura tutarını (grand_total) aşıyor.")
         new_paid = inv.get("paid_amount", 0) + amount
         payment_status = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid"
-        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"paid_amount": new_paid, "payment_status": payment_status}})
+        await db.invoices.update_one(
+            {"_id": invoice_id, "company_id": tx.get("company_id")},
+            {"$set": {"paid_amount": new_paid, "payment_status": payment_status}},
+        )
         update["related_invoice_id"] = invoice_id
         update["related_invoice_number"] = inv.get("invoice_number")
         contact_id = contact_id or inv.get("contact_id")
     elif invoice_id and link_existing:
-        inv = await db.invoices.find_one({"_id": invoice_id})
-        if inv:
-            update["related_invoice_id"] = invoice_id
-            update["related_invoice_number"] = inv.get("invoice_number")
-            contact_id = contact_id or inv.get("contact_id")
+        inv = await db.invoices.find_one({"_id": invoice_id, "company_id": tx.get("company_id")})
+        if not inv:
+            raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+        update["related_invoice_id"] = invoice_id
+        update["related_invoice_number"] = inv.get("invoice_number")
+        contact_id = contact_id or inv.get("contact_id")
     contact_name = None
     if contact_id and not link_existing:
-        same_account = await db.bank_transactions.find({"account_id": tx.get("account_id"), "contact_id": contact_id}).to_list(2000)
+        same_account = await db.bank_transactions.find({
+            "company_id": tx.get("company_id"),
+            "account_id": tx.get("account_id"),
+            "contact_id": contact_id,
+        }).to_list(2000)
         dup = duplicate_guard.find_duplicate_candidate(
             same_account,
             account_id=tx.get("account_id"),
@@ -15234,10 +15250,13 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
             update["contact_id"] = contact_id
             update["contact_name"] = contact_name
     elif contact_id:
-        contact = await db.contacts.find_one({"_id": contact_id})
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": tx.get("company_id")})
         if not contact:
             raise HTTPException(status_code=404, detail="Cari bulunamadı.")
-        await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount if is_inflow else amount}})
+        await db.contacts.update_one(
+            {"_id": contact_id, "company_id": tx.get("company_id")},
+            {"$inc": {"balance": -amount if is_inflow else amount}},
+        )
         contact_name = contact.get("name")
         update["contact_id"] = contact_id
         update["contact_name"] = contact_name
@@ -15302,7 +15321,7 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
             if not category:
                 update["category"] = "Ortaklar Hesabı"
         else:
-            tacc = await db.bank_accounts.find_one({"_id": t_id})
+            tacc = await db.bank_accounts.find_one({"_id": t_id, "company_id": tx.get("company_id")})
             if not tacc:
                 raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
             if await bank_guard.get_connection_for_account(db, t_id, company_id=tx["company_id"]):
@@ -15331,7 +15350,10 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     )
     base_desc = strip_match_suffix(tx.get("description") or "")
     update["description"] = append_match_suffix(base_desc, phrase)
-    await db.bank_transactions.update_one({"_id": tx["_id"]}, {"$set": update})
+    await db.bank_transactions.update_one(
+        {"_id": tx["_id"], "company_id": tx.get("company_id")},
+        {"$set": update},
+    )
     if learn:
         # Kural öğrenmede orijinal banka açıklaması (Eşleşti eki olmadan)
         learned_id = await _learn_rule(tx["company_id"], base_desc, contact_id, contact_name, category, target_account_id, target_name, extra=None)
@@ -15340,7 +15362,7 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
                 {"_id": tx["_id"], "company_id": tx.get("company_id")},
                 {"$set": {"learned_rule_id": learned_id}},
             )
-    return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
+    return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": tx.get("company_id")}))
 
 
 def _rule_source(rule: Optional[dict]) -> str:
@@ -15488,15 +15510,22 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
         await pos_settlement.reverse(db, tx)
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
+    cid = tx.get("company_id")
     # link_existing cari bakiyesine yazmaz; geri alma da yazmasın.
     if tx.get("contact_id") and not tx.get("linked_existing"):
-        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": amount if is_inflow else -amount}})
+        await db.contacts.update_one(
+            {"_id": tx["contact_id"], "company_id": cid},
+            {"$inc": {"balance": amount if is_inflow else -amount}},
+        )
     if tx.get("related_invoice_id"):
-        inv = await db.invoices.find_one({"_id": tx["related_invoice_id"]})
+        inv = await db.invoices.find_one({"_id": tx["related_invoice_id"], "company_id": cid})
         if inv:
             new_paid = round(max(0.0, inv.get("paid_amount", 0) - amount), 2)
             ps = "paid" if new_paid >= inv.get("grand_total", 0) - 0.01 else "partially_paid" if new_paid > 0 else "unpaid"
-            await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"paid_amount": new_paid, "payment_status": ps}})
+            await db.invoices.update_one(
+                {"_id": inv["_id"], "company_id": cid},
+                {"$set": {"paid_amount": new_paid, "payment_status": ps}},
+            )
     if tx.get("target_account_id") and not pos_settlement_match:
         t_kind, _t_id = _virman_endpoint(tx.get("target_account_id"))
         if t_kind == "partner":
@@ -15520,28 +15549,25 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
     # Eşleştirmeden oluşan masrafı / personel ödemesini kaldır (banka bakiyesine tekrar dokunma)
     eid = tx.get("expense_id")
     if eid and not pos_settlement_match:
-        exp = await db.expenses.find_one({"_id": eid})
+        exp = await db.expenses.find_one({"_id": eid, "company_id": cid})
         if exp and (exp.get("source") == "bank_match" or exp.get("bank_transaction_id") == tx.get("_id")):
-            await db.expenses.delete_one({"_id": eid})
+            await db.expenses.delete_one({"_id": eid, "company_id": cid})
     bid = tx.get("bonus_id")
     if bid:
-        bonus = await db.bonus_payments.find_one({"_id": bid})
+        bonus = await db.bonus_payments.find_one({"_id": bid, "company_id": cid})
         if bonus and (bonus.get("source") == "bank_match" or bonus.get("bank_transaction_id") == tx.get("_id")):
-            await db.bonus_payments.delete_one({"_id": bid})
+            await db.bonus_payments.delete_one({"_id": bid, "company_id": cid})
     pid = tx.get("payroll_id")
     if pid:
-        payroll = await db.payrolls.find_one({"_id": pid})
+        payroll = await db.payrolls.find_one({"_id": pid, "company_id": cid})
         if payroll and (payroll.get("matched_via") == "bank_match" or payroll.get("bank_transaction_id") == tx.get("_id")):
             await db.payrolls.update_one(
-                {"_id": pid},
+                {"_id": pid, "company_id": cid},
                 {"$set": {"status": "unpaid"}, "$unset": {"paid_date": "", "account_id": "", "account_name": "", "bank_transaction_id": "", "matched_via": "", "partner_id": ""}},
             )
     pmid = tx.get("personnel_movement_id")
     if pmid:
-        mov_q = {"_id": pmid}
-        if tx.get("company_id"):
-            mov_q["company_id"] = tx.get("company_id")
-        mov = await db.personnel_movements.find_one(mov_q)
+        mov = await db.personnel_movements.find_one({"_id": pmid, "company_id": cid})
         if mov:
             import personnel_payments
             await personnel_payments.reverse_payment(db, mov, actor=None)
@@ -15562,7 +15588,7 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
     except Exception:
         logger.exception("_release_rule_for_tx failed")
         rule_action = "none"
-    out = clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
+    out = clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": cid}))
     if isinstance(out, dict):
         out["rule_action"] = rule_action
     return out
@@ -16240,19 +16266,23 @@ async def _create_match_rule_core(req: Dict[str, Any], user: dict):
         raise HTTPException(status_code=400, detail="Anahtar kelime gerekli.")
     contact_name = None
     if req.get("contact_id"):
-        c = await db.contacts.find_one({"_id": req["contact_id"]})
-        contact_name = c.get("name") if c else None
+        c = await db.contacts.find_one({"_id": req["contact_id"], "company_id": company_id})
+        if not c:
+            raise HTTPException(status_code=404, detail="Cari bulunamadı.")
+        contact_name = c.get("name")
     target_name = None
     if req.get("target_account_id"):
         t_kind, t_id = _virman_endpoint(req["target_account_id"])
         if t_kind == "partner":
-            p = await db.partners.find_one({"_id": t_id})
-            target_name = f"{p.get('name')} (Ortak)" if p else None
+            p = await db.partners.find_one({"_id": t_id, "company_id": company_id})
             if not p:
                 raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+            target_name = f"{p.get('name')} (Ortak)"
         else:
-            a = await db.bank_accounts.find_one({"_id": t_id})
-            target_name = a.get("account_name") if a else None
+            a = await db.bank_accounts.find_one({"_id": t_id, "company_id": company_id})
+            if not a:
+                raise HTTPException(status_code=404, detail="Hedef kasa/hesap bulunamadı.")
+            target_name = a.get("account_name")
     doc = {"pattern": pattern, "contact_id": req.get("contact_id") or None, "contact_name": contact_name, "category": req.get("category") or None,
            "target_account_id": req.get("target_account_id") or None, "target_account_name": target_name,
            "source": "manual",
@@ -16271,8 +16301,8 @@ async def create_match_rule(req: Dict[str, Any], user: dict = Depends(get_curren
 
 @api_router.delete("/banking/match-rules/{rule_id}")
 async def delete_match_rule(rule_id: str, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "bank_match_rules", rule_id, user, not_found="Kural bulunamadı.")
-    await db.bank_match_rules.delete_one({"_id": rule_id})
+    rule = await tenant_access.get_tenant_doc(db, "bank_match_rules", rule_id, user, not_found="Kural bulunamadı.")
+    await db.bank_match_rules.delete_one({"_id": rule_id, "company_id": rule.get("company_id")})
     return {"status": "success"}
 
 # ----------------- İLETİŞİM: SMS (çoklu operatör) -----------------
