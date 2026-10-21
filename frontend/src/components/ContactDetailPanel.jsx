@@ -50,6 +50,7 @@ import {
   isContactLedgerPay,
 } from "../utils/contactPayMenu";
 import { isEndorsementPayment, isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
+import { contactPaymentSettled } from "../utils/invoiceStatus";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { endorsedIncomingOpen, openChequeBalance } from "../utils/chequeBalance";
 import { useIsNarrow } from "../hooks/useIsNarrow";
@@ -1064,7 +1065,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <SortableHeader {...colState} leading={<th className="py-2 w-8" aria-hidden="true" />} />
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={detailInvColSpan} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const payDraft = !isDisp && inv.status === "draft"; const payLabel = isDisp ? "Bakiye yok" : payDraft ? "Taslak" : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"; const payCls = isDisp || payDraft ? "bg-slate-100 text-slate-600" : inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"; const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
+                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const payDraft = !isDisp && inv.status === "draft"; const paySettled = !isDisp && !payDraft && (inv.payment_status === "paid" || contactPaymentSettled(inv)); const payLabel = isDisp ? "Bakiye yok" : payDraft ? "Taslak" : paySettled ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"; const payCls = isDisp || payDraft ? "bg-slate-100 text-slate-600" : paySettled ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"; const rowId = inv.id || inv._id || inv.invoice_number; const linesOpen = invLinesOpen(rowId); const lineItems = linesOpen ? itemsForInv(inv) : []; const linesLoading = invLinesLoadingId === rowId; const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => openEditInvoice(inv)} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span> <ManualPurchaseStockBadge inv={inv} testId={`detail-inv-stock-badge-${inv.invoice_number}`} /></td>,
@@ -1198,7 +1199,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           )}
           {tab === "payments" && (() => {
-            const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : p.account_name);
+            const payParty = (p) => (isContactLedgerPay(p) ? contactPaymentDocLabel(p) : (isPartnerPay(p) && p.partner_name ? `Ortaklar Hesabı · ${p.partner_name}` : p.account_name));
             const endorseBadge = (p) => (isEndorsementPayment(p) ? (
               <span className="ml-1 inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700" data-testid={`endorse-badge-${p.id}`}>
                 {String(p.category || "").startsWith("Ciro edilen") ? p.category : "Ciro edilen çek"}

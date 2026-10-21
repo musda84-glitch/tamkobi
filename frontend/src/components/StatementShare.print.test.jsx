@@ -47,6 +47,14 @@ function printRows() {
   return [...host.querySelectorAll('[data-testid^="statement-print-row-"]')].map((row) => row.textContent);
 }
 
+test("ekstre satırı ortak ödemesini Ortaklar Hesabı ve ortak adıyla gösterir", () => {
+  const built = buildStatementRows({
+    invoices: [{ invoice_number: "FYS2026000002251", invoice_type: "purchase", grand_total: 70000, issue_date: "2026-09-01", status: "approved" }],
+    payments: [{ type: "outflow", amount: 70000, date: "2026-10-10", account_name: "Ortaklar Hesabı · Ali Veli", description: "Cari ödeme", source: "partner" }],
+  });
+  expect(built.some((row) => String(row.doc).includes("Ortaklar Hesabı · Ali Veli"))).toBe(true);
+});
+
 test("buildStatementRows GİB alanlarını kopyalar, uuid ve bakiye hesabı aynı kalır", () => {
   const built = buildStatementRows({
     invoices: [

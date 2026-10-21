@@ -257,6 +257,190 @@ def _num(value: Any) -> float:
         return 0.0
 
 
+_OPEN_EPS = 0.01
+_SKIP_INVOICE_STATUS = frozenset({"draft", "cancelled", "canceled", "void", "rejected"})
+
+
+def _doc_id(doc: dict) -> str:
+    return str((doc or {}).get("_id") or (doc or {}).get("id") or "")
+
+
+def invoice_open_remaining(inv: dict) -> float:
+    """Faturaya yazılmış paid_amount düşülmüş kalan. Alanın kendisi değişmez."""
+    return round(max(0.0, _num((inv or {}).get("grand_total")) - _num((inv or {}).get("paid_amount"))), 2)
+
+
+def _open_for_offset(inv: dict) -> bool:
+    """Cari mahsup havuzuna giren fatura. Taslak, iptal ve irsaliye bakiyeye yazılmaz."""
+    if not isinstance(inv, dict):
+        return False
+    status = str(inv.get("status") or "")
+    if status in _SKIP_INVOICE_STATUS:
+        return False
+    if inv.get("invoice_type") == "dispatch" or inv.get("e_type") == "e_dispatch":
+        return False
+    if str(inv.get("payment_status") or "") == "paid":
+        return False
+    return invoice_open_remaining(inv) > _OPEN_EPS
+
+
+def _offset_direction(inv: dict) -> str:
+    """Satış alacak (+). Satış iadesi bakiyeyi düşürür; alış ile aynı borç yönü."""
+    return "receivable" if inv.get("invoice_type") == "sales" else "payable"
+
+
+def _due_sort_key(inv: dict) -> tuple:
+    due = str(inv.get("due_date") or inv.get("issue_date") or "")[:10]
+    return (due or "9999-99-99", str(inv.get("issue_date") or ""), _doc_id(inv))
+
+
+def effective_open_map(invoices, balance, *, balance_known: bool = True) -> Dict[str, float]:
+    """Fatura kimliği → cari ödemesi düşülmüş açık kalan.
+
+    Faturaya bağlanmamış net ödeme, yönün açık fatura kalanı ile carinin o yöndeki
+    bakiyesi (en az 0) arasındaki farktır. En eski vadeden başlayarak düşülür.
+    Bakiye 0 ise açık faturaların efektif kalanı 0 olur. paid_amount yazılmaz.
+    Cari kaydı yoksa (bakiye bilinmiyor) kalanlar olduğu gibi kalır.
+    """
+    rows = [inv for inv in (invoices or []) if isinstance(inv, dict)]
+    if not balance_known:
+        return {_doc_id(inv): invoice_open_remaining(inv) for inv in rows if _doc_id(inv)}
+
+    eligible = [inv for inv in rows if _open_for_offset(inv) and _doc_id(inv)]
+    if abs(signed_balance(balance)) <= _OPEN_EPS:
+        return {_doc_id(inv): 0.0 for inv in eligible}
+
+    grouped: Dict[str, List[dict]] = {"receivable": [], "payable": []}
+    for inv in eligible:
+        grouped[_offset_direction(inv)].append(inv)
+
+    bal = signed_balance(balance)
+    out: Dict[str, float] = {}
+    for direction, group in grouped.items():
+        open_sum = round(sum(invoice_open_remaining(inv) for inv in group), 2)
+        directional = bal if direction == "receivable" else -bal
+        directional = directional if directional > 0 else 0.0
+        pool = round(open_sum - directional, 2)
+        if pool < 0:
+            pool = 0.0
+        for inv in sorted(group, key=_due_sort_key):
+            rem = invoice_open_remaining(inv)
+            take = rem if pool >= rem else pool
+            if take < 0:
+                take = 0.0
+            pool = round(pool - take, 2)
+            out[_doc_id(inv)] = round(rem - take, 2)
+    return out
+
+
+def apply_effective_open(invoices, balance, *, balance_known: bool = True) -> None:
+    """Okuma kopyasına effective_open yazar. paid_amount ve veritabanı değişmez."""
+    mapping = effective_open_map(invoices, balance, balance_known=balance_known)
+    for inv in invoices or []:
+        if not isinstance(inv, dict) or not _open_for_offset(inv):
+            continue
+        iid = _doc_id(inv)
+        if iid in mapping:
+            inv["effective_open"] = mapping[iid]
+
+
+def overdue_totals(invoices, balance, *, balance_known: bool, today: str) -> tuple:
+    """(vadesi geçmiş tutar, adet). Bakiye 0 ise ikisi de 0. Çift düşüm yok."""
+    if balance_known and abs(signed_balance(balance)) <= _OPEN_EPS:
+        return 0.0, 0
+    opens = effective_open_map(invoices, balance, balance_known=balance_known)
+    amount = 0.0
+    count = 0
+    today_s = str(today or "")
+    for inv in invoices or []:
+        if not _open_for_offset(inv):
+            continue
+        due = str(inv.get("due_date") or inv.get("issue_date") or "")[:10]
+        if not due or due >= today_s:
+            continue
+        rem = opens.get(_doc_id(inv), invoice_open_remaining(inv))
+        if rem > _OPEN_EPS:
+            amount = round(amount + rem, 2)
+            count += 1
+    return amount, count
+
+
+async def stamp_invoice_effective_open(db, company_id: str, docs: Sequence[dict]) -> None:
+    """Fatura listesine effective_open. Bakiyeler tek find; cari başına sorgu yok."""
+    cid = str(company_id or "").strip()
+    if not cid or not docs:
+        return
+    contact_ids: List[str] = []
+    seen = set()
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        contact = str(doc.get("contact_id") or "").strip()
+        if contact and contact not in seen:
+            seen.add(contact)
+            contact_ids.append(contact)
+    if not contact_ids:
+        return
+    fetched = await db.contacts.find(
+        {"company_id": cid, "_id": {"$in": contact_ids}},
+        {"_id": 1, "balance": 1},
+    ).to_list(len(contact_ids))
+    known: Dict[str, Any] = {}
+    for row in fetched or []:
+        key = str(row.get("_id") or "")
+        if key:
+            known[key] = row.get("balance")
+    if not known:
+        return
+    open_rows = await db.invoices.find(
+        {
+            "company_id": cid,
+            "contact_id": {"$in": list(known)},
+            "payment_status": {"$ne": "paid"},
+            "status": {"$nin": ["cancelled", "canceled", "void", "draft"]},
+        },
+        {
+            "contact_id": 1,
+            "invoice_type": 1,
+            "e_type": 1,
+            "grand_total": 1,
+            "paid_amount": 1,
+            "due_date": 1,
+            "issue_date": 1,
+            "status": 1,
+            "payment_status": 1,
+        },
+    ).to_list(FLAG_CAP)
+    grouped: Dict[str, List[dict]] = {key: [] for key in known}
+    have = set()
+    for inv in open_rows or []:
+        contact = str(inv.get("contact_id") or "")
+        iid = _doc_id(inv)
+        if contact in grouped and iid:
+            grouped[contact].append(inv)
+            have.add(iid)
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        contact = str(doc.get("contact_id") or "")
+        iid = _doc_id(doc)
+        if contact in grouped and iid and iid not in have and _open_for_offset(doc):
+            grouped[contact].append(doc)
+            have.add(iid)
+    maps = {
+        contact: effective_open_map(grouped.get(contact) or [], known[contact], balance_known=True)
+        for contact in known
+    }
+    for doc in docs:
+        if not isinstance(doc, dict) or not _open_for_offset(doc):
+            continue
+        contact = str(doc.get("contact_id") or "")
+        iid = _doc_id(doc)
+        mapping = maps.get(contact)
+        if mapping is not None and iid in mapping:
+            doc["effective_open"] = mapping[iid]
+
+
 def show_inactive(include_inactive: Optional[bool], lite: bool) -> bool:
     return include_inactive if include_inactive is not None else (not lite)
 
@@ -320,15 +504,40 @@ async def compute_flags(db, company_id: str, *, today: Optional[str] = None, day
 
     invoices = await db.invoices.find(
         {"company_id": company_id, "payment_status": {"$ne": "paid"}, "status": {"$nin": ["cancelled", "draft"]}},
-        {"contact_id": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1},
+        {
+            "contact_id": 1,
+            "invoice_type": 1,
+            "e_type": 1,
+            "grand_total": 1,
+            "paid_amount": 1,
+            "due_date": 1,
+            "issue_date": 1,
+            "status": 1,
+            "payment_status": 1,
+        },
     ).to_list(FLAG_CAP)
+    # Bakiyeler tek turda. Cari başına ek sorgu yok; kaydı olmayan cari eski kalanını korur.
+    balance_rows = await db.contacts.find(
+        {"company_id": company_id},
+        {"_id": 1, "balance": 1},
+    ).to_list(FLAG_CAP)
+    balances: Dict[str, Any] = {}
+    for row in balance_rows or []:
+        key = str(row.get("_id") or "")
+        if key:
+            balances[key] = row.get("balance")
+    grouped: Dict[str, List[dict]] = {}
     for inv in invoices or []:
-        due = inv.get("due_date") or inv.get("issue_date")
-        cid = inv.get("contact_id")
-        if cid and due and str(due) < today_s:
-            row = slot(str(cid))
-            row["overdue_amount"] = round(row["overdue_amount"] + _num(inv.get("grand_total")) - _num(inv.get("paid_amount")), 2)
-            row["overdue_count"] += 1
+        cid = str(inv.get("contact_id") or "")
+        if cid:
+            grouped.setdefault(cid, []).append(inv)
+    for cid, rows in grouped.items():
+        known = cid in balances
+        amount, count = overdue_totals(rows, balances.get(cid), balance_known=known, today=today_s)
+        if count:
+            slot_row = slot(cid)
+            slot_row["overdue_amount"] = amount
+            slot_row["overdue_count"] = count
     installments = await db.installments.find(
         {"company_id": company_id, "status": {"$ne": "paid"}},
         {"contact_id": 1, "amount": 1, "paid_amount": 1, "due_date": 1},

@@ -566,7 +566,7 @@ def test_shared_keys_do_not_leak_or_change():
         assert len(created) == 2
         assert {row["id"] for row in listed} == {"inst-a"}
         assert {row["id"] for row in statement["invoices"]} == {"inv-a"}
-        assert {row["id"] for row in statement["payments"]} == {"tx-a", "tx-exp-a"}
+        assert {row["id"] for row in statement["payments"]} == {"tx-a", "tx-exp-a", "pt-a"}
         assert [row["invoice_id"] for row in aging["rows"]] == ["inv-a"]
         assert project["recipe_name"] == "A tarif"
         assert project["production_steps"][0]["name"] == "A adim"

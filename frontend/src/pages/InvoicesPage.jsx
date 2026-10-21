@@ -50,7 +50,7 @@ import {
   invoiceBulkApproveSkipReason,
   runInvoiceBulkItems,
 } from "../utils/invoiceBulkActions";
-import { isCancelledInvoice, isApprovingInvoice, APPROVING_INVOICE_BADGE, invoiceRowActionsDisabled } from "../utils/invoiceStatus";
+import { isCancelledInvoice, isApprovingInvoice, APPROVING_INVOICE_BADGE, invoiceRowActionsDisabled, contactPaymentSettled } from "../utils/invoiceStatus";
 import { BulkResultModal } from "../components/BulkResultModal";
 import { BulkInvoiceDateModal } from "../components/BulkInvoiceDateModal";
 import { BulkInvoiceLinkConfirmModal } from "../components/BulkInvoiceLinkConfirmModal";
@@ -1906,7 +1906,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           ? "bg-slate-100 text-slate-600"
                           : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "bg-amber-100 text-amber-800"
-                          : inv.payment_status === "paid"
+                          : (inv.payment_status === "paid" || contactPaymentSettled(inv))
                           ? "bg-emerald-100 text-emerald-800"
                           : inv.payment_status === "partially_paid"
                           ? "bg-amber-100 text-amber-800"
@@ -1918,7 +1918,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           ? "Taslak"
                           : isIncomingPurchaseInvoice(inv) && !incomingPurchaseLedgerPosted(inv)
                           ? "İşlenmedi"
-                          : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
+                          : (inv.payment_status === "paid" || contactPaymentSettled(inv)) ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi Ödendi" : "Cariye işlendi"}
                       </span>
                       )}
                     </td>

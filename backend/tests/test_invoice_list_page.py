@@ -365,7 +365,10 @@ def test_other_company_forbidden_and_get_does_not_write():
     assert _ids(foreign["items"]) == ["foreign"]
     assert denied == 403
     assert writes == []
-    assert log and all(kind == "find" and name == "invoices" for kind, name, *_rest in log)
+    assert log and all(kind == "find" and name in {"invoices", "contacts"} for kind, name, *_rest in log)
+    assert any(name == "invoices" for _kind, name, *_rest in log)
+    for _kind, name, query, *_rest in log:
+        assert query.get("company_id") in {CID, OTHER}
     assert invoices == before
     src = Path(__file__).resolve().parents[1].joinpath("invoice_list_page.py").read_text(encoding="utf-8")
     for bad_name in ("update_one", "insert_one", "delete_one", "update_many", "insert_many", "delete_many", "replace_one", "$set"):
