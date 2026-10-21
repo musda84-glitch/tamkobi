@@ -201,3 +201,86 @@ test("portalda 403 seçim hatasını gösterir ve sepeti taşımaz", async () =>
   expect(localStorage.getItem("b2b_cart_tok-a")).toContain("p1");
   expect(localStorage.getItem("b2b_cart_tok-b")).toBeNull();
 });
+
+test("tek tedarikçi ve eski portal bağlantısında başlıkta çıkış görünür", async () => {
+  installGets([TWO[0]]);
+  await show();
+  const bare = host.querySelector('[data-testid="b2b-header-logout"]');
+  expect(bare).not.toBeNull();
+  expect(bare.textContent).toContain("Çıkış");
+  expect(bare.getAttribute("aria-label")).toBe("Çıkış");
+  expect(host.querySelector('[data-testid="b2b-switch-supplier"]')).toBeNull();
+
+  sessionStorage.setItem("b2b_session", "select-secret");
+  if (root) act(() => root.unmount());
+  await show();
+  expect(host.querySelector('[data-testid="b2b-header-logout"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="b2b-switch-supplier"]')).toBeNull();
+});
+
+test("çok tedarikçide başlık ve menü aynı çıkış fonksiyonunu kullanır", async () => {
+  sessionStorage.setItem("b2b_session", "select-secret");
+  sessionStorage.setItem("b2b_session_email", "ali@ornek.test");
+  installGets(TWO);
+  axios.post.mockResolvedValue({ data: { status: "success" } });
+  await show();
+  expect(host.querySelector('[data-testid="b2b-header-logout"]')).not.toBeNull();
+  await act(async () => { host.querySelector('[data-testid="b2b-switch-supplier"]').click(); });
+  const menuLogout = host.querySelector('[data-testid="b2b-portal-logout"]');
+  expect(menuLogout).not.toBeNull();
+  await act(async () => { menuLogout.click(); });
+  expect(axios.post).toHaveBeenCalledWith(
+    "/api/public/b2b/logout",
+    { select_token: "select-secret" },
+    { headers: { Authorization: "B2BSession select-secret" } },
+  );
+  expect(sessionStorage.getItem("b2b_session")).toBeNull();
+  expect(goSpy).toHaveBeenCalledWith("/b2b/giris");
+});
+
+test("çıkış ucu hata verse de oturumu siler, sepeti ve panel anahtarını bırakır", async () => {
+  sessionStorage.setItem("b2b_session", "select-secret");
+  sessionStorage.setItem("b2b_session_email", "ali@ornek.test");
+  sessionStorage.setItem("tamkobi_access_token", "panel-session");
+  localStorage.setItem("tamkobi_access_token", "panel-local");
+  localStorage.setItem("b2b_contact_portals", JSON.stringify({ cA: "tok-a" }));
+  localStorage.setItem("b2b_cart_tok-a", JSON.stringify({ p1: { productId: "p1", qty: 2, note: "" } }));
+  localStorage.setItem("b2b_held_carts_tok-a", JSON.stringify([{ id: "h1", seq: 1, cart: { p1: { productId: "p1", qty: 1, note: "" } }, note: "" }]));
+  document.cookie = "tamkobi_app=stay";
+  installGets([TWO[0]]);
+  axios.post.mockRejectedValue(new Error("logout down"));
+  await show();
+  await act(async () => { host.querySelector('[data-testid="b2b-header-logout"]').click(); });
+  expect(axios.post).toHaveBeenCalledWith(
+    "/api/public/b2b/logout",
+    { select_token: "select-secret" },
+    { headers: { Authorization: "B2BSession select-secret" } },
+  );
+  expect(String(axios.post.mock.calls[0][0])).not.toContain("select-secret");
+  expect(sessionStorage.getItem("b2b_session")).toBeNull();
+  expect(sessionStorage.getItem("b2b_session_email")).toBeNull();
+  expect(localStorage.getItem("b2b_contact_portals")).toBeNull();
+  expect(localStorage.getItem("b2b_cart_tok-a")).toContain("p1");
+  expect(localStorage.getItem("b2b_held_carts_tok-a")).toContain("h1");
+  expect(sessionStorage.getItem("tamkobi_access_token")).toBe("panel-session");
+  expect(localStorage.getItem("tamkobi_access_token")).toBe("panel-local");
+  expect(document.cookie).toContain("tamkobi_app=stay");
+  expect(goSpy).toHaveBeenCalledWith("/b2b/giris");
+  expect(toast.message).toHaveBeenCalledWith("Sepetiniz bu cihazda saklandı.");
+});
+
+test("390px başlık çıkışı sağda, metin taşmadan durur", async () => {
+  host.style.width = "390px";
+  window.innerWidth = 390;
+  installGets([]);
+  await show();
+  const button = host.querySelector('[data-testid="b2b-header-logout"]');
+  expect(button).not.toBeNull();
+  expect(button.textContent.replace(/\s+/g, " ").trim()).toBe("Çıkış");
+  expect(button.className).toMatch(/whitespace-nowrap/);
+  expect(button.className).toMatch(/min-h-9/);
+  expect(button.className).toMatch(/rounded-xl/);
+  const row = button.closest(".border-t");
+  expect(row).not.toBeNull();
+  expect(row.className).toMatch(/justify-between/);
+});

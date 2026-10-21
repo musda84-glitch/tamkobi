@@ -206,8 +206,13 @@ def test_single_supplier_keeps_redirect(client, db):
 
 
 def test_vkn_requires_single_existing_identity(client, db):
+    # Eski cari (giriş e-postası boş, şifre cari üzerinde) kimlik olmadan VKN ile girer.
     missing = client.post("/api/public/b2b/login", json={"email": "1111111111", "password": PWD})
-    assert missing.status_code == 401
+    assert missing.status_code == 200, missing.text
+    assert _names(missing.json()) == {"Firma C"}
+    assert missing.json()["redirect"] == "/portal/portal-secret-vkn"
+    assert "portal-secret-a" not in missing.text
+    assert "PRICE-SECRET" not in missing.text
     scans = []
     original = db.companies.find
 
@@ -227,8 +232,9 @@ def test_vkn_requires_single_existing_identity(client, db):
     })
     by_tax = client.post("/api/public/b2b/login", json={"email": "1111111111", "password": PWD})
     assert by_tax.status_code == 200, by_tax.text
-    assert _names(by_tax.json()) == {"Firma A", "Firma B"}
+    assert _names(by_tax.json()) == {"Firma A", "Firma B", "Firma C"}
     assert "portal-secret-vkn" not in by_tax.text
+    assert "redirect" not in by_tax.json()
     assert scans == []
 
     db.b2b_identities.docs.append({
@@ -244,10 +250,14 @@ def test_vkn_requires_single_existing_identity(client, db):
         "cSplit", "coOff", "Bölünmüş", login_email="diger@example.com",
         password_hash=HASH, tax="1111111111", token="portal-secret-split",
     ))
-    # coOff portalı açık; ikinci kimlik aynı VKN'ye bağlanır.
+    # coOff portalı açık; ikinci kimlik aynı VKN'de seçim listesine girer, reddedilmez.
     db.companies.docs[2]["b2b_settings"]["enabled"] = True
     split = client.post("/api/public/b2b/login", json={"email": "1111111111", "password": PWD})
-    assert split.status_code == 401
+    assert split.status_code == 200, split.text
+    assert {"Firma A", "Firma Kapalı", "Firma C"} <= _names(split.json())
+    assert "portal-secret-split" not in split.text
+    assert "PRICE-SECRET" not in split.text
+    assert "redirect" not in split.json()
 
 
 def test_verified_identity_lists_link_only_after_accept(client, db):
@@ -1117,3 +1127,248 @@ def test_removed_b2b_tenant_keys_are_gone():
     base = allowlist.TENANT_SCOPE_BASELINE
     present = [key for key in removed if key in base]
     assert present == []
+
+
+def _identity(iid, email, password_hash=HASH, verified=True):
+    return {
+        "_id": iid,
+        "email": email,
+        "password_hash": password_hash,
+        "email_verified_at": datetime.now(timezone.utc).isoformat() if verified else None,
+        "is_active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
+
+
+def test_vkn_login_identity_legacy_and_normalized_forms(client, db):
+    db.companies.docs.append(_company("coId", "Kimlik A.Ş."))
+    db.contacts.docs.append(_contact(
+        "cId", "coId", "Kimlik Cari", login_email="kimlik@example.com", email="kimlik@example.com",
+        token="portal-secret-id", tax="5555555555",
+    ))
+    db.b2b_identities.docs.append(_identity("id-kimlik", "kimlik@example.com"))
+    for typed in ("5555555555", "555 555 5555", "TR5555555555", "5555555555 "):
+        res = client.post("/api/public/b2b/login", json={"email": typed, "password": PWD})
+        assert res.status_code == 200, (typed, res.text)
+        assert res.json()["redirect"] == "/portal/portal-secret-id"
+        assert "PRICE-SECRET" not in res.text
+        assert "424242" not in res.text
+
+    db.companies.docs.append(_company("coOld", "Eski A.Ş."))
+    db.contacts.docs.append(_contact(
+        "cOld", "coOld", "Eski Cari", login_email="", email="eski-vkn@example.com",
+        token="portal-secret-old", tax="6666666666", password_hash=HASH_B,
+    ))
+    legacy = client.post("/api/public/b2b/login", json={"email": "666 666 6666", "password": PWD_B})
+    assert legacy.status_code == 200, legacy.text
+    assert legacy.json()["redirect"] == "/portal/portal-secret-old"
+    assert not any(row.get("email") == "eski-vkn@example.com" for row in db.b2b_identities.docs)
+    wrong = client.post("/api/public/b2b/login", json={"email": "6666666666", "password": PWD})
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"] == b2b_identity._FAIL
+    assert "Eski A.Ş." not in wrong.text
+
+    db.companies.docs.append(_company("coTckn", "TCKN A.Ş."))
+    db.contacts.docs.append(_contact(
+        "cTckn", "coTckn", "TCKN Cari", login_email="", email="tckn@example.com",
+        token="portal-secret-tckn", tax="12345678901",
+    ))
+    tckn = client.post("/api/public/b2b/login", json={"email": "12345 678 901", "password": PWD})
+    assert tckn.status_code == 200, tckn.text
+    assert tckn.json()["redirect"] == "/portal/portal-secret-tckn"
+
+    messy = _contact(
+        "cMessy", "coId", "Boşluklu", login_email="", email="messy@example.com",
+        token="portal-secret-messy", tax="123 456 7890", password_hash=HASH,
+    )
+    messy["tax_norm"] = "1234567890"
+    db.contacts.docs.append(messy)
+    spaced = client.post("/api/public/b2b/login", json={"email": "1234567890", "password": PWD})
+    assert spaced.status_code == 200, spaced.text
+    assert spaced.json()["redirect"] == "/portal/portal-secret-messy"
+    assert next(row["tax_number_or_id"] for row in db.contacts.docs if row["_id"] == "cMessy") == "123 456 7890"
+
+
+def test_same_vkn_two_suppliers_selects_only_matching_passwords(client, db):
+    db.companies.docs.append(_company("co1", "Bir Ltd"))
+    db.companies.docs.append(_company("co2", "İki Ltd"))
+    db.contacts.docs.append(_contact(
+        "c1", "co1", "C1", login_email="bir@example.com", email="bir@example.com",
+        token="portal-secret-bir", tax="7777777777",
+    ))
+    db.contacts.docs.append(_contact(
+        "c2", "co2", "C2", login_email="iki@example.com", email="iki@example.com",
+        token="portal-secret-iki", tax="7777777777", password_hash=HASH_B,
+    ))
+    db.b2b_identities.docs.append(_identity("id-bir", "bir@example.com"))
+    db.b2b_identities.docs.append(_identity("id-iki", "iki@example.com", HASH_B))
+    both_wrong_setup = client.post("/api/public/b2b/login", json={"email": "7777777777", "password": "nope"})
+    assert both_wrong_setup.status_code == 401
+    assert both_wrong_setup.json()["detail"] == b2b_identity._FAIL
+    assert "Bir Ltd" not in both_wrong_setup.text
+    assert "İki Ltd" not in both_wrong_setup.text
+
+    one = client.post("/api/public/b2b/login", json={"email": "TR7777777777", "password": PWD})
+    assert one.status_code == 200, one.text
+    assert one.json()["redirect"] == "/portal/portal-secret-bir"
+    assert _names(one.json()) == {"Bir Ltd"}
+    assert "portal-secret-iki" not in one.text
+    assert "İki Ltd" not in one.text
+
+    for row in db.b2b_identities.docs:
+        if row["_id"] == "id-iki":
+            row["password_hash"] = HASH
+    for row in db.contacts.docs:
+        if row["_id"] == "c2":
+            row["b2b_password_hash"] = HASH
+    both = client.post("/api/public/b2b/login", json={"email": "777 777 7777", "password": PWD})
+    assert both.status_code == 200, both.text
+    assert _names(both.json()) == {"Bir Ltd", "İki Ltd"}
+    assert both.json().get("select_token")
+    assert "redirect" not in both.json()
+    assert "portal-secret-bir" not in both.text
+    assert "portal-secret-iki" not in both.text
+
+
+def test_vkn_skips_disabled_passive_and_other_tenant(client, db):
+    db.companies.docs.append(_company("coHide", "Gizli Ltd", enabled=False))
+    db.companies.docs.append(_company("coOpen", "Açık Ltd"))
+    db.contacts.docs.append(_contact(
+        "cHide", "coHide", "Gizli Cari", login_email="gizli@example.com", email="gizli@example.com",
+        token="portal-secret-hide", tax="8888888888", balance=999001,
+    ))
+    db.contacts.docs.append(_contact(
+        "cPassive", "coOpen", "Pasif Cari", login_email="pasif-vkn@example.com", email="pasif-vkn@example.com",
+        token="portal-secret-passive", tax="8888888888", active=False,
+    ))
+    db.contacts.docs.append(_contact(
+        "cOffB2B", "coOpen", "Kapalı B2B", login_email="kapali@example.com", email="kapali@example.com",
+        token="portal-secret-b2boff", tax="8888888888", enabled=False,
+    ))
+    db.contacts.docs.append(_contact(
+        "cOpen", "coOpen", "Açık Cari", login_email="acik@example.com", email="acik@example.com",
+        token="portal-secret-open", tax="8888888888",
+    ))
+    db.contacts.docs.append(_contact(
+        "cOtherTax", "coOpen", "Başka VKN", login_email="baska-vkn@example.com", email="baska-vkn@example.com",
+        token="portal-secret-othertax", tax="1010101010",
+    ))
+    for mail in ("gizli@example.com", "pasif-vkn@example.com", "kapali@example.com", "acik@example.com", "baska-vkn@example.com"):
+        db.b2b_identities.docs.append(_identity(f"id-{mail}", mail))
+    res = client.post("/api/public/b2b/login", json={"email": "8888888888", "password": PWD})
+    assert res.status_code == 200, res.text
+    assert _names(res.json()) == {"Açık Ltd"}
+    assert res.json()["name"] == "Açık Cari"
+    blob = res.text
+    for secret in ("Gizli Ltd", "Pasif Cari", "Kapalı B2B", "Başka VKN", "portal-secret-hide", "portal-secret-passive", "999001", "1010101010"):
+        assert secret not in blob
+
+
+def test_vkn_lock_counts_normalized_spellings_once(client, db):
+    spellings = ["123 456 7890", "1234567890", "TR1234567890", "1234567890 ", "123.456.7890"]
+    for typed in spellings:
+        res = client.post("/api/public/b2b/login", json={"email": typed, "password": "wrong"})
+        assert res.status_code == 401, (typed, res.text)
+    locked = client.post("/api/public/b2b/login", json={"email": "1234567890", "password": "wrong"})
+    assert locked.status_code == 429
+    assert locked.json()["detail"] == b2b_identity._LOCK
+    digest = b2b_identity._sha256("1234567890")
+    acct = [row for row in db.login_attempts.docs if row["identifier"] == f"b2b:acct:{digest}"]
+    assert len(acct) == 1
+    assert acct[0]["count"] == 5
+    blob = "".join(row["identifier"] for row in db.login_attempts.docs)
+    assert "123 456 7890" not in blob
+    assert "TR1234567890" not in blob
+
+
+def test_canonical_login_stores_digits_and_skips_link_notice(db):
+    import asyncio
+    from fastapi import HTTPException
+    assert b2b_identity.canonical_b2b_login("1234567890") == "1234567890"
+    assert b2b_identity.canonical_b2b_login(" 123 456 7890 ") == "1234567890"
+    assert b2b_identity.canonical_b2b_login("Ali@Example.com") == "ali@example.com"
+    assert b2b_identity.canonical_b2b_login("") == ""
+    with pytest.raises(HTTPException) as err:
+        b2b_identity.canonical_b2b_login("abc")
+    assert err.value.status_code == 400
+    assert "VKN" in err.value.detail
+    before = list(db.notify_outbox.docs)
+
+    async def run():
+        upd = {"b2b_login_email": "1234567890", "b2b_enabled": True}
+        contact = {"_id": "cA", "company_id": "coA", "name": "Cari A", "b2b_enabled": True, "b2b_login_email": ""}
+        await b2b_identity.consider_link_notice(db, contact, {**contact, **upd}, upd)
+
+    asyncio.run(run())
+    assert db.notify_outbox.docs == before
+    plans = b2b_identity.plan_tax_norm_backfill([
+        {"_id": "a", "company_id": "coA", "tax_number_or_id": "123 456 7890"},
+        {"_id": "b", "company_id": "coA", "tax_number_or_id": "1234567890", "tax_norm": "1234567890"},
+        {"_id": "c", "company_id": "coA", "tax_number_or_id": "abc"},
+    ])
+    assert plans == [{"contact_id": "a", "company_id": "coA", "patch": {"tax_norm": "1234567890"}}]
+
+
+def test_forgot_vkn_normalizes_and_unknown_is_generic(db):
+    import asyncio
+    db.contacts.docs.append(_contact(
+        "cTaxMail", "coA", "Vergili", login_email="", email="vergi@example.com",
+        token="portal-secret-taxmail", tax="9090909090",
+    ))
+    generic = {"status": "ok", "message": "ayni", "channel": "email"}
+
+    async def run(ident):
+        contact = await b2b_identity.find_legacy_contact(db, ident)
+        out = await b2b_identity.finish_b2b_forgot(
+            db, ident, None, {"ok": True}, dict(generic), contact,
+        )
+        return contact, out
+
+    contact, queued = asyncio.run(run("TR 909 090 9090"))
+    assert contact["_id"] == "cTaxMail"
+    assert queued["status"] == "ok"
+    mail = next(row for row in db.notify_outbox.docs if row.get("event") == "b2b_password_reset")
+    assert mail["to"] == ["vergi@example.com"]
+    before = len(db.notify_outbox.docs)
+    missing, same = asyncio.run(run("0000000000"))
+    assert missing is None
+    assert same == generic
+    assert len(db.notify_outbox.docs) == before
+
+
+def test_logout_drops_only_that_session_and_keeps_portal_token(client, db, monkeypatch):
+    res = _login(client)
+    token = res.json()["select_token"]
+    other = "other-select-token-keep"
+    db.b2b_sessions.docs.append({
+        "_id": b2b_identity._sha256(other),
+        "identity_id": "keep",
+        "email": "keep@example.com",
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        "contact_ids": ["cB"],
+    })
+    contact = next(row for row in db.contacts.docs if row["_id"] == "cA")
+    before_token = contact["b2b_token"]
+    logged = []
+    monkeypatch.setattr(b2b_identity.logger, "warning", lambda *a, **k: logged.append((a, k)))
+    monkeypatch.setattr(b2b_identity.logger, "info", lambda *a, **k: logged.append((a, k)))
+    monkeypatch.setattr(b2b_identity.applog, "log_auth", lambda *a, **k: logged.append((a, k)))
+    out = client.post("/api/public/b2b/logout", headers={"Authorization": f"B2BSession {token}"})
+    assert out.status_code == 200
+    assert out.json() == {"status": "success"}
+    assert token not in out.text
+    assert token not in str(logged)
+    ids = {row["_id"] for row in db.b2b_sessions.docs}
+    assert b2b_identity._sha256(token) not in ids
+    assert b2b_identity._sha256(other) in ids
+    assert contact["b2b_token"] == before_token
+    suppliers = client.get("/api/public/b2b/suppliers", headers={"Authorization": f"B2BSession {token}"})
+    assert suppliers.status_code == 401
+    again = client.post("/api/public/b2b/logout", json={"select_token": "not-a-session"})
+    assert again.status_code == 200
+    assert again.json() == {"status": "success"}
+    assert b2b_identity._sha256(other) in {row["_id"] for row in db.b2b_sessions.docs}
+    missing = client.post("/api/public/b2b/logout")
+    assert missing.status_code == 200
+    assert "not-a-session" not in missing.text

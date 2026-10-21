@@ -106,3 +106,21 @@ test("tek tedarikçi doğrudan portala gider ve seçim oturumu yazılmaz", async
   expect(goSpy).toHaveBeenCalledWith("/portal/only-token");
   expect(JSON.stringify(goSpy.mock.calls)).not.toContain("should-not-store");
 });
+
+test("VKN ile giriş iki tedarikçide seçim ekranına gider", async () => {
+  axios.post.mockResolvedValue({
+    data: {
+      suppliers: [
+        { contact_id: "cA", company_id: "coA", company_name: "Bir", logo_url: "", contact_name: "Ali" },
+        { contact_id: "cB", company_id: "coB", company_name: "İki", logo_url: "", contact_name: "Ali" },
+      ],
+      select_token: "select-secret",
+    },
+  });
+  await show();
+  await fillAndSubmit("123 456 7890");
+  expect(axios.post).toHaveBeenCalledWith("/api/public/b2b/login", { email: "123 456 7890", password: "gizli-sifre" });
+  expect(sessionStorage.getItem("b2b_session")).toBe("select-secret");
+  expect(goSpy).toHaveBeenCalledWith("/b2b/tedarikci");
+  expect(JSON.stringify(goSpy.mock.calls)).not.toContain("select-secret");
+});

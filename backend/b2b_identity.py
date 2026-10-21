@@ -47,6 +47,7 @@ _VERIFY_LOCK = "Çok fazla doğrulama isteği. Lütfen 15 dakika sonra tekrar de
 _SESSION_BAD = "Geçersiz veya süresi dolmuş oturum."
 _SESSION_EXPIRED = "Oturum süresi doldu. Yeniden giriş yapın."
 _NOT_LINKED = "Bu cari bu oturuma bağlı değil."
+_LOGIN_BAD = "Portal girişi geçerli bir e-posta ya da 10/11 haneli VKN/TCKN olmalıdır."
 
 _PUBLIC_KEYS = ("contact_id", "company_id", "company_name", "logo_url", "contact_name")
 _DIRECT_EVENTS = ("b2b_link_notice", "b2b_verify_email", "b2b_password_reset")
@@ -97,6 +98,50 @@ def _parse_dt(value: Any) -> datetime:
 
 def _norm_email(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def normalize_tax(value: Any) -> str:
+    """VKN/TCKN: yalnız rakamlar. 10 veya 11 hane değilse VKN sayılmaz."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) in (10, 11):
+        return digits
+    return ""
+
+
+_LOGIN_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def canonical_b2b_login(value: Any) -> str:
+    """Boş, e-posta veya normalize VKN/TCKN. Biçim uymuyorsa 400."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "@" in raw:
+        email = raw.lower()
+        if not _LOGIN_RE.fullmatch(email):
+            raise HTTPException(status_code=400, detail=_LOGIN_BAD)
+        return email
+    tax = normalize_tax(raw)
+    if not tax:
+        raise HTTPException(status_code=400, detail=_LOGIN_BAD)
+    return tax
+
+
+def plan_tax_norm_backfill(contacts) -> list:
+    """tax_number_or_id değişmez. Yalnız eksik veya farklı tax_norm yazılır."""
+    plans = []
+    for row in contacts or []:
+        if not isinstance(row, dict):
+            continue
+        norm = normalize_tax(row.get("tax_number_or_id"))
+        if not norm or str(row.get("tax_norm") or "") == norm:
+            continue
+        plans.append({
+            "contact_id": row.get("_id"),
+            "company_id": row.get("company_id") or "",
+            "patch": {"tax_norm": norm},
+        })
+    return plans
 
 
 def _sha256(value: str) -> str:
@@ -336,12 +381,33 @@ async def _legacy_email_contacts(db, email: str) -> list:
 
 
 async def _contacts_for_tax(db, tax: str) -> list:
+    norm = normalize_tax(tax)
+    if not norm:
+        return []
+    raw = str(tax or "").strip()
+    values = [norm] if raw == norm else [norm, raw]
     # tenant-ok: VKN girişi contacts.tax_number_or_id indeksiyle tek sorguda okunur
-    rows = await db.contacts.find({"b2b_enabled": True, "tax_number_or_id": tax}).to_list(200)
-    return [
-        row for row in rows
-        if str(row.get("tax_number_or_id") or "").strip() == tax and row.get("company_id")
-    ]
+    rows = await db.contacts.find({
+        "b2b_enabled": True,
+        "$or": [
+            {"tax_number_or_id": {"$in": values}},
+            {"tax_norm": norm},
+        ],
+    }).to_list(200)
+    found = []
+    seen = set()
+    for row in rows:
+        if not row.get("company_id"):
+            continue
+        stored = normalize_tax(row.get("tax_number_or_id")) or str(row.get("tax_norm") or "")
+        if stored != norm:
+            continue
+        key = str(row.get("_id") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        found.append(row)
+    return found
 
 
 async def list_supplier_links(db, identity) -> list:
@@ -412,10 +478,10 @@ def _row_eligible(company: dict, contact: dict) -> bool:
 
 async def identity_for_tax_number(db, tax: str) -> Optional[dict]:
     """VKN tek indeksli sorgu. Bağlı cariler tam bir kimliğe işaret etmiyorsa None."""
-    tax = str(tax or "").strip()
-    if not tax:
+    norm = normalize_tax(tax)
+    if not norm:
         return None
-    rows = await _contacts_for_tax(db, tax)
+    rows = await _contacts_for_tax(db, norm)
     emails = []
     for row in rows:
         company = await db.companies.find_one({"_id": row.get("company_id")}) or {}
@@ -465,7 +531,9 @@ async def find_legacy_contact(db, ident: str) -> Optional[dict]:
         legacy = await _legacy_email_contacts(db, email)
         rows = primary + legacy
     else:
-        rows = await _contacts_for_tax(db, str(ident or "").strip())
+        if not normalize_tax(ident):
+            return None
+        rows = await _contacts_for_tax(db, ident)
         if len(rows) != 1:
             return None
     for row in rows:
@@ -623,16 +691,128 @@ async def _accept_matches(db, email: str, meta: list, *, identity_password_ok: b
         await _mark_accepted(db, email, {"_id": row.get("contact_id"), "company_id": row.get("company_id")})
 
 
+def _merge_links(base: list, extra: list) -> list:
+    seen = {str(row.get("contact_id") or "") for row in base}
+    out = list(base)
+    for row in extra or []:
+        cid = str(row.get("contact_id") or "")
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        out.append(row)
+    return out
+
+
+async def _legacy_tax_links(db, rows: list, password: str) -> list:
+    """b2b_login_email boş (veya e-posta değil) ve cari şifresi tutan bağlantılar."""
+    probe = _probe(
+        {"email": "", "email_verified_at": None, "password_hash": ""},
+        password,
+        capture=True,
+    )
+    links = []
+    for contact in rows:
+        built = await _describe_contact(db, probe, contact, set())
+        if built["link"]:
+            links.append(built["link"])
+    return links
+
+
+def _session_email_for(bound: list, legacy_rows: list) -> str:
+    if bound:
+        email = _norm_email(bound[0].get("email"))
+        if "@" in email:
+            return email
+    for row in legacy_rows:
+        email = _norm_email(row.get("email"))
+        if "@" in email:
+            return email
+    return "b2b@local.invalid"
+
+
+async def _authenticate_tax(db, request, tax: str, password: str, ip_id: str, acct_id: str) -> dict:
+    """VKN/TCKN. Kimlik şifresi ve eski cari şifresi ayrı doğrulanır; eşleşmeyen bağ listeye girmez."""
+    rows = await _contacts_for_tax(db, tax)
+    by_email = {}
+    legacy_rows = []
+    for row in rows:
+        company = await db.companies.find_one({"_id": row.get("company_id")}) or {}
+        if row.get("is_active") is False or not row.get("b2b_enabled"):
+            continue
+        settings = _resolve_settings(company, row)
+        if not settings.get("enabled", True) or settings.get("login_method") == "link":
+            continue
+        login_email = _norm_email(row.get("b2b_login_email"))
+        if "@" in login_email:
+            by_email.setdefault(login_email, []).append(row)
+        elif row.get("b2b_password_hash"):
+            legacy_rows.append(row)
+
+    links = []
+    bound = []
+    checked = False
+    for email, _contacts in by_email.items():
+        identity = await db.b2b_identities.find_one({"email": email})
+        if not identity or identity.get("is_active") is False:
+            continue
+        checked = True
+        if not verify_password(password, identity.get("password_hash") or ""):
+            continue
+        ident_links, ident_meta = await _links_for_identity(db, identity, password=password, capture=True)
+        await _accept_matches(db, email, ident_meta, identity_password_ok=True)
+        if not ident_links:
+            continue
+        links = _merge_links(links, ident_links)
+        bound.append(identity)
+
+    legacy_links = []
+    if legacy_rows:
+        checked = True
+        legacy_links = await _legacy_tax_links(db, legacy_rows, password)
+        links = _merge_links(links, legacy_links)
+
+    if not links:
+        if not checked:
+            _burn_unknown(password)
+        await _reject_credentials(db, ip_id, acct_id, tax, request)
+
+    sole = len(bound) == 1 and not legacy_links
+    if not sole:
+        for item in bound:
+            try:
+                await db.b2b_identities.update_one(
+                    {"_id": item["_id"]},
+                    {"$set": {"last_login_at": _iso()}},
+                )
+            except Exception:
+                pass
+            try:
+                await notify_unnotified_links(db, item)
+            except Exception as exc:
+                logger.warning("b2b link notice skipped: %s", type(exc).__name__)
+    identity = bound[0] if sole else None
+    return await _finish_login(
+        db, request, tax,
+        identity=identity,
+        email=_session_email_for(bound if not sole else bound[:1], legacy_rows),
+        links=links,
+        ip_id=ip_id,
+        acct_id=acct_id,
+    )
+
+
 async def authenticate(db, req: dict, request: Request) -> dict:
     ident = _norm_email(req.get("email"))
     password = str(req.get("password") or "")
     if not ident or not password:
         raise HTTPException(status_code=400, detail=_NEED)
+    tax = "" if "@" in ident else normalize_tax(req.get("email"))
+    lock_ident = tax or ident
     ip = applog.client_ip(request)
-    ip_id = _ip_lock_id(ip, ident)
-    acct_id = _acct_lock_id(ident)
+    ip_id = _ip_lock_id(ip, lock_ident)
+    acct_id = _acct_lock_id(lock_ident)
     if await _locked(db, ip_id) or await _locked(db, acct_id):
-        _fail_log(ident, request)
+        _fail_log(lock_ident, request)
         raise HTTPException(status_code=429, detail=_LOCK)
 
     verified = False
@@ -686,24 +866,10 @@ async def authenticate(db, req: dict, request: Request) -> dict:
             ip_id=ip_id, acct_id=acct_id,
         )
 
-    identity = await identity_for_tax_number(db, ident)
-    if not identity or identity.get("is_active") is False:
+    if not tax:
         _burn_unknown(password)
         await _reject_credentials(db, ip_id, acct_id, ident, request)
-    if not verify_password(password, identity.get("password_hash") or ""):
-        await _reject_credentials(db, ip_id, acct_id, ident, request)
-    links, meta = await _links_for_identity(db, identity, password=password, capture=True)
-    if not links:
-        detail = _block_detail(meta)
-        if detail:
-            raise HTTPException(status_code=403, detail=detail)
-        _fail_log(ident, request)
-        raise HTTPException(status_code=401, detail=_FAIL)
-    await _accept_matches(db, identity.get("email"), meta, identity_password_ok=True)
-    return await _finish_login(
-        db, request, ident, identity=identity, email=identity.get("email") or "",
-        links=links, ip_id=ip_id, acct_id=acct_id,
-    )
+    return await _authenticate_tax(db, request, tax, password, ip_id, acct_id)
 
 
 async def _finish_login(db, request, ident, *, identity, email, links, ip_id, acct_id) -> dict:
@@ -1282,15 +1448,16 @@ async def finish_b2b_forgot(db, ident: str, request: Request, ready: dict, out: 
     """Sıfırlama postasını kuyruğa yazar. SMTP isteğin içinde çalışmaz."""
     _ = ready
     email = _norm_email(ident)
+    tax = "" if "@" in email else normalize_tax(ident)
     identity = None
     if "@" in email:
         identity = await db.b2b_identities.find_one({"email": email})
     else:
-        identity = await identity_for_tax_number(db, email)
+        identity = await identity_for_tax_number(db, tax or email)
     if contact is None and "@" in email:
         contact = await find_legacy_contact(db, email)
     if contact is None and "@" not in email:
-        contact = await find_legacy_contact(db, ident)
+        contact = await find_legacy_contact(db, tax or ident)
     typed = email if "@" in email else ""
     contact_email = _norm_email((contact or {}).get("b2b_login_email") or (contact or {}).get("email"))
     identity_email = _norm_email((identity or {}).get("email"))
@@ -1361,6 +1528,25 @@ async def b2b_select_supplier(req: dict):
 @router.get("/public/b2b/suppliers")
 async def b2b_suppliers(request: Request):
     return await list_suppliers_for_session(get_db(), request)
+
+
+@router.post("/public/b2b/logout")
+async def b2b_logout(request: Request):
+    """Verilen select_token oturumunu siler. Yoksa da 200; ham token loglanmaz."""
+    body: dict = {}
+    try:
+        parsed = await request.json()
+        if isinstance(parsed, dict):
+            body = parsed
+    except Exception:
+        body = {}
+    token = _session_token(request, body)
+    if token:
+        try:
+            await get_db().b2b_sessions.delete_one({"_id": _sha256(token)})
+        except Exception as exc:
+            logger.warning("b2b logout failed: %s", type(exc).__name__)
+    return {"status": "success"}
 
 
 @router.post("/public/b2b/verify-email/start")

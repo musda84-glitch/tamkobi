@@ -204,6 +204,15 @@ class MemColl:
                 modified += 1
         return SimpleNamespace(matched_count=matched, modified_count=modified, upserted_id=None)
 
+    async def delete_one(self, query):
+        tenant_scope.check(self.name, "delete_one", query=query)
+        query = _split_field_ops(query or {})
+        for i, doc in enumerate(self.docs):
+            if match_query(doc, query):
+                self.docs.pop(i)
+                return SimpleNamespace(deleted_count=1)
+        return SimpleNamespace(deleted_count=0)
+
 
 class MemDB:
     def __init__(self):
