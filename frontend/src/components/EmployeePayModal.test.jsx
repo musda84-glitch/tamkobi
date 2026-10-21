@@ -236,6 +236,7 @@ test("ödeme sonrası makbuz kendiliğinden açılmaz; yazdır butonu açar", as
     data: {
       message: "Ödeme kaydedildi.",
       receipt_id: "rcpt_abc",
+      receipt_no: "PM-2026-0007",
       overpaid: true,
       remaining_after: -2000,
       lines: [{ kind: "salary", amount: 100, account_name: "Ziraat Bankası" }],
@@ -259,12 +260,14 @@ test("ödeme sonrası makbuz kendiliğinden açılmaz; yazdır butonu açar", as
     await Promise.resolve();
   });
   expect(open).not.toHaveBeenCalled();
-  const saved = host.querySelector('[data-testid="emp-pay-saved"]');
+  const saved = host.querySelector('[data-testid="emp-pay-saved-modal"]');
   expect(saved).not.toBeNull();
   expect(saved.textContent).toContain("Ödeme kaydedildi");
   expect(host.querySelector('[data-testid="emp-pay-saved-person"]').textContent).toContain("Ayşe Yılmaz");
   expect(host.querySelector('[data-testid="emp-pay-saved-amount"]').textContent).toContain("100,00");
   expect(host.querySelector('[data-testid="emp-pay-saved-account"]').textContent).toContain("Ziraat Bankası");
+  expect(host.querySelector('[data-testid="emp-pay-saved-no"]').textContent).toContain("PM-2026-0007");
+  expect(host.querySelector('[data-testid="emp-pay-modal"]')).toBeNull();
   expect(host.querySelector('[data-testid="emp-pay-saved-overpay"]').textContent).toContain("sonraki maaştan düşülecek");
   expect(onClose).not.toHaveBeenCalled();
   expect(onDone).not.toHaveBeenCalled();

@@ -1122,14 +1122,17 @@ def _receipt_year(when: Any) -> str:
     return datetime.now(timezone.utc).strftime("%Y")
 
 
-async def next_receipt_no(db, company_id: str, when: str) -> str:
+async def next_receipt_no(db, company_id: str, when: str) -> Optional[str]:
     """Atomik personel makbuz numarası: PM-YYYY-NNNN.
 
     Sayaç anahtarı PM-{yıl}-{company_id}. Aynı şirket sırayla artar;
-    iki şirketin sayaçları birbirine karışmaz.
+    iki şirketin sayaçları birbirine karışmaz. company_id boşsa sayaç
+    yazılmaz; çağıran rcpt_ kimliğine düşer.
     """
     year = _receipt_year(when)
     cid = str(company_id or "").strip()
+    if not cid:
+        return None
     key = f"PM-{year}-{cid}"
     doc = await db.counters.find_one_and_update(
         {"_id": key},
@@ -1323,6 +1326,7 @@ async def _apply_payment_lines_body(
         if preview.get("overpaid"):
             message = f"{message} Fazla ödeme sonraki maaştan düşülecek."
         receipt_no = await next_receipt_no(db, cid, pay_date or period)
+        shown_no = receipt_no or receipt_id
         result = {
             "status": "success",
             "paid": [ln["kind"] for ln in saved_lines],
@@ -1330,7 +1334,7 @@ async def _apply_payment_lines_body(
             "period": period,
             "lines": saved_lines,
             "receipt_id": receipt_id,
-            "receipt_no": receipt_no,
+            "receipt_no": shown_no,
             "receipt_url": f"/api/personnel/receipts/{receipt_id}",
             "remaining_before": round(_amt(balance.get("remaining")), 2),
             "remaining_after": preview["remaining_after"],
@@ -1344,7 +1348,6 @@ async def _apply_payment_lines_body(
             "company_id": emp.get("company_id"),
             "employee_id": emp.get("_id"),
             "employee_name": emp.get("full_name"),
-            "receipt_no": receipt_no,
             "period": period,
             "date": pay_date,
             "lines": saved_lines,
@@ -1357,6 +1360,8 @@ async def _apply_payment_lines_body(
             "result": result,
             "created_at": _now(),
         }
+        if receipt_no:
+            receipt["receipt_no"] = receipt_no
         receipt["company_id"] = cid
         await db.personnel_receipts.insert_one(receipt)
         cx.push(

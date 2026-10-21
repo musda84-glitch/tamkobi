@@ -1237,3 +1237,17 @@ def test_receipt_no_increments_per_company_and_stays_isolated():
     assert int(other_counter["seq"]) == 1
     assert db.personnel_receipts.docs[0]["company_id"] == "c1"
     assert db.personnel_receipts.docs[2]["company_id"] == "c2"
+
+
+def test_blank_company_skips_receipt_counter_and_keeps_rcpt_id():
+    db = FakeDb()
+    db.bank_accounts.docs.append(_acc(company_id=""))
+    emp = _emp(company_id="")
+    result = _run(
+        db, emp, [{"kind": "salary", "amount": 100, "account_id": "bank"}],
+        balance={"remaining": 1000, "unpaid_payroll": 1000},
+    )
+    assert str(result["receipt_id"]).startswith("rcpt_")
+    assert result["receipt_no"] == result["receipt_id"]
+    assert "receipt_no" not in db.personnel_receipts.docs[0]
+    assert "counters" not in db._cols

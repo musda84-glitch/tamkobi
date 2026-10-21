@@ -122,6 +122,74 @@ def _date_label(value: Any) -> str:
     return raw
 
 
+def _wrap_words(text: str, font: str, size: float, width: float) -> list:
+    words = [part for part in text.split() if part]
+    if not words:
+        return []
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        trial = f"{current} {word}"
+        if stringWidth(trial, font, size) <= width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _break_wide(line: str, font: str, size: float, width: float) -> list:
+    if stringWidth(line, font, size) <= width:
+        return [line]
+    parts = []
+    buf = ""
+    for ch in line:
+        trial = buf + ch
+        if buf and stringWidth(trial, font, size) > width:
+            parts.append(buf)
+            buf = ch
+        else:
+            buf = trial
+    if buf:
+        parts.append(buf)
+    return parts or [line]
+
+
+def _centered_baseline(
+    font_name: str, size: float, box_bottom: float, box_h: float
+) -> float:
+    face = pdfmetrics.getFont(font_name).face
+    ascent = float(getattr(face, "ascent", 800) or 800)
+    descent = abs(float(getattr(face, "descent", -200) or -200))
+    em = ascent + descent
+    if em < 100:
+        em = 1000.0
+    ascent_pt = ascent * size / em
+    descent_pt = descent * size / em
+    return box_bottom + (box_h - ascent_pt - descent_pt) / 2.0 + descent_pt
+
+
+def _company_lines(name: str, font: str, width: float):
+    """Şirket adını kesmeden bir veya iki satıra sığdırır; sığmazsa punto küçülür."""
+    raw = _text(name).strip()
+    if not raw or width <= 0:
+        return [raw], 16
+    for size in (16, 14, 13, 12, 11, 10):
+        lines = _wrap_words(raw, font, size, width)
+        if (
+            lines
+            and len(lines) <= 2
+            and all(stringWidth(line, font, size) <= width + 0.2 for line in lines)
+        ):
+            return lines, float(size)
+    size = 9.0
+    fitted = []
+    for line in _wrap_words(raw, font, size, width):
+        fitted.extend(_break_wide(line, font, size, width))
+    return fitted or [raw], size
+
+
 def _clip(value: Any, font: str, size: float, width: float) -> str:
     raw = _text(value)
     if width <= 0:
@@ -166,29 +234,22 @@ def render_pdf(receipt: Dict[str, Any], company: Optional[dict] = None) -> bytes
         state["y"] = height - 16 * mm
 
     y = state["y"]
-    pdf.setFillColor(MUTED)
-    pdf.setFont(regular, 8)
-    pdf.drawRightString(right, y + 1 * mm, _text("MAKBUZ NO"))
-    pdf.setFillColor(SLATE)
-    pdf.setFont(bold, 12)
-    number_w = min(62 * mm, content_w * 0.38)
-    shown_no = _clip(number, bold, 12, number_w)
-    pdf.drawRightString(right, y - 5 * mm, shown_no)
-    name_w = content_w - number_w - 6 * mm
     company_name = str(company.get("name") or "").strip()
     pdf.setFillColor(SLATE)
     if company_name:
-        pdf.setFont(bold, 16)
-        pdf.drawString(left, y, _clip(company_name, bold, 16, name_w))
+        name_lines, name_size = _company_lines(company_name, bold, content_w)
+        pdf.setFont(bold, name_size)
+        for line in name_lines:
+            pdf.drawString(left, y, line)
+            y -= name_size + 3
+        y -= 1 * mm
         pdf.setFillColor(MUTED)
         pdf.setFont(regular, 10)
-        pdf.drawString(left, y - 6 * mm, _text("Personel Ödeme Makbuzu"))
+        pdf.drawString(left, y, _text("Personel Ödeme Makbuzu"))
     else:
         pdf.setFont(bold, 15)
-        pdf.drawString(
-            left, y - 1 * mm, _clip("Personel Ödeme Makbuzu", bold, 15, name_w)
-        )
-    y -= 12 * mm
+        pdf.drawString(left, y, _text("Personel Ödeme Makbuzu"))
+    y -= 6 * mm
     pdf.setStrokeColor(LINE)
     pdf.setLineWidth(0.8)
     pdf.line(left, y, right, y)
@@ -286,20 +347,17 @@ def render_pdf(receipt: Dict[str, Any], company: Optional[dict] = None) -> bytes
     ensure(22 * mm)
     y = state["y"] - 2 * mm
     total_h = 16 * mm
+    box_bottom = y - total_h
     pdf.setFillColor(TOTAL_BG)
-    pdf.roundRect(
-        left, y - total_h + 4 * mm, content_w, total_h, 2.5 * mm, fill=1, stroke=0
-    )
-    text_y = y - 2 * mm
+    pdf.roundRect(left, box_bottom, content_w, total_h, 2.5 * mm, fill=1, stroke=0)
+    amount_size = 16
+    baseline = _centered_baseline(bold, amount_size, box_bottom, total_h)
     pdf.setFillColor(TOTAL_FG)
     pdf.setFont(bold, 12)
-    pdf.drawString(left + 4 * mm, text_y, _text("Toplam ödenen"))
-    pdf.setFont(bold, 16)
-    pdf.drawRightString(
-        right - 4 * mm, text_y - 0.4 * mm, _text(_money(receipt.get("total")))
-    )
-    y = y - total_h - 2 * mm
-    state["y"] = y
+    pdf.drawString(left + 4 * mm, baseline, _text("Toplam ödenen"))
+    pdf.setFont(bold, amount_size)
+    pdf.drawRightString(right - 4 * mm, baseline, _text(_money(receipt.get("total"))))
+    state["y"] = box_bottom - 3 * mm
 
     if receipt.get("overpaid"):
         ensure(18 * mm)
@@ -322,6 +380,15 @@ def render_pdf(receipt: Dict[str, Any], company: Optional[dict] = None) -> bytes
             left + 4 * mm, y - 1 * mm, _clip(msg, regular, 9, content_w - 8 * mm)
         )
         state["y"] = y - warn_h - 2 * mm
+    else:
+        after = receipt.get("remaining_after")
+        if after not in (None, ""):
+            ensure(12 * mm)
+            y = state["y"] - 1 * mm
+            pdf.setFillColor(SLATE)
+            pdf.setFont(regular, 10)
+            pdf.drawString(left, y, _text(f"Ödeme sonrası kalan {_money(after)}"))
+            state["y"] = y - 6 * mm
 
     state["y"] -= 16 * mm
     if state["y"] < 40 * mm:

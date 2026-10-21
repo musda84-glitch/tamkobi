@@ -35,6 +35,36 @@ def _embedded_lira(pdf: bytes) -> bool:
     return False
 
 
+def test_total_line_is_vertically_centered():
+    pdf = personnel_receipt.render_pdf(
+        {
+            "_id": "rcpt_center",
+            "receipt_no": "PM-2026-0008",
+            "employee_name": "Ali",
+            "period": "2026-10",
+            "date": "2026-10-21",
+            "lines": [{"kind_label": "Maaş", "account_name": "Banka", "amount": 10}],
+            "total": 10,
+            "overpaid": False,
+        },
+        {"name": "Tamkobi"},
+    )
+    reader = PdfReader(io.BytesIO(pdf))
+    hits = []
+
+    def visitor(text, cm, tm, fontDict, fontSize):
+        label = " ".join(text.split())
+        if label in ("Toplam ödenen", "10,00 ₺"):
+            hits.append((label, tm[5]))
+
+    reader.pages[0].extract_text(visitor_text=visitor)
+    label_y = next(y for label, y in hits if label == "Toplam ödenen")
+    amount_y = min(
+        (y for label, y in hits if label == "10,00 ₺"), key=lambda y: abs(y - label_y)
+    )
+    assert abs(label_y - amount_y) < 0.6
+
+
 def test_receipt_pdf_embeds_lira_and_matches_layout():
     personnel_receipt._fonts()
     face = pdfmetrics.getFont("PersRec").face
@@ -89,6 +119,7 @@ def test_receipt_pdf_embeds_lira_and_matches_layout():
         "rcpt_a1b2c3d4e5",
     ):
         assert needle in text, needle
+    assert text.count("PM-2026-0042") == 1
 
 
 def test_receipt_without_number_shows_rcpt_id():
@@ -111,5 +142,28 @@ def test_receipt_without_number_shows_rcpt_id():
     assert "13.10.2026" in text
     assert "Ekim 2026" in text
     assert "Fazla ödeme" not in text
+    assert "Ödeme sonrası kalan 4.000,00 ₺" in text
     assert "10.000,00 ₺" in text
     assert _embedded_lira(pdf)
+
+
+def test_long_company_name_is_not_clipped():
+    name = "MATEK DEKORASYON MOBİLYA SAN.TİC.LTD.ŞTİ."
+    pdf = personnel_receipt.render_pdf(
+        {
+            "_id": "rcpt_longname",
+            "receipt_no": "PM-2026-0003",
+            "employee_name": "Ayşe Yılmaz",
+            "period": "2026-10",
+            "date": "2026-10-21",
+            "lines": [{"kind_label": "Maaş", "account_name": "Kasa", "amount": 100}],
+            "total": 100,
+            "remaining_after": None,
+            "overpaid": False,
+        },
+        {"name": name},
+    )
+    text = _text(pdf)
+    assert name in " ".join(text.split())
+    assert "…" not in text
+    assert "Ödeme sonrası kalan" not in text

@@ -61,6 +61,7 @@ function savedPaymentSummary(employee, lines, accounts, data) {
     overpaid,
     excess: overpaid ? Math.abs(Number(data?.remaining_after) || 0) : 0,
     receiptId: data?.receipt_id || "",
+    receiptNo: data?.receipt_no || data?.receipt_id || "",
   };
 }
 
@@ -217,7 +218,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
 
   if (saved) {
     return (
-      <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); dismiss(); })} data-testid="emp-pay-modal">
+      <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); dismiss(); })} data-testid="emp-pay-saved-modal">
         <div onClick={(ev) => ev.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md p-4 sm:p-6 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="emp-pay-saved">
           <div className="flex items-start gap-3">
             <div className="shrink-0 w-11 h-11 rounded-full bg-emerald-600 text-white flex items-center justify-center">
@@ -240,6 +241,10 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
             <div className="flex items-start justify-between gap-3 py-2.5">
               <dt className="text-slate-500 shrink-0">Hesap</dt>
               <dd className="font-semibold text-slate-900 text-right break-words" data-testid="emp-pay-saved-account">{saved.account || "—"}</dd>
+            </div>
+            <div className="flex items-start justify-between gap-3 py-2.5">
+              <dt className="text-slate-500 shrink-0">Makbuz no</dt>
+              <dd className="font-semibold text-slate-900 text-right break-all" data-testid="emp-pay-saved-no">{saved.receiptNo || "—"}</dd>
             </div>
           </dl>
           {saved.overpaid ? (
