@@ -5339,11 +5339,12 @@ def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
     return _b2b_track_mod.build_b2b_tracking(o, sh)
 
 
-async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]], company_id: str) -> List[Dict[str, Any]]:
     """Portal siparişlerine üretim durumu + aşama listesi ekle."""
     if not orders:
         return orders
-    await _enrich_orders_production_flags(orders)
+    cid = str(company_id or "").strip()
+    await _enrich_orders_production_flags(orders, cid)
     candidates = [
         o for o in orders
         if not (o.get("is_held_cart") or o.get("is_active_cart") or o.get("order_status") in ("held_cart", "active_cart"))
@@ -5364,13 +5365,15 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
 
     pos_by_id: Dict[str, Dict[str, Any]] = {}
     if po_ids:
-        for po in await db.production_orders.find({"_id": {"$in": po_ids}}).to_list(len(po_ids) + 10):
+        for po in await db.production_orders.find(
+            {"_id": {"$in": po_ids}, "company_id": cid},
+        ).to_list(len(po_ids) + 10):
             pos_by_id[str(po["_id"])] = po
 
     pos_by_recipe: Dict[str, Dict[str, Any]] = {}
     if recipe_ids:
         for po in await db.production_orders.find(
-            {"recipe_id": {"$in": recipe_ids}, "status": {"$ne": "cancelled"}},
+            {"recipe_id": {"$in": recipe_ids}, "status": {"$ne": "cancelled"}, "company_id": cid},
         ).sort("created_at", -1).to_list(len(recipe_ids) * 3 + 20):
             rid = str(po.get("recipe_id") or "").strip()
             if rid and rid not in pos_by_recipe:
@@ -5379,7 +5382,9 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
     recipes_by_id: Dict[str, Dict[str, Any]] = {}
     need_recipe = [rid for rid in recipe_ids if rid]
     if need_recipe:
-        for r in await db.recipes.find({"_id": {"$in": need_recipe}}).to_list(len(need_recipe) + 10):
+        for r in await db.recipes.find(
+            {"_id": {"$in": need_recipe}, "company_id": cid},
+        ).to_list(len(need_recipe) + 10):
             recipes_by_id[str(r["_id"])] = r
 
     linked: Dict[str, Dict[str, Any]] = {}
@@ -5401,7 +5406,7 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
     wos_by_po: Dict[str, List[Dict[str, Any]]] = {}
     if all_po_ids:
         wos = await db.work_orders.find(
-            {"order_id": {"$in": all_po_ids}},
+            {"order_id": {"$in": all_po_ids}, "company_id": cid},
             {
                 "order_id": 1, "status": 1, "step_name": 1, "step_no": 1, "original_step_no": 1,
                 "station": 1, "step_note": 1, "note": 1, "material_name": 1,
@@ -6447,7 +6452,7 @@ async def b2b_portal(token: str):
     if not bs.get("show_stock", True):
         products = [{**p, "stock_quantity": None} for p in products]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
-    shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
+    shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"company_id": c["company_id"], "order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
     pidx = {p["id"]: p for p in products}
     for o in orders:
         _decorate_b2b_held_order(o)
@@ -6470,7 +6475,7 @@ async def b2b_portal(token: str):
                 it["category"] = p.get("category")
             if not it.get("manufacturer_code") and p.get("manufacturer_code"):
                 it["manufacturer_code"] = p.get("manufacturer_code")
-    await _enrich_b2b_orders_production(orders)
+    await _enrich_b2b_orders_production(orders, c["company_id"])
     orders = _sort_b2b_cart_orders(orders)
     if bs.get("show_statement", True):
         invoice_docs = await db.invoices.find(
@@ -6481,7 +6486,7 @@ async def b2b_portal(token: str):
     else:
         invoices = []
         statement = {"rows": [], "payments": []}
-    insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
+    insts = [_decorate_installment(x) for x in await db.installments.find({"company_id": c["company_id"], "contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
     ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
     vpos_cfg = await db.vpos_configs.find_one({"company_id": c["company_id"]})
@@ -6616,10 +6621,10 @@ async def b2b_card_payment_status(token: str, intent_id: str):
     """Yalnız bu carinin B2B kart ödemesi. Başka cari 404."""
     c, _company, _bs, _cfg = await _b2b_portal_ready(token)
     import vpos.api as vpos_api
-    intent = await db.payment_intents.find_one({"_id": intent_id})
+    intent = await db.payment_intents.find_one({"_id": intent_id, "company_id": c["company_id"]})
     if not intent or str(intent.get("contact_id") or "") != str(c.get("_id") or "") or intent.get("purpose") not in ("b2b_collection", "b2b_order"):
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
-    fresh = await db.contacts.find_one({"_id": c["_id"]}) or c
+    fresh = await db.contacts.find_one({"_id": c["_id"], "company_id": c["company_id"]}) or c
     return {
         "status": intent.get("status") or "",
         "charge_amount": intent.get("amount") or "",
@@ -6668,7 +6673,7 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=blocked)
     new_hash = hash_password(new_pw)
     await db.contacts.update_one(
-        {"_id": c["_id"]},
+        {"_id": c["_id"], "company_id": c["company_id"]},
         {"$set": {"b2b_password_hash": new_hash, "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
     await b2b_identity.change_own_password(db, c, new_hash, current_plain=current)
@@ -6769,7 +6774,10 @@ async def b2b_upsert_active_cart(token: str, req: Dict[str, Any]):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     if existing:
-        await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
+        await db.orders.update_one(
+            {"_id": existing["_id"], "company_id": c["company_id"], "contact_id": c["_id"]},
+            {"$set": payload},
+        )
         doc = {**existing, **payload, "_id": existing["_id"]}
     else:
         order = Order(
@@ -6931,12 +6939,13 @@ async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = Non
         doc["payment_status"] = "paid"
         doc["paid_amount"] = float(payment.get("paid_amount") or 0)
         doc["payment_method"] = "card"
+    doc["company_id"] = c["company_id"]
     try:
         await db.orders.insert_one(doc)
     except Exception as exc:
         if not (order_id and _duplicate_order_insert(exc)):
             raise
-        existing = await db.orders.find_one({"_id": order_id})
+        existing = await db.orders.find_one({"_id": order_id, "company_id": c["company_id"]})
         if not existing:
             raise
         number = existing.get("order_number")
@@ -6944,7 +6953,7 @@ async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = Non
     await _clear_b2b_active_cart(c["company_id"], c["_id"])
     await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) sipariş verdi.", doc["_id"])
     await _attach_draft_invoice_on_intake(doc, source="b2b")
-    refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+    refreshed = await db.orders.find_one({"_id": doc["_id"], "company_id": c["company_id"]}) or doc
     return {"status": "success", "order": clean_doc(refreshed), "message": f"Siparişiniz alındı: {doc['order_number']}"}
 
 
@@ -7120,8 +7129,8 @@ async def _acquire_b2b_order_claim(intent_id: str, *, previous: Optional[str] = 
     return claim
 
 
-async def _link_existing_b2b_order(intent_id: str, sales_id: str) -> bool:
-    existing = await db.orders.find_one({"_id": sales_id})
+async def _link_existing_b2b_order(intent_id: str, sales_id: str, company_id: str) -> bool:
+    existing = await db.orders.find_one({"_id": sales_id, "company_id": company_id})
     if not existing:
         return False
     await db.payment_intents.update_one(
@@ -7133,9 +7142,16 @@ async def _link_existing_b2b_order(intent_id: str, sales_id: str) -> bool:
 
 async def finalize_b2b_order_payment(intent_id: str) -> None:
     """Ödenmiş b2b_order intent'inden tek sipariş. Banka order_id alanına dokunulmaz."""
+    # tenant-ok: finalize yalnız intent_id alır; company_id belgeden okunur, sonraki okumalar bu şirketle süzülür
     intent = await db.payment_intents.find_one({"_id": intent_id})
     if not intent:
         return
+    company_id = str(intent.get("company_id") or "")
+    if company_id:
+        scoped = await db.payment_intents.find_one({"_id": intent_id, "company_id": company_id})
+        if not scoped:
+            return
+        intent = scoped
     if str(intent.get("purpose") or "") != "b2b_order" or str(intent.get("status") or "") != "paid":
         return
     if intent.get("b2b_order_id") or intent.get("order_error") == "review":
@@ -7143,28 +7159,27 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
     if not intent.get("collection_tx_id"):
         return
     sales_id = f"b2bord_{intent_id}"
-    if await _link_existing_b2b_order(intent_id, sales_id):
+    if await _link_existing_b2b_order(intent_id, sales_id, company_id):
         return
     previous = str(intent.get("order_claim") or "")
     if previous and not _b2b_order_claim_stale(intent):
         return
     claim = await _acquire_b2b_order_claim(intent_id, previous=previous or None)
     if not claim:
-        if await _link_existing_b2b_order(intent_id, sales_id):
+        if await _link_existing_b2b_order(intent_id, sales_id, company_id):
             return
-        fresh = await db.payment_intents.find_one({"_id": intent_id}) or {}
+        fresh = await db.payment_intents.find_one({"_id": intent_id, "company_id": company_id}) or {}
         if fresh.get("b2b_order_id") or fresh.get("order_error") == "review":
             return
         if fresh.get("order_claim") and not _b2b_order_claim_stale(fresh):
             return
-        contact = await db.contacts.find_one({"_id": intent.get("contact_id")}) if intent.get("contact_id") else None
+        contact = await db.contacts.find_one({"_id": intent.get("contact_id"), "company_id": company_id}) if intent.get("contact_id") else None
         await _mark_b2b_order_review(
             intent_id,
-            str(intent.get("company_id") or ""),
+            company_id,
             (contact or {}).get("name") or "Cari",
         )
         return
-    company_id = str(intent.get("company_id") or "")
     contact_name = "Cari"
     try:
         draft = intent.get("order_draft")
@@ -7172,7 +7187,7 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
             raise HTTPException(status_code=409, detail="review")
         if not _same_money(draft.get("grand_total"), intent.get("ledger_amount")):
             raise HTTPException(status_code=409, detail="review")
-        contact = await db.contacts.find_one({"_id": intent.get("contact_id")})
+        contact = await db.contacts.find_one({"_id": intent.get("contact_id"), "company_id": company_id})
         if not contact or str(contact.get("company_id") or "") != company_id or not contact.get("b2b_enabled"):
             raise HTTPException(status_code=409, detail="review")
         contact_name = contact.get("name") or contact_name
@@ -7205,7 +7220,7 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
         await _mark_b2b_order_review(intent_id, company_id, contact_name)
     except Exception:
         logger.exception("b2b order finalize failed intent=%s", intent_id)
-        existing = await db.orders.find_one({"_id": sales_id})
+        existing = await db.orders.find_one({"_id": sales_id, "company_id": company_id})
         if existing:
             await db.payment_intents.update_one(
                 {"_id": intent_id, "order_claim": claim},
@@ -7246,8 +7261,15 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["notes"] = req.get("note") or ""
     if "customer_order_number" in req or "po_number" in req:
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
-    await db.orders.update_one({"_id": order_id}, {"$set": update})
-    updated = await db.orders.find_one({"_id": order_id})
+    order_q = {
+        "_id": order_id,
+        "company_id": c["company_id"],
+        "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}],
+    }
+    await db.orders.update_one(order_q, {"$set": update})
+    updated = await db.orders.find_one(order_q)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     if updated.get("order_status") not in ("held_cart", "active_cart"):
         await _propagate_order_commercial(updated, update.get("items") or [])
         await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
@@ -7263,9 +7285,7 @@ async def b2b_delete_order(token: str, order_id: str):
     if o.get("is_invoiced"):
         raise HTTPException(status_code=409, detail=FATURALASMIS_DELETE_MSG)
     if o.get("invoice_id"):
-        inv_q: Dict[str, Any] = {"_id": o["invoice_id"]}
-        if o.get("company_id"):
-            inv_q["company_id"] = o["company_id"]
+        inv_q: Dict[str, Any] = {"_id": o["invoice_id"], "company_id": c["company_id"]}
         inv = await db.invoices.find_one(inv_q)
         if inv and inv.get("status") == "draft" and not o.get("is_invoiced"):
             gid = str(uuid.uuid4())
@@ -7295,8 +7315,15 @@ async def b2b_cancel_request(token: str, order_id: str, req: Dict[str, Any] = No
         return {"status": "exists", "order": clean_doc(o), "message": "İptal talebiniz zaten iletildi."}
     req = req or {}
     cr = {"status": "pending", "reason": (req.get("reason") or "").strip(), "at": datetime.now(timezone.utc).isoformat()}
-    await db.orders.update_one({"_id": order_id}, {"$set": {"cancel_request": cr}})
-    updated = await db.orders.find_one({"_id": order_id})
+    order_q = {
+        "_id": order_id,
+        "company_id": c["company_id"],
+        "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}],
+    }
+    await db.orders.update_one(order_q, {"$set": {"cancel_request": cr}})
+    updated = await db.orders.find_one(order_q)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     why = f" Gerekçe: {cr['reason']}" if cr["reason"] else ""
     await _notify_company(c["company_id"], "b2b_cancel_request", f"İptal talebi {updated.get('order_number')}", f"{c.get('name')} onaylı sipariş için iptal talebi gönderdi.{why}", order_id)
     return {"status": "success", "order": clean_doc(updated), "message": "İptal talebiniz iletildi."}
