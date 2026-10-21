@@ -198,8 +198,38 @@ def test_hidden_card_drops_from_public_site(db):
     public = c.get("/api/public/site", headers={"host": "taiyazilim.com"}).json()
     titles = [row["title"] for row in public["content"]["services"]]
     assert current["services"][0]["title"] not in titles
-    blocked = c.put("/api/system/sites/tamkobi/content", json=current)
-    assert blocked.status_code == 400
+    saved_tam = c.put("/api/system/sites/tamkobi/content", json={
+        "pages": {"home": {"hero_title": "Vitrin başlığı", "hero_text": "Kısa metin", "hero_image": "/brand/tamkobi-mark.svg"}},
+        "features": {"lines": ["e-Fatura & cari", "  ", "Stok ve depo"]},
+        "demo_video": {"url": "https://www.youtube.com/watch?v=abc123", "published": True},
+        "faq": [
+            {"question": "Gizli soru", "answer": "Görünmez", "order": 0, "published": False},
+            {"question": "Deneme kaç gün?", "answer": "14 gün.", "order": 2, "published": True},
+            {"question": "Kart gerekir mi?", "answer": "Hayır.", "order": 1, "published": True},
+        ],
+    })
+    assert saved_tam.status_code == 200, saved_tam.text
+    body = saved_tam.json()
+    assert body["pages"]["home"]["hero_title"] == "Vitrin başlığı"
+    assert body["features"]["lines"] == ["e-Fatura & cari", "Stok ve depo"]
+    assert body["demo_video"]["url"].startswith("https://www.youtube.com/")
+    assert [row["question"] for row in body["faq"]] == ["Gizli soru", "Kart gerekir mi?", "Deneme kaç gün?"]
+    tam_public = c.get("/api/public/site", headers={"host": "tamkobi.com"}).json()
+    assert tam_public["theme"] == "vitrin"
+    assert tam_public["content"]["pages"]["home"]["hero_title"] == "Vitrin başlığı"
+    assert tam_public["content"]["features"]["lines"] == ["e-Fatura & cari", "Stok ve depo"]
+    assert tam_public["content"]["demo_video"]["published"] is True
+    assert [row["question"] for row in tam_public["content"]["faq"]] == ["Kart gerekir mi?", "Deneme kaç gün?"]
+    hidden_video = c.put("/api/system/sites/tamkobi/content", json={
+        "demo_video": {"url": "javascript:alert(1)", "published": True},
+        "faq": [{"question": "Yalnız gizli", "answer": "x", "published": False}],
+    })
+    assert hidden_video.status_code == 200
+    again = c.get("/api/public/site", headers={"host": "tamkobi.com"}).json()["content"]
+    assert again["demo_video"] == {"url": "", "published": False}
+    assert again["faq"] == []
+    admin_view = c.get("/api/system/sites/tamkobi").json()
+    assert admin_view["content"]["faq"][0]["published"] is False
 
 
 def test_contact_honeypot_rate_limit_and_general_mailbox(db, monkeypatch):
@@ -264,9 +294,13 @@ def test_only_super_admin_edits(db, monkeypatch):
     assert res.status_code == 403
 
     admin = _client(db, admin=True)
-    saved = admin.put("/api/system/sites/tamkobi", json={"brand_name": "TamKobi Özel", "public_url": "https://tamkobi.com"})
+    saved = admin.put("/api/system/sites/tamkobi", json={"brand_name": "TamKobi Özel", "public_url": "https://tamkobi.com", "active": False, "theme": "corporate"})
     assert saved.status_code == 200
     assert saved.json()["brand_name"] == "TamKobi Özel"
     assert saved.json()["theme"] == "vitrin"
+    assert saved.json()["active"] is False
+    hidden = admin.get("/api/public/site", headers={"host": "tamkobi.com"})
+    assert hidden.status_code == 404
+    admin.put("/api/system/sites/tamkobi", json={"active": True})
     mirrored = db.platform_settings.docs["platform"]["brand_name"]
     assert mirrored == "TamKobi Özel"
