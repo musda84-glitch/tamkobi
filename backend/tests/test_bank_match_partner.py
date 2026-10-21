@@ -179,6 +179,7 @@ def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():
     ptxs = _FakeColl([
         {
             "_id": "pt1",
+            "company_id": "c1",
             "partner_id": "ali",
             "type": "capital_in",
             "amount": 80000,
@@ -190,6 +191,7 @@ def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():
         },
         {
             "_id": "pt2",
+            "company_id": "c1",
             "partner_id": "ali",
             "type": "withdrawal",
             "amount": 1000,
@@ -198,6 +200,7 @@ def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():
         },
         {
             "_id": "pt3",
+            "company_id": "c1",
             "partner_id": "ali",
             "type": "withdrawal",
             "amount": 500,
@@ -208,7 +211,7 @@ def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():
     db = MagicMock()
     db.partner_transactions = ptxs
     db.bank_transactions = _FakeColl([])
-    n = _run(repair_legacy_bank_match_directions(db, "ali"))
+    n = _run(repair_legacy_bank_match_directions(db, "ali", company_id="c1"))
     assert n == 2  # pt1 capital_in→withdrawal, pt3 withdrawal→capital_in
     assert ptxs.docs[0]["type"] == "withdrawal"
     assert ptxs.docs[1]["type"] == "withdrawal"
@@ -234,9 +237,9 @@ def test_ali_bal_bank_outflow_stays_giris_after_type_repair():
     assert before["balance"] == 857659.78
 
     ptxs = _FakeColl([
-        {"_id": "a", "partner_id": "5a7cba2b", **txs[0]},
-        {"_id": "b", "partner_id": "5a7cba2b", **txs[1]},
-        {"_id": "c", "partner_id": "5a7cba2b", **txs[2]},
+        {"_id": "a", "company_id": "c1", "partner_id": "5a7cba2b", **txs[0]},
+        {"_id": "b", "company_id": "c1", "partner_id": "5a7cba2b", **txs[1]},
+        {"_id": "c", "company_id": "c1", "partner_id": "5a7cba2b", **txs[2]},
     ])
     partners = _FakeColl([{
         "_id": "5a7cba2b",

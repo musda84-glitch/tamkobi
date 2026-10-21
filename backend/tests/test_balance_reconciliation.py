@@ -316,7 +316,7 @@ def test_reverse_matches_signed_amount_for_each_account_kind():
         ledger = {"_id": "led", "company_id": "co", "account_id": "cash", "type": "inflow", "amount": 999, "source": "ledger"}
         sale = {"_id": "sale", "company_id": "co", "account_id": "pos", "type": "inflow", "amount": 120, "source": "pos_quick", "invoice_id": "fiş"}
         rows = [opening, collect, pay, transfer, back, match_acc, counter, expense_row, partner_row, invoice_row, contact_row, card_line, expected, posted_settle, pool_row, via_card, ledger, sale]
-        db.invoices.docs["inv1"] = {"_id": "inv1", "paid_amount": 0, "grand_total": 90, "contact_id": "ct"}
+        db.invoices.docs["inv1"] = {"_id": "inv1", "company_id": "co", "paid_amount": 0, "grand_total": 90, "contact_id": "ct"}
         db.contacts.docs["ct"] = {"_id": "ct", "company_id": "co", "balance": 0, "name": "Cari"}
         for row in rows:
             await db.bank_transactions.insert_one(row)
@@ -458,7 +458,7 @@ def test_statement_duplicate_suspect_and_match_conflict():
 
     async def overpay():
         server.db = db
-        db.invoices.docs["inv"] = {"_id": "inv", "grand_total": 100, "paid_amount": 80, "contact_id": "ct1"}
+        db.invoices.docs["inv"] = {"_id": "inv", "company_id": "co", "grand_total": 100, "paid_amount": 80, "contact_id": "ct1"}
         fresh = {**bank_line, "_id": "sync2", "amount": 30, "date": "2026-11-01"}
         db.bank_transactions.docs["sync2"] = copy.deepcopy(fresh)
         with pytest.raises(HTTPException) as ei:

@@ -9,21 +9,12 @@ from __future__ import annotations
 TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # account_balance.py
     ('account_balance.py', '_lookup_company_id', 'bank_accounts', 'find_one'): 2,
-    # attendance.py
-    # attendance_security.py
     # balance_reconciliation.py
     ('balance_reconciliation.py', 'conflicting_connection_iban', 'bank_accounts', 'find'): 1,
     # bank_guard.py
     ('bank_guard.py', 'assert_collection_allowed', 'bank_accounts', 'find_one'): 1,
     # bank_match_desc.py
     ('bank_match_desc.py', 'migrate_match_descriptions', 'bank_transactions', 'update_one'): 2,
-    # bank_match_target.py
-    ('bank_match_target.py', 'repair_legacy_bank_match_directions', 'bank_transactions', 'find'): 1,
-    ('bank_match_target.py', 'repair_legacy_bank_match_directions', 'partner_transactions', 'find'): 1,
-    ('bank_match_target.py', 'repair_legacy_bank_match_directions', 'partner_transactions', 'update_one'): 1,
-    # bank_tx.py
-    ('bank_tx.py', 'scrub_platform_actors', 'bank_transactions', 'find'): 1,
-    ('bank_tx.py', 'scrub_platform_actors', 'bank_transactions', 'update_one'): 1,
     # cheques.py
     ('cheques.py', 'cancel_promissory_for_installments', 'cheques', 'find'): 1,
     # company_audit.py
@@ -34,7 +25,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # company_reset.py
     ('company_reset.py', '_count_stock_movements', 'stock_movements', 'count_documents'): 1,
     ('company_reset.py', 'wipe_company_business_data', 'stock_movements', 'delete_many'): 1,
-    # data_export.py
     # demo.py
     ('demo.py', 'tag_legacy_seed', 'partner_transactions', 'update_many'): 1,
     # e_invoice.py
@@ -49,29 +39,19 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # employee_pay.py
     ('employee_pay.py', 'accrue_due_for_all_companies', 'employees', 'find'): 1,
     ('employee_pay.py', 'scheduler_loop', 'employees', 'find'): 1,
-    # event_notify.py
-    # expenses.py
     # fx.py
     ('fx.py', '_upsert_rates', 'fx_rates', 'update_one'): 1,
     # gib_credits.py
     ('gib_credits.py', 'account_credits', 'gib_credit_ledger', 'find'): 1,
-    # idempotency.py
-    # legal_docs.py
     # linked_moves.py
     ('linked_moves.py', 'list_isnet_missing_mode', 'einvoice_settings', 'find'): 1,
-    # mail_accounts.py
-    # migration.py
-    # notify.py
     # order_list_page.py
     ('order_list_page.py', 'fetch_order_rows', 'orders', 'find'): 1,
-    # order_pick.py
     # order_time.py
     ('order_time.py', 'collect_order_date_fixes', 'orders', 'find'): 1,
     ('order_time.py', 'collect_order_date_fixes', 'orders', 'update_one'): 1,
-    # partner_pay.py
     # partner_tx_page.py
     ('partner_tx_page.py', '_load_partner_txs', 'partner_transactions', 'find'): 1,
-    # phone_norm.py
     # platform_admin_v1.py
     ('platform_admin_v1.py', 'admin_v1_sms_logs', 'sms_logs', 'count_documents'): 2,
     # platform_admin_v1_write.py
@@ -87,7 +67,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('pricing.py', 'send_summary', 'morning_summary_logs', 'insert_one'): 1,
     # product_list_page.py
     ('product_list_page.py', 'fetch_product_rows', 'products', 'find'): 1,
-    # saas.py
     # saas_docs.py
     ('saas_docs.py', '_require_invoice_doc_access', 'invoices', 'find_one'): 1,
     ('saas_docs.py', 'invoice_pdf', 'contacts', 'find_one'): 1,
@@ -101,18 +80,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     # server.py
     ('server.py', '_acquire_b2b_order_claim', 'payment_intents', 'update_one'): 1,
     ('server.py', '_annotate_orders_invoice_mismatch', 'invoices', 'find'): 1,
-    ('server.py', '_apply_match', 'bank_accounts', 'find_one'): 1,
-    ('server.py', '_apply_match', 'bank_transactions', 'find'): 1,
-    ('server.py', '_apply_match', 'bank_transactions', 'find_one'): 2,
-    ('server.py', '_apply_match', 'bank_transactions', 'update_one'): 1,
-    ('server.py', '_apply_match', 'contacts', 'find_one'): 1,
-    ('server.py', '_apply_match', 'contacts', 'update_one'): 1,
-    ('server.py', '_apply_match', 'invoices', 'find_one'): 2,
-    ('server.py', '_apply_match', 'invoices', 'update_one'): 1,
-    ('server.py', '_apply_personnel_bank_match', 'payrolls', 'find'): 2,
-    ('server.py', '_apply_personnel_bank_match', 'payrolls', 'update_one'): 1,
-    ('server.py', '_apply_personnel_reimburse_match', 'bonus_payments', 'find'): 1,
-    ('server.py', '_apply_personnel_reimburse_match', 'payrolls', 'find'): 1,
     ('server.py', '_apply_shopfloor_station_grouping', 'work_orders', 'find'): 1,
     ('server.py', '_apply_shopfloor_station_grouping', 'work_orders', 'update_one'): 1,
     ('server.py', '_assert_salary_bank_only', 'bank_accounts', 'find_one'): 1,
@@ -142,9 +109,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', '_create_b2b_order_core', 'orders', 'insert_one'): 1,
     ('server.py', '_create_draft_invoice_for_order', 'invoices', 'find_one'): 1,
     ('server.py', '_create_draft_invoice_for_order', 'orders', 'update_one'): 1,
-    ('server.py', '_create_match_rule_core', 'bank_accounts', 'find_one'): 1,
-    ('server.py', '_create_match_rule_core', 'contacts', 'find_one'): 1,
-    ('server.py', '_create_match_rule_core', 'partners', 'find_one'): 1,
     ('server.py', '_employee_assigned_work', 'employees', 'find_one'): 1,
     ('server.py', '_employee_receipts', 'personnel_receipts', 'find'): 1,
     ('server.py', '_employee_receivable', 'expenses', 'find'): 1,
@@ -155,12 +119,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', '_enrich_work_orders_job_fields', 'work_orders', 'update_one'): 3,
     ('server.py', '_execute_contact_partner_payment', 'contacts', 'find_one'): 1,
     ('server.py', '_execute_contact_partner_payment', 'contacts', 'update_one'): 1,
-    ('server.py', '_execute_virman', 'bank_accounts', 'find_one'): 2,
-    ('server.py', '_execute_virman', 'bank_accounts', 'update_one'): 2,
-    ('server.py', '_execute_virman_contact', 'bank_accounts', 'find_one'): 2,
-    ('server.py', '_execute_virman_contact', 'bank_accounts', 'update_one'): 2,
-    ('server.py', '_execute_virman_contact', 'bank_transactions', 'insert_one'): 1,
-    ('server.py', '_execute_virman_contact', 'contacts', 'update_one'): 4,
     ('server.py', '_filter_active_production_work_orders', 'production_orders', 'find'): 1,
     ('server.py', '_generate_work_orders', 'work_orders', 'count_documents'): 2,
     ('server.py', '_generate_work_orders', 'work_orders', 'delete_many'): 1,
@@ -235,17 +193,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', '_store_product_image_bytes', 'products', 'update_one'): 2,
     ('server.py', '_suggest_contact', 'contacts', 'find_one'): 1,
     ('server.py', '_undo_stock', 'products', 'update_one'): 1,
-    ('server.py', '_unmatch', 'bank_transactions', 'find_one'): 1,
-    ('server.py', '_unmatch', 'bonus_payments', 'delete_one'): 1,
-    ('server.py', '_unmatch', 'bonus_payments', 'find_one'): 1,
-    ('server.py', '_unmatch', 'contacts', 'update_one'): 1,
-    ('server.py', '_unmatch', 'expenses', 'delete_one'): 1,
-    ('server.py', '_unmatch', 'expenses', 'find_one'): 1,
-    ('server.py', '_unmatch', 'invoices', 'find_one'): 1,
-    ('server.py', '_unmatch', 'invoices', 'update_one'): 1,
-    ('server.py', '_unmatch', 'payrolls', 'find_one'): 1,
-    ('server.py', '_unmatch', 'payrolls', 'update_one'): 1,
-    ('server.py', '_unmatch', 'personnel_movements', 'find_one'): 1,
     ('server.py', '_virman_load_contact', 'contacts', 'find_one'): 1,
     ('server.py', 'accountant_export', 'contacts', 'find'): 1,
     ('server.py', 'admin_trash_work_order', 'work_order_trash_requests', 'update_many'): 1,
@@ -304,7 +251,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', 'delete_employee_assigned_task', 'projects', 'update_one'): 1,
     ('server.py', 'delete_file_record', 'files', 'update_one'): 1,
     ('server.py', 'delete_label_template', 'label_templates', 'delete_one'): 1,
-    ('server.py', 'delete_match_rule', 'bank_match_rules', 'delete_one'): 1,
     ('server.py', 'delete_notification', 'notifications', 'delete_one'): 1,
     ('server.py', 'delete_notification', 'notifications', 'find_one'): 1,
     ('server.py', 'finalize_b2b_order_payment', 'contacts', 'find_one'): 2,
@@ -364,22 +310,16 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', 'upload_my_task_photo', 'employees', 'update_one'): 1,
     ('server.py', 'upload_my_task_photo', 'projects', 'find_one'): 1,
     ('server.py', 'upload_my_task_photo', 'projects', 'update_one'): 1,
-    # shopfloor_pause.py
     # staff_messages.py
     ('staff_messages.py', '_post_message', 'staff_messages', 'insert_one'): 2,
     # storage_manager.py
     ('storage_manager.py', 'ensure_account_folders', 'storage_folders', 'find_one'): 2,
-    # tax_obligations.py
-    # trade.py
-    # trash.py
     # ubl_export.py
     ('ubl_export.py', 'invoice_xml_payload', 'contacts', 'find_one'): 1,
     # user_erase.py
     ('user_erase.py', '_erase_counts', 'activity_logs', 'count_documents'): 1,
     ('user_erase.py', '_erase_counts', 'user_invites', 'count_documents'): 1,
     ('user_erase.py', '_linked_employee', 'employees', 'find_one'): 3,
-    # vehicles.py
-    # vpos/api.py
     # warehouse_ship.py
     ('warehouse_ship.py', 'apply_warehouse_ship', 'orders', 'find_one'): 4,
     ('warehouse_ship.py', 'apply_warehouse_ship', 'orders', 'update_one'): 1,
