@@ -42,6 +42,9 @@ STARTUP_INDEXES = (
     {"collection": "b2b_link_acceptances", "name": "token_hash", "fields": ("token_hash",), "unique": False},
     {"collection": "b2b_sessions", "name": "identity_id", "fields": ("identity_id",), "unique": False},
     {"collection": "help_articles", "name": "slug", "fields": ("slug",), "unique": True},
+    {"collection": "company_api_keys", "name": "key_hash", "fields": ("key_hash",), "unique": True},
+    {"collection": "company_api_keys", "name": "company_id", "fields": ("company_id",), "unique": True},
+    {"collection": "company_links", "name": "from_company_to_company", "fields": ("from_company", "to_company"), "unique": True},
 )
 
 # Core collections that a seeded local database is expected to contain.
@@ -180,6 +183,24 @@ COLLECTIONS = {
         "scope": SCOPE_PLATFORM,
         "description": "Platform v1 anahtar başına dakika limiti sayacı.",
         "keys": ("_id", "key_id", "count", "updated_at"),
+        "refs": (),
+    },
+    "company_api_keys": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket başına tek API anahtarı. Düz anahtar saklanmaz; yalnız SHA-256 özeti, önek ve son 4 karakter.",
+        "keys": ("_id", "company_id", "key_prefix", "key_last4", "key_hash", "status", "created_at", "created_by", "last_used_at", "last_used_by", "revoked_at", "rotated_at"),
+        "refs": ("companies._id",),
+    },
+    "company_links": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirketler arası veri paylaşımı. company_id verinin sahibi (to_company).",
+        "keys": ("_id", "company_id", "from_company", "to_company", "scopes", "status", "created_at", "updated_at", "created_by", "approved_at", "revoked_at"),
+        "refs": ("companies._id",),
+    },
+    "company_api_rate": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Şirket API anahtarı ve bağlantı isteği için dakika sayacı.",
+        "keys": ("_id", "count", "updated_at"),
         "refs": (),
     },
     "platform_usage": {
