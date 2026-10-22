@@ -101,6 +101,21 @@ def checkout_reminder_due(
         return False
 
 
+def checkout_reminder_target(employee: Optional[dict], record: Optional[dict]) -> bool:
+    """Çıkış hatırlatması yalnız bugün giriş yapmış, çıkmamış ve user_id'si olan personele.
+
+    Giriş kaydı olmayan yönetici veya sahip bu bildirimi almaz.
+    """
+    if not str((employee or {}).get("user_id") or "").strip():
+        return False
+    row = record or {}
+    if not str(row.get("check_in") or "").strip():
+        return False
+    if str(row.get("check_out") or "").strip():
+        return False
+    return True
+
+
 def company_reminder_on(schedule: Optional[dict], key: str, default: bool) -> bool:
     if not isinstance(schedule, dict) or key not in schedule or schedule.get(key) is None:
         return default
@@ -819,7 +834,7 @@ async def run_reminders(
                 checked_in=checked_in, checked_out=checked_out,
                 eligible=base_ok and checkout_on and bool(shift.get("end")),
                 window=window,
-            ):
+            ) and checkout_reminder_target(emp, rec):
                 key = f"remind-out:{emp['_id']}:{date}"
                 if await claim_once(db, company["_id"], key):
                     end = shift.get("end")

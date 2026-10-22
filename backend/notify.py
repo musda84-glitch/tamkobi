@@ -90,6 +90,28 @@ def _ids_of(user: Dict[str, Any]) -> set[str]:
     return {str(v) for v in (user.get("_id"), user.get("id"), user.get("employee_id")) if v}
 
 
+def _targeted_match(note: Dict[str, Any], user: Dict[str, Any]) -> Optional[bool]:
+    """Hedefli kayıtta eşleşme. Yayınsa None."""
+    mine = _ids_of(user)
+    target_user = str(note.get("user_id") or "")
+    target_emp = str(note.get("employee_id") or "")
+    if not (target_user or target_emp):
+        return None
+    return bool((target_user and target_user in mine) or (target_emp and target_emp in mine))
+
+
+def _role_broadcast_visible(note: Dict[str, Any], user: Dict[str, Any]) -> bool:
+    """Rol yayını. Personel kartlı yönetici yalnız kasa/banka türlerini alır."""
+    role = (user.get("role") or "").lower()
+    staff = bool(user.get("employee_id"))
+    ntype = str(note.get("type") or "").strip()
+    if role == "admin" and staff and ntype not in STAFF_ADMIN_BROADCAST_TYPES:
+        return False
+    stored = note.get("roles")
+    roles = list(stored) if stored is not None else roles_for_type(ntype)
+    return bool(role and role in roles)
+
+
 def notification_visible(note: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
     """Şirket yöneticisi (personel kartı yok) her şeyi görür.
     Personel kartı bağlıysa yalnız kendisine atanan veya rolüne düşen kayıt;
@@ -100,20 +122,24 @@ def notification_visible(note: Dict[str, Any], user: Optional[Dict[str, Any]]) -
     staff = bool(user.get("employee_id"))
     if user.get("is_super_admin") or (role == "admin" and not staff):
         return True
-    mine = _ids_of(user)
-    target_user = str(note.get("user_id") or "")
-    target_emp = str(note.get("employee_id") or "")
-    targeted = bool(target_user or target_emp)
-    if targeted:
-        return bool((target_user and target_user in mine) or (target_emp and target_emp in mine))
-    ntype = str(note.get("type") or "").strip()
-    if role == "admin" and staff and ntype not in STAFF_ADMIN_BROADCAST_TYPES:
+    targeted = _targeted_match(note, user)
+    if targeted is not None:
+        return targeted
+    return _role_broadcast_visible(note, user)
+
+
+def push_visible(note: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
+    """Push: yalnız bu kullanıcıya hedefli kayıt veya rolüne uyan yayın.
+
+    Yönetici ve süper yönetici 'hepsini görür' kısayolu burada yok.
+    Uygulama içi liste notification_visible ile kalır.
+    """
+    if not user:
         return False
-    stored = note.get("roles")
-    roles = list(stored) if stored is not None else roles_for_type(ntype)
-    if role and role in roles:
-        return True
-    return False
+    targeted = _targeted_match(note, user)
+    if targeted is not None:
+        return targeted
+    return _role_broadcast_visible(note, user)
 
 
 def filter_notifications(rows: Iterable[Dict[str, Any]], user: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -885,7 +911,7 @@ async def recipient_user_ids(db, note: Dict[str, Any]) -> List[str]:
             "$or": [{"active_company_id": company_id}, {"company_ids": company_id}],
         }).to_list(300)
         for user in company_users:
-            if notification_visible(note, user):
+            if push_visible(note, user):
                 for uid in user_ids_of(user):
                     add(uid)
     return ids
@@ -940,7 +966,7 @@ async def _users_by_push_ids(db, user_ids: Iterable[str]) -> Dict[str, Dict[str,
 
 
 async def _visible_token_rows(db, rows: Iterable[Dict[str, Any]], note: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """user_id boş ya da bildirimi göremeyen token'ı şirket yayınından çıkar."""
+    """user_id boş ya da push_visible olmayan token'ı şirket yayınından çıkar."""
     pending = [row for row in rows if isinstance(row, dict)]
     users = await _users_by_push_ids(db, (row.get("user_id") for row in pending))
     kept: List[Dict[str, Any]] = []
@@ -949,7 +975,7 @@ async def _visible_token_rows(db, rows: Iterable[Dict[str, Any]], note: Dict[str
         if not uid:
             continue
         user = users.get(uid)
-        if not user or not notification_visible(note, user):
+        if not user or not push_visible(note, user):
             continue
         kept.append(row)
     return kept
@@ -1015,6 +1041,7 @@ def collect_dispatch_tokens(user_tokens: Iterable[str], company_tokens: Iterable
 
 
 UNREAD_PUSH_LIMIT = 12
+REPLAY_MAX_AGE = timedelta(hours=2)
 
 
 def push_device_id(raw: Any) -> str:
@@ -1027,9 +1054,60 @@ def pick_unread_for_push(
     user: Optional[Dict[str, Any]],
     limit: int = UNREAD_PUSH_LIMIT,
 ) -> List[Dict[str, Any]]:
-    """Ana ekranda görünen okunmamış kayıtlar — telefona bir kez iletilir."""
-    visible = [n for n in filter_notifications(rows or [], user) if not n.get("is_read")]
+    """Push'a girecek okunmamış kayıtlar. Yönetici kısayolu uygulanmaz."""
+    visible = [n for n in (rows or []) if push_visible(n, user) and not n.get("is_read")]
     return visible[: max(0, int(limit or 0))]
+
+
+def time_sensitive_reminder(ntype: str) -> bool:
+    """Giriş/çıkış hatırlatması replay edilmez; saati geçince anlamı kalmaz."""
+    name = str(ntype or "").strip().lower()
+    if name.startswith("attendance_") and name.endswith("_reminder"):
+        return True
+    return "checkin_reminder" in name or "checkout_reminder" in name
+
+
+def _note_created_at(note: Optional[Dict[str, Any]]) -> Optional[datetime]:
+    text = str((note or {}).get("created_at") or "").strip()
+    if not text:
+        return None
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp
+
+
+def replay_note_current(note: Optional[Dict[str, Any]], now: Optional[datetime] = None) -> bool:
+    """Replay yalnız son 2 saatte oluşan, zamana duyarlı olmayan kayıtları alır."""
+    if not isinstance(note, dict) or time_sensitive_reminder(str(note.get("type") or "")):
+        return False
+    stamp = _note_created_at(note)
+    if stamp is None:
+        return False
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return stamp >= moment - REPLAY_MAX_AGE
+
+
+async def device_replayed_at(db, company_id: str, user_id: str, device_id: str) -> str:
+    """Aynı telefonun önceki token satırındaki replayed_at. İşaret device_id ile yaşar."""
+    device = push_device_id(device_id)
+    cid = str(company_id or "").strip()
+    uid = str(user_id or "").strip()
+    if not device or not cid or not uid:
+        return ""
+    rows = await db.push_tokens.find({
+        "company_id": cid,
+        "user_id": uid,
+        "device_id": device,
+    }).to_list(40)
+    found = [str((row or {}).get("replayed_at") or "").strip() for row in rows or []]
+    found = [mark for mark in found if mark]
+    return min(found) if found else ""
 
 
 async def upsert_push_token(
@@ -1046,18 +1124,24 @@ async def upsert_push_token(
         raise ValueError("Geçerli bir Expo push token gerekli.")
     now = datetime.now(timezone.utc).isoformat()
     user_id = str(user_id or "").strip()
+    device = push_device_id(device_id)
     existing = await db.push_tokens.find_one({"token": token, "company_id": company_id})
-    should_replay = not (existing or {}).get("replayed_at")
+    mark = str((existing or {}).get("replayed_at") or "").strip()
+    if not mark:
+        mark = await device_replayed_at(db, company_id, user_id, device)
+    should_replay = not mark
     sets: Dict[str, Any] = {
         "user_id": user_id,
         "company_id": company_id,
         "token": token,
         "platform": (platform or "")[:20],
-        "device_id": push_device_id(device_id),
+        "device_id": device,
         "updated_at": now,
     }
     if should_replay:
         sets["replayed_at"] = now
+    elif mark:
+        sets["replayed_at"] = mark
     await db.push_tokens.update_one(
         {"token": token, "company_id": company_id},
         {
@@ -1450,18 +1534,22 @@ async def replay_unread_to_token(
     device_id: str = "",
     limit: int = UNREAD_PUSH_LIMIT,
 ) -> Dict[str, Any]:
-    """Kayıtlı telefon ilk kez bağlanınca, paneldeki okunmamışları da push et.
+    """Kayıtlı telefon ilk kez bağlanınca, güncel okunmamışları da push et.
 
+    Son 2 saat dışındaki kayıtlar ve giriş/çıkış hatırlatmaları replay edilmez.
     Aynı device_id bu bildirime daha önce başarılı gittiyse kayıt atlanır.
     Yeni cihaz okunmamışları almaya devam eder.
     """
     if not is_expo_push_token(token) or not company_id:
         return {"sent": 0}
     device = push_device_id(device_id)
+    cutoff = (datetime.now(timezone.utc) - REPLAY_MAX_AGE).isoformat()
     rows = await db.notifications.find({
         "company_id": company_id,
         "is_read": {"$ne": True},
+        "created_at": {"$gte": cutoff},
     }).sort("created_at", -1).to_list(80)
+    rows = [row for row in rows if replay_note_current(row)]
     notes = pick_unread_for_push(rows, user, limit=limit)
     actor = str((user or {}).get("id") or (user or {}).get("_id") or "").strip()
     clean_token = str(token or "").strip()
