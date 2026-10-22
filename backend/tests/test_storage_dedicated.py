@@ -93,7 +93,7 @@ def _bodies(path, collection):
     conn = sqlite3.connect(path)
     try:
         rows = conn.execute(
-            "SELECT body FROM storage_records WHERE collection = ?",
+            "SELECT doc FROM storage_records WHERE collection = ?",
             (collection,),
         ).fetchall()
     finally:
@@ -242,6 +242,7 @@ def test_old_schema_is_rejected_without_creating_tables(monkeypatch, tmp_path):
     previous, comm_service = _seal(monkeypatch, tmp_path)
     monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
     try:
+        assert storage_dedicated.expected_schema_version() == 4
         path = tmp_path / "eski.db"
         dsn = f"sqlite:///{path}"
         pack = load_migrations()

@@ -1,6 +1,7 @@
 """schema_version üzerinden sıralı, kaldığı yerden süren uygulama."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -8,6 +9,11 @@ from .errors import ChecksumError, DryRunError, LegacyTargetError, MigrationErro
 from .loader import Migration, load_migrations
 from .masking import logger
 from .session import Session, schema_sql
+
+_CREATE_INDEX = re.compile(
+    r"^create\s+(?:unique\s+)?index\s+(?:if\s+not\s+exists\s+)?[`'\"]?([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
 
 log = logger()
 
@@ -141,7 +147,8 @@ def _apply_one(session: Session, mig: Migration) -> bool:
         if index < done:
             continue
         try:
-            session.execute(step)
+            if not _index_already_present(session, step):
+                session.execute(step)
             session.execute(
                 "UPDATE schema_version SET step_no = ? WHERE version = ?",
                 (index + 1, mig.version),
@@ -167,6 +174,30 @@ def _apply_one(session: Session, mig: Migration) -> bool:
     )
     session.commit()
     return True
+
+
+def _index_already_present(session: Session, step: str) -> bool:
+    """CREATE INDEX yarım kaldıysa ikinci deneme duplicate üretmez.
+
+    MySQL/MariaDB tarafı information_schema.statistics okur. SQLite'da
+    information_schema yoktur; aynı karar sqlite_master üzerinden verilir.
+    """
+    match = _CREATE_INDEX.match(step.strip())
+    if match is None:
+        return False
+    name = match.group(1)
+    if session.dialect == "sqlite":
+        rows = session.fetchall(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+            (name,),
+        )
+    else:
+        rows = session.fetchall(
+            "SELECT 1 FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND index_name = ? LIMIT 1",
+            (name,),
+        )
+    return bool(rows)
 
 
 def _quiet_rollback(session: Session) -> None:

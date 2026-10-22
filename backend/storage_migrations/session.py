@@ -25,6 +25,19 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """.strip()
 
 
+def _json_unquote(value):
+    """SQLite'da JSON_UNQUOTE yoktur. json_extract skalerı zaten tırnaksız döner."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return value
+
+
+def enable_sqlite_json(conn) -> None:
+    conn.create_function("JSON_UNQUOTE", 1, _json_unquote, deterministic=True)
+
+
 class Session:
     """Tek hedef. read_only iken yazan ifade çalışmaz."""
 
@@ -33,6 +46,8 @@ class Session:
         self.dialect = dialect
         self.read_only = read_only
         self.missing = False
+        if dialect == "sqlite" and conn is not None and not read_only:
+            enable_sqlite_json(conn)
 
     def execute(self, sql: str, params=None):
         statement = sql.strip().rstrip(";").strip()

@@ -54,7 +54,8 @@ _POOL_MAX = "STORAGE_DEDICATED_POOL_MAX"
 _POOL_IDLE = "STORAGE_DEDICATED_POOL_IDLE_SECONDS"
 _MEMORY_ONLY = "Firma kipleri yalnız bellek kataloğundan okunur."
 _SEALED_MAX = 1024
-_expected_version = None
+# 0004_storage_records. 0003 paralel shared_v2 paketinin numarasıdır.
+STORAGE_RECORDS_VERSION = 4
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
@@ -158,12 +159,7 @@ def generation(company_id: str):
 
 
 def expected_schema_version() -> int:
-    global _expected_version
-    if _expected_version is None:
-        from storage_migrations.loader import load_migrations
-
-        _expected_version = load_migrations()[-1].version
-    return _expected_version
+    return STORAGE_RECORDS_VERSION
 
 
 async def note_company(db, company_id: str) -> None:
@@ -384,8 +380,8 @@ def _duplicate(exc: Exception) -> bool:
 
 def _upsert_sql(dialect: str) -> str:
     if dialect == "mysql":
-        return "REPLACE INTO storage_records (collection, doc_id, body) VALUES (?, ?, ?)"
-    return "INSERT OR REPLACE INTO storage_records (collection, doc_id, body) VALUES (?, ?, ?)"
+        return "REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
+    return "INSERT OR REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
 
 
 class DedicatedCollection(StorageCollection):
@@ -439,7 +435,7 @@ class DedicatedCollection(StorageCollection):
 
     def _load(self, session) -> list:
         rows = session.fetchall(
-            "SELECT body FROM storage_records WHERE collection = ?",
+            "SELECT doc FROM storage_records WHERE collection = ?",
             (self.name,),
         )
         return [loads(row[0]) for row in rows]
@@ -523,7 +519,7 @@ class DedicatedCollection(StorageCollection):
         def work(session):
             try:
                 session.execute(
-                    "INSERT INTO storage_records (collection, doc_id, body) VALUES (?, ?, ?)",
+                    "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
                     (self.name, str(body["_id"]), dumps(body)),
                 )
                 session.commit()

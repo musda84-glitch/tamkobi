@@ -71,16 +71,26 @@ def _count(session, table):
     return session.fetchall(f"SELECT COUNT(*) FROM {table}")[0][0]
 
 
-def test_pack_versions_are_contiguous():
+def test_pack_versions_skip_shared_v2_number():
     pack = load_migrations()
-    assert [item.version for item in pack] == [1, 2, 3]
+    assert [item.version for item in pack] == [1, 2, 4]
     assert pack[0].name == "storage_meta"
     assert pack[1].name == "marker_steps"
     assert pack[2].name == "storage_records"
+    assert pack[2].version == 4
     assert len(pack[0].steps) == 2
     assert len(pack[1].steps) == 2
-    assert len(pack[2].steps) == 1
-    assert "docs" not in pack[2].steps[0].lower()
+    assert len(pack[2].steps) == 3
+    table, unique, index = pack[2].steps
+    lowered = "\n".join(step.lower() for step in pack[2].steps)
+    assert "docs" not in lowered
+    assert "longtext" in table.lower()
+    assert "json_unquote(json_extract(" in table.lower()
+    assert "varchar(128)" in table.lower()
+    assert "varchar(191)" in table.lower()
+    assert "varchar(64)" in table.lower()
+    assert unique.lower().startswith("create unique index")
+    assert index.lower().startswith("create index")
 
 
 def test_empty_target_then_second_apply_writes_nothing():
@@ -128,6 +138,138 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
     again = apply(session, confirm=True, dry_run=False)
     assert again.advanced == 0
     assert session.writes == 0
+
+
+def test_create_index_rerun_skips_existing_index():
+    session = _memory()
+    first = apply(session, confirm=True, dry_run=False)
+    assert first.advanced == 3
+    indexes = {
+        row[0]
+        for row in session.fetchall("SELECT name FROM sqlite_master WHERE type = 'index'")
+    }
+    assert "idx_storage_records_company" in indexes
+    assert "uq_storage_records_doc" in indexes
+    session.execute(
+        "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+        ("applying", 1, "", 4),
+    )
+    session.commit()
+    resumed = apply(session, confirm=True, dry_run=False)
+    assert resumed.advanced == 1
+    row = session.fetchall(
+        "SELECT state, step_no FROM schema_version WHERE version = 4"
+    )[0]
+    assert row[0] == "applied"
+    assert int(row[1]) == 3
+    count = session.fetchall(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+        ("idx_storage_records_company",),
+    )[0][0]
+    assert count == 1
+    session.execute(
+        "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+        ("products", "p1", '{"company_id":"co_a","name":"kalem"}'),
+    )
+    company = session.fetchall(
+        "SELECT company_id FROM storage_records WHERE doc_id = ?",
+        ("p1",),
+    )[0][0]
+    assert company == "co_a"
+    with pytest.raises(sqlite3.IntegrityError):
+        session.execute(
+            "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+            ("products", "p1", '{"company_id":"co_b","name":"ikinci"}'),
+        )
+
+
+def test_mariadb_migration_applies_twice():
+    dsn = os.environ.get("STORAGE_MARIADB_DSN", "").strip()
+    if not dsn:
+        pytest.skip("STORAGE_MARIADB_DSN yok")
+    session = connect(dsn, write=True)
+    try:
+        _drop_storage(session)
+        first = apply(session, confirm=True, dry_run=False)
+        assert first.advanced == 3
+        assert [row.version for row in first.rows] == [1, 2, 4]
+        assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+        second = apply(session, confirm=True, dry_run=False)
+        assert second.advanced == 0
+        columns = {
+            str(row[0]).lower(): row
+            for row in session.fetchall(
+                "SELECT column_name, data_type, generation_expression "
+                "FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
+            )
+        }
+        assert columns["collection"][1].lower() == "varchar"
+        assert columns["doc_id"][1].lower() == "varchar"
+        assert columns["company_id"][1].lower() == "varchar"
+        assert columns["doc"][1].lower() == "longtext"
+        generated = str(columns["company_id"][2]).lower()
+        assert "json_unquote" in generated
+        assert "json_extract" in generated
+        stats = session.fetchall(
+            "SELECT index_name, non_unique, column_name "
+            "FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
+        )
+        unique = [row for row in stats if str(row[0]).lower() == "uq_storage_records_doc"]
+        assert unique
+        assert all(int(row[1]) == 0 for row in unique)
+        assert {str(row[2]).lower() for row in unique} == {"collection", "doc_id"}
+        indexed = session.fetchall(
+            "SELECT c.data_type FROM information_schema.statistics s "
+            "JOIN information_schema.columns c "
+            "ON c.table_schema = s.table_schema AND c.table_name = s.table_name "
+            "AND c.column_name = s.column_name "
+            "WHERE s.table_schema = DATABASE() AND s.table_name = 'storage_records'"
+        )
+        for (kind,) in indexed:
+            assert str(kind).lower() == "varchar"
+        session.execute(
+            "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+            ("applying", 1, "", 4),
+        )
+        session.commit()
+        resumed = apply(session, confirm=True, dry_run=False)
+        assert resumed.advanced == 1
+        done = session.fetchall(
+            "SELECT state, step_no FROM schema_version WHERE version = 4"
+        )[0]
+        assert done[0] == "applied"
+        assert int(done[1]) == 3
+        session.execute(
+            "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+            ("products", "p1", '{"company_id":"co_a","name":"kalem"}'),
+        )
+        session.commit()
+        company = session.fetchall(
+            "SELECT company_id FROM storage_records WHERE doc_id = ?",
+            ("p1",),
+        )[0][0]
+        assert company == "co_a"
+        with pytest.raises(Exception) as caught:
+            session.execute(
+                "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+                ("products", "p1", '{"company_id":"co_b","name":"ikinci"}'),
+            )
+        assert "integrity" in type(caught.value).__name__.lower() or "duplicate" in str(caught.value).lower()
+        session.rollback()
+    finally:
+        try:
+            session.rollback()
+            _drop_storage(session)
+        finally:
+            session.close()
+
+
+def _drop_storage(session):
+    for table in ("storage_records", "storage_marker", "storage_meta", "schema_version"):
+        session.execute(f"DROP TABLE IF EXISTS {table}")
+    session.commit()
 
 
 def test_dry_run_and_missing_confirm_do_not_write():

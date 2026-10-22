@@ -28,7 +28,11 @@ def migrations_dir() -> Path:
 
 
 def load_migrations(directory: Path | None = None) -> tuple[Migration, ...]:
-    """0001'den kesintisiz artan dosyalar. Yüklemek veritabanına yazmaz."""
+    """0001'den başlar. Numaralar tekil ve artan; aradaki boşluk kabul edilir.
+
+    0003 paralel shared_v2 paketindedir. Bu dal 0004 ile devam eder.
+    Yüklemek veritabanına yazmaz.
+    """
     root = directory or migrations_dir()
     found: dict[int, Migration] = {}
     if not root.is_dir():
@@ -51,9 +55,13 @@ def load_migrations(directory: Path | None = None) -> tuple[Migration, ...]:
     if not found:
         raise MigrationError("Migration dosyası yok.")
     ordered = [found[key] for key in sorted(found)]
-    expect = list(range(1, len(ordered) + 1))
-    if [item.version for item in ordered] != expect:
-        raise MigrationError("Migration numaraları 0001'den kesintisiz artmalı.")
+    if ordered[0].version != 1:
+        raise MigrationError("Migration numaraları 0001'den başlamalı.")
+    previous = 0
+    for item in ordered:
+        if item.version <= previous:
+            raise MigrationError("Migration numaraları artan olmalı.")
+        previous = item.version
     return tuple(ordered)
 
 
