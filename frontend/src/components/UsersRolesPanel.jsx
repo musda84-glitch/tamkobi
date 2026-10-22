@@ -6,6 +6,7 @@ import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupMenuItems } from "../navGroups";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { RoleHelpPanel } from "./roles/RoleHelpPanel";
 
 function stationChoices(stationsRaw, parksRaw) {
   const parks = Array.isArray(parksRaw) ? parksRaw : [];
@@ -497,6 +498,7 @@ const LogTab = ({ companyId, users }) => {
 
 export const UsersRolesPanel = ({ companyId }) => {
   const [tab, setTab] = useState("users");
+  const [roleHelpOpen, setRoleHelpOpen] = useState(false);
   const [data, setData] = useState(null);
   const [rolesData, setRolesData] = useState(null);
   const reload = useCallback(async () => {
@@ -508,10 +510,18 @@ export const UsersRolesPanel = ({ companyId }) => {
   return (
     <div className="space-y-4" data-testid="users-roles-panel">
       <p className="text-[11px] text-slate-500 -mt-1" data-testid="ur-company-users-note">Bu listedeki kullanıcılar şirketinizin personelidir. TamKobi panel yöneticileri burada görünmez; onlar platform ekibidir.</p>
-      <div className="flex gap-1 border-b">{[["users", "Kullanıcılar", data.users.length], ["roles", "Roller & Yetkiler", rolesData.roles.length], ["log", "İşlem Günlüğü"]].map(([k, l, n]) => <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500"}`} data-testid={`ur-tab-${k}`}>{l}{n !== undefined && <span className="ml-1 text-[10px] bg-slate-100 px-1.5 rounded-full">{n}</span>}</button>)}</div>
+      <div className="flex items-end gap-1 border-b">
+        {[["users", "Kullanıcılar", data.users.length], ["roles", "Roller & Yetkiler", rolesData.roles.length], ["log", "İşlem Günlüğü"]].map(([k, l, n]) => (
+          <button key={k} type="button" onClick={() => { setTab(k); if (k !== "roles") setRoleHelpOpen(false); }} className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500"}`} data-testid={`ur-tab-${k}`}>{l}{n !== undefined && <span className="ml-1 text-[10px] bg-slate-100 px-1.5 rounded-full">{n}</span>}</button>
+        ))}
+        {tab === "roles" ? (
+          <button type="button" onClick={() => setRoleHelpOpen(true)} className="ml-auto mb-1 px-2 py-1 text-[11px] font-semibold text-blue-600 hover:underline" data-testid="role-help-open">? Açıklama</button>
+        ) : null}
+      </div>
       {tab === "users" && <UsersTab companyId={companyId} roles={rolesData.roles} data={data} reload={reload} />}
       {tab === "roles" && <RolesTab companyId={companyId} rolesData={rolesData} reload={reload} />}
       {tab === "log" && <LogTab companyId={companyId} users={data.users} />}
+      <RoleHelpPanel open={roleHelpOpen} onClose={() => setRoleHelpOpen(false)} />
     </div>
   );
 };
