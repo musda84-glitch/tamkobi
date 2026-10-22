@@ -8,7 +8,7 @@ import { QuantityInput } from "../MoneyInput";
 import { formatTrAmount, formatTrQty } from "../../utils/money";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
 import {
-  consumedLines, costBreakdown, countProductionFilters, filterProductionOrders, formatPlanDay,
+  consumedLines, costBreakdown, filterProductionOrders, formatPlanDay,
   isOpenOrder, orderLateDays, orderProgress, shortageRows, sortProductionOrders,
   sourceBadge, stepMeta, stepTone,
 } from "./orderCards";
@@ -88,6 +88,8 @@ function ShortageTable({ rows, testId }) {
   );
 }
 
+const EMPTY_COUNTS = { open: 0, late: 0, completed: 0, cancelled: 0, all: 0 };
+
 export function ProductionOrderList({
   orders,
   loading,
@@ -106,8 +108,10 @@ export function ProductionOrderList({
   onSavePlan,
   recipesForOrder,
   onNeedRecipes,
+  filter = "open",
+  onFilterChange,
+  counts = EMPTY_COUNTS,
 }) {
-  const [filter, setFilter] = useState("open");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("planned_date");
   const [menuCode, setMenuCode] = useState("");
@@ -115,7 +119,7 @@ export function ProductionOrderList({
   const [drawerId, setDrawerId] = useState("");
   const [editing, setEditing] = useState(false);
 
-  const counts = useMemo(() => countProductionFilters(orders), [orders]);
+  const countsView = counts || EMPTY_COUNTS;
   const visible = useMemo(
     () => sortProductionOrders(filterProductionOrders(orders, { filter, query }), sort),
     [orders, filter, query, sort],
@@ -152,12 +156,12 @@ export function ProductionOrderList({
         <div className="flex flex-nowrap gap-2 overflow-x-auto max-w-full min-w-0 pb-0.5" data-testid="po-filter-bar">
           {FILTERS.map(([key, label]) => {
             const on = filter === key;
-            const count = counts[key];
+            const count = countsView[key] ?? 0;
             return (
               <button
                 key={key}
                 type="button"
-                onClick={() => setFilter(key)}
+                onClick={() => onFilterChange && onFilterChange(key)}
                 className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-semibold ${on ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"}`}
                 data-testid={`po-filter-${key}`}
               >

@@ -29,7 +29,11 @@ export default function ProductionPage() {
   const [recipes, setRecipes] = useState([]);
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
-  const [kpis, setKpis] = useState({ open: 0, in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0 });
+  const [kpis, setKpis] = useState({
+    open: 0, in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0,
+    late: 0, completed: 0, cancelled: 0, all: 0,
+  });
+  const [orderFilter, setOrderFilter] = useState("open");
   const [recipeModal, setRecipeModal] = useState(null);
   const [orderModal, setOrderModal] = useState(false);
   const [completeQty, setCompleteQty] = useState({});
@@ -83,6 +87,10 @@ export default function ProductionPage() {
     }
   }, [companyId, productsLoaded]);
 
+  const orderScope = orderFilter === "completed" || orderFilter === "cancelled" || orderFilter === "all"
+    ? orderFilter
+    : "open";
+
   const loadOrders = useCallback(async () => {
     if (!companyId) {
       setLoading(false);
@@ -90,15 +98,20 @@ export default function ProductionPage() {
     }
     try {
       setLoading(true);
-      // Tüm emirler: çip sayıları, arama ve geciken filtresi aynı listeden.
-      const ordersReq = axios.get(`${API_URL}/production/orders?company_id=${companyId}&include_steps=1`);
+      // Açık/geciken: status=open (sınırsız). Tamamlanan, iptal ve tümü kendi süzgeciyle.
+      const params = new URLSearchParams({ company_id: String(companyId), include_steps: "1" });
+      if (orderScope !== "all") params.set("status", orderScope);
+      const ordersReq = axios.get(`${API_URL}/production/orders?${params.toString()}`);
       const kpisReq = axios.get(`${API_URL}/production/kpis?company_id=${companyId}`);
       const o = await ordersReq;
       setOrders(o.data || []);
       setLoading(false);
       try {
         const k = await kpisReq;
-        setKpis(k.data || { open: 0, in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0 });
+        setKpis(k.data || {
+          open: 0, in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0,
+          late: 0, completed: 0, cancelled: 0, all: 0,
+        });
       } catch {
         /* KPI ikincil */
       }
@@ -106,7 +119,7 @@ export default function ProductionPage() {
       toast.error("Üretim emirleri yüklenemedi.");
       setLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, orderScope]);
 
   const loadRecipes = useCallback(async () => {
     if (!companyId) return;
@@ -218,9 +231,14 @@ export default function ProductionPage() {
   const lowStockWithRecipe = products.filter((p) => p.has_recipe && p.track_stock !== false && (p.stock_quantity || 0) <= (p.min_stock_alert || 0));
   const recipeCount = recipesLoaded ? recipes.length : (kpis.recipes || products.filter((p) => p.has_recipe).length);
   const missingCount = tab === "missing" ? missingMeta.count : (kpis.missing_notifications || missingMeta.count || 0);
-  const ordersTabCount = loading
-    ? (kpis.open || "…")
-    : orders.filter((o) => ["planned", "in_production"].includes(o.status)).length;
+  const ordersTabCount = Number(kpis.open || 0);
+  const orderCounts = {
+    open: Number(kpis.open || 0),
+    late: Number(kpis.late || 0),
+    completed: Number(kpis.completed || 0),
+    cancelled: Number(kpis.cancelled || 0),
+    all: Number(kpis.all || 0),
+  };
   const kpi = [
     ["Açık Emir", kpis.open, "text-amber-600"],
     ["Üretimde", kpis.in_production, "text-blue-600"],
@@ -450,6 +468,9 @@ export default function ProductionPage() {
         <ProductionOrderList
           orders={orders}
           loading={loading}
+          filter={orderFilter}
+          onFilterChange={setOrderFilter}
+          counts={orderCounts}
           canEdit={canEdit}
           canDelete={canDelete}
           completeQty={completeQty}

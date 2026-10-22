@@ -147,10 +147,30 @@ const ORDERS = [
   },
 ];
 
+const KPI_COUNTS = {
+  open: 3,
+  late: 2,
+  completed: 1,
+  cancelled: 1,
+  all: 5,
+  in_production: 1,
+  completed_this_month: 1,
+  recipes: 2,
+  missing_notifications: 0,
+};
+
+function ordersForStatus(url) {
+  const path = String(url);
+  if (path.includes("status=completed")) return ORDERS.filter((order) => order.status === "completed");
+  if (path.includes("status=cancelled")) return ORDERS.filter((order) => order.status === "cancelled");
+  if (path.includes("status=open")) return ORDERS.filter((order) => order.status === "planned" || order.status === "in_production");
+  return ORDERS;
+}
+
 function routeGet(url) {
   const path = String(url);
   if (path.includes("/production/kpis")) {
-    return Promise.resolve({ data: { open: 3, in_production: 1, completed_this_month: 1, recipes: 2, missing_notifications: 0 } });
+    return Promise.resolve({ data: KPI_COUNTS });
   }
   if (path.includes("/production/recipes/rec-run")) {
     return Promise.resolve({
@@ -162,7 +182,7 @@ function routeGet(url) {
       data: [{ id: "rec1", name: "Raf reçetesi", finished_product_id: "p1", finished_product_name: "Duvar Rafı", is_active: true }],
     });
   }
-  if (path.includes("/production/orders")) return Promise.resolve({ data: ORDERS });
+  if (path.includes("/production/orders")) return Promise.resolve({ data: ordersForStatus(path) });
   if (path.includes("/products")) return Promise.resolve({ data: [] });
   return Promise.resolve({ data: [] });
 }
@@ -218,6 +238,9 @@ test("duruma göre ana buton, çip sayıları, arama ve gecikti rozeti", async (
   expect(host.querySelector("[data-testid='po-start-URT-RUN']")).toBeNull();
   expect(host.querySelector("[data-testid='po-complete-qty-URT-RUN']")).not.toBeNull();
   expect(host.querySelector("[data-testid='po-card-URT-PLAN'] select")).toBeNull();
+  const firstOrders = axios.get.mock.calls.map((call) => String(call[0])).find((url) => url.includes("/production/orders"));
+  expect(firstOrders).toContain("company_id=c1");
+  expect(firstOrders).toContain("status=open");
   expect(host.querySelector("[data-testid='po-filter-count-open']").textContent).toBe("3");
   expect(host.querySelector("[data-testid='po-filter-count-late']").textContent).toBe("2");
   expect(host.querySelector("[data-testid='po-filter-count-completed']").textContent).toBe("1");
@@ -266,6 +289,9 @@ test("duruma göre ana buton, çip sayıları, arama ve gecikti rozeti", async (
   expect(host.querySelector("[data-testid='po-card-URT-PLAN']")).not.toBeNull();
   expect(host.querySelector("[data-testid='po-card-URT-RUN']")).not.toBeNull();
   await act(async () => { click("[data-testid='po-filter-completed']"); });
+  await flush();
+  const completedUrl = axios.get.mock.calls.map((call) => String(call[0])).filter((url) => url.includes("status=completed")).at(-1);
+  expect(completedUrl).toContain("company_id=c1");
   expect(host.querySelector("[data-testid='po-card-URT-DONE']")).not.toBeNull();
   expect(host.querySelector("[data-testid='po-late-URT-DONE']")).toBeNull();
   expect(host.querySelector("[data-testid='po-start-URT-DONE']")).toBeNull();
@@ -394,4 +420,78 @@ test("390px kartlarda yatay taşma yok, ana buton tam genişlik, çipler kayar",
     });
   });
   expect(list.innerHTML).not.toContain("min-w-[960px]");
+});
+
+test("300'den fazla tamamlanmışta eski açık emir listede ve sayımda kalır", async () => {
+  const openOrder = {
+    id: "old-open",
+    order_code: "URT-OLD",
+    status: "planned",
+    finished_product_name: "Eski Açık",
+    planned_quantity: 1,
+    completed_quantity: 0,
+    planned_date: "2020-01-02",
+    created_at: "2020-01-01",
+  };
+  axios.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.includes("/production/kpis")) {
+      return Promise.resolve({
+        data: {
+          open: 1, late: 1, completed: 301, cancelled: 0, all: 302,
+          in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0,
+        },
+      });
+    }
+    if (path.includes("/production/orders") && path.includes("status=open")) {
+      return Promise.resolve({ data: [openOrder] });
+    }
+    if (path.includes("/production/orders") && path.includes("status=completed")) {
+      return Promise.resolve({
+        data: [{
+          id: "d1", order_code: "URT-D", status: "completed", finished_product_name: "Bitti",
+          planned_quantity: 1, completed_quantity: 1,
+        }],
+      });
+    }
+    if (path.includes("/production/orders") && path.includes("status=cancelled")) {
+      return Promise.resolve({ data: [] });
+    }
+    if (path.includes("/production/orders")) return Promise.resolve({ data: [openOrder] });
+    return Promise.resolve({ data: [] });
+  });
+
+  await renderPage();
+  expect(host.querySelector("[data-testid='po-card-URT-OLD']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='po-filter-count-open']").textContent).toBe("1");
+  expect(host.querySelector("[data-testid='po-filter-count-late']").textContent).toBe("1");
+  expect(host.querySelector("[data-testid='po-filter-count-completed']").textContent).toBe("301");
+  expect(host.querySelector("[data-testid='po-filter-count-cancelled']").textContent).toBe("0");
+  expect(host.querySelector("[data-testid='po-filter-count-all']").textContent).toBe("302");
+  const opened = axios.get.mock.calls.map((call) => String(call[0])).find((url) => url.includes("/production/orders"));
+  expect(opened).toContain("company_id=c1");
+  expect(opened).toContain("status=open");
+
+  await act(async () => { click("[data-testid='po-filter-completed']"); });
+  await flush();
+  const completed = axios.get.mock.calls.map((call) => String(call[0])).filter((url) => url.includes("status=completed")).at(-1);
+  expect(completed).toContain("company_id=c1");
+  expect(host.querySelector("[data-testid='po-card-URT-OLD']")).toBeNull();
+  expect(host.querySelector("[data-testid='po-card-URT-D']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='po-filter-count-open']").textContent).toBe("1");
+  expect(host.querySelector("[data-testid='po-filter-count-completed']").textContent).toBe("301");
+
+  await act(async () => { click("[data-testid='po-filter-cancelled']"); });
+  await flush();
+  const cancelled = axios.get.mock.calls.map((call) => String(call[0])).filter((url) => url.includes("status=cancelled")).at(-1);
+  expect(cancelled).toContain("company_id=c1");
+  expect(host.querySelector("[data-testid='po-filter-count-cancelled']").textContent).toBe("0");
+
+  await act(async () => { click("[data-testid='po-filter-all']"); });
+  await flush();
+  const allUrl = axios.get.mock.calls.map((call) => String(call[0])).filter((url) => url.includes("/production/orders")).at(-1);
+  expect(allUrl).toContain("company_id=c1");
+  expect(allUrl).not.toContain("status=");
+  expect(host.querySelector("[data-testid='po-card-URT-OLD']")).not.toBeNull();
+  expect(host.querySelector("[data-testid='po-filter-count-all']").textContent).toBe("302");
 });
