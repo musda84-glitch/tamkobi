@@ -8,7 +8,7 @@ import {
   applyRowLevel, editorOverflowGuard, rowLevel, visibleRows,
 } from "./roleEditorModel";
 import { helpFor } from "./roleHelpContent";
-import { RoleSummarySlot } from "./roles/RoleSummaryPanel";
+import { RoleSummaryStrip } from "./roles/RoleSummaryPanel";
 
 const ON = {
   none: "bg-white text-slate-700 shadow-[0_0_0_1px_#cbd5e1]",
@@ -142,7 +142,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
   const q = query.trim().toLocaleLowerCase("tr");
 
   return (
-    <div className={`grid grid-cols-1 items-start gap-2.5 text-[13px] leading-5 min-[701px]:grid-cols-[200px_minmax(0,1fr)] min-[1280px]:grid-cols-[200px_minmax(0,1fr)_260px] min-[701px]:overflow-x-visible ${editorOverflowGuard()}`} data-testid="role-editor">
+    <div className={`grid grid-cols-1 items-start gap-4 text-[13px] leading-5 min-[701px]:grid-cols-[210px_minmax(0,1fr)] ${editorOverflowGuard()}`} data-testid="role-editor">
       <div className="hidden min-[701px]:block w-full min-w-0 bg-white border border-slate-200 rounded-[14px] p-2.5" data-testid="role-list">
         <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Roller</div>
         {roles.map((item) => (
@@ -166,7 +166,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
         )}
       </div>
 
-      <div className={`bg-white border border-slate-200 rounded-[14px] px-2 py-2.5 min-w-0 min-[1280px]:col-start-2 min-[1280px]:row-start-1 ${editorOverflowGuard()}`} data-testid="role-matrix">
+      <div className="bg-white border border-slate-200 rounded-[14px] px-2 py-2.5 min-w-0 max-w-full" data-testid="role-matrix">
         <div className="min-[701px]:hidden mb-3">
           <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500" htmlFor="role-switch-mobile">Rol</label>
           <select id="role-switch-mobile" value={role?.id || ""} onChange={(event) => setSel(event.target.value)} className="mt-1 w-full max-w-full border border-slate-300 rounded-[10px] p-2 bg-white" data-testid="role-switch-mobile">
@@ -183,6 +183,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
             <button type="button" onClick={save} disabled={locked} className="rounded-lg px-2.5 py-1 text-[13px] leading-5 font-semibold bg-emerald-600 text-white border border-emerald-600 disabled:opacity-50" data-testid="role-save">Kaydet</button>
           </div>
         </div>
+        <RoleSummaryStrip perms={perms} features={features} userCount={role?.user_count || 0} />
         {!role?.is_system && (
           <button type="button" onClick={remove} className="mt-2 text-rose-600 flex items-center gap-1 text-xs" data-testid="role-delete"><Trash2 className="w-3.5 h-3.5" /> Rolü sil</button>
         )}
@@ -216,8 +217,6 @@ export function RoleEditor({ companyId, rolesData, reload }) {
             Yalnız açık olanlar
           </button>
         </div>
-
-        <RoleSummarySlot placement="inline" perms={perms} features={features} userCount={role?.user_count || 0} />
 
         {EDITOR_GROUPS.map((group) => {
           const rows = visibleRows(group, { query, openOnly, perms, unwired });
@@ -292,8 +291,6 @@ export function RoleEditor({ companyId, rolesData, reload }) {
           </div>
         )}
       </div>
-
-      <RoleSummarySlot placement="side" perms={perms} features={features} userCount={role?.user_count || 0} />
 
       {help && (
         <div className="fixed inset-0 z-40" data-testid="role-help-drawer">

@@ -160,6 +160,61 @@ export function roleSummary(perms, features) {
   return { can, cannot };
 }
 
+const SUMMARY_CHIP = {
+  "Fatura kesebilir, e-Fatura gönderebilir": "Fatura keser",
+  "Faturaları görür; yeni fatura kesemez": "Faturaları görür",
+  "Cari, teklif ve sipariş ekler/düzenler": "Cari/teklif/sipariş düzenler",
+  "Cari ve siparişleri görür": "Cari/sipariş görür",
+  "Mesai kayıtlarını düzenler": "Mesai düzenler",
+  "Mobilde mesai giriş-çıkışı yapar": "Mesai girişi",
+  "Kayıt silemez": "Silemez",
+  "Fiyatlar gizli": "Fiyat gizli",
+  "Fiyatları görür (gizlemek için Gelişmiş)": "Fiyat gizli değil",
+};
+
+/** Özet cümlesinin şerit etiketi. Bilinmeyen cümle aynı mantığın metninden kısaltılır. */
+export function summaryChipText(line) {
+  if (SUMMARY_CHIP[line]) return SUMMARY_CHIP[line];
+  const plain = String(line || "").replace(/\s*\([^)]*\)/g, "");
+  if (plain.endsWith(" görür")) return `${plain.slice(0, -" görür".length).split(", ").join("·")} görür`;
+  if (plain.endsWith(" kapalı")) return plain.replace(/, /g, "·");
+  return plain;
+}
+
+export function summaryChips(perms, features) {
+  const { can, cannot } = roleSummary(perms, features);
+  return {
+    can,
+    cannot,
+    chips: [
+      ...can.map((line) => ({ tone: "can", line, label: summaryChipText(line) })),
+      ...cannot.map((line) => ({ tone: "cannot", line, label: summaryChipText(line) })),
+    ],
+  };
+}
+
+/**
+ * Yatay şeritte kaç etiketin sığacağını sayar.
+ * available <= 0 ise ölçüm yoktur; etiketlerin tümü gösterilir.
+ * Sığmayan varsa +N rozetinin genişliği (moreWidth) ayrılır.
+ */
+export function fitChipCount(widths, available, moreWidth = 40, gap = 6) {
+  const list = widths || [];
+  if (!list.length) return 0;
+  if (!(available > 0)) return list.length;
+  let used = 0;
+  let count = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const gapBefore = count > 0 ? gap : 0;
+    const hiddenAfter = list.length - (i + 1);
+    const reserve = hiddenAfter > 0 ? gap + moreWidth : 0;
+    if (used + gapBefore + list[i] + reserve > available) break;
+    used += gapBefore + list[i];
+    count += 1;
+  }
+  return count;
+}
+
 export function editorOverflowGuard() {
-  return "max-w-full min-w-0 overflow-x-hidden";
+  return "max-w-full min-w-0 max-[700px]:overflow-x-hidden";
 }
