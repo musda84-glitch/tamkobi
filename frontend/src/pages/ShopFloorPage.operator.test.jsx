@@ -819,7 +819,9 @@ test("a standard account skips the picker and sends actions without an operator 
   expect(host.querySelector('[data-testid="shopfloor-pin-modal"]')).toBeNull();
   expect(host.querySelector("select[data-testid='shopfloor-operator']")).toBeNull();
   const chip = host.querySelector('[data-testid="shopfloor-operator-chip"]');
-  expect(chip.textContent).toContain("Operatör: Ayşe Usta · Kendi oturumunuz — seçim gerekmez");
+  expect(chip.textContent).toContain("Operatör: Ayşe Usta");
+  expect(host.textContent).not.toContain("Kendi oturumunuz");
+  expect(host.textContent).not.toContain("seçim gerekmez");
   expect(host.querySelector('[data-testid="wo-need-operator-URT-R-1"]')).toBeNull();
   expect(host.querySelector('[data-testid="wo-start-URT-R-1"]').disabled).toBe(false);
   axios.post.mockClear();
