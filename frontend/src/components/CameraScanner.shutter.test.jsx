@@ -199,24 +199,36 @@ test("bırakınca seri durur ve sonraki kodlar onScan çağırmaz", async () => 
   expect(host.querySelector('[data-testid="camera-scanner"]')).not.toBeNull();
 });
 
-test("pointerleave ve pointercancel seriyi durdurur", async () => {
+test("fare pointerleave ve pointercancel seriyi durdurur; dokunuşta kayma durdurmaz", async () => {
   const leave = await renderScanner();
-  await point("down");
+  await point("down", { pointerType: "mouse" });
   await advance(SHUTTER_HOLD_MS);
   decode("AAA");
-  await point("leave");
+  await point("leave", { pointerType: "mouse" });
   decode("BBB");
   expect(leave.onScan.mock.calls.map((c) => c[0])).toEqual(["AAA"]);
 
   act(() => { root.unmount(); });
   root = createRoot(host);
+  const slid = await renderScanner();
+  await point("down", { pointerType: "touch" });
+  await advance(SHUTTER_HOLD_MS / 2);
+  await point("leave", { pointerType: "touch" });
+  await advance(SHUTTER_HOLD_MS);
+  expect(shutter().getAttribute("data-mode")).toBe("serial");
+  decode("EEE");
+  expect(slid.onScan.mock.calls.map((c) => c[0])).toEqual(["EEE"]);
+
+  act(() => { root.unmount(); });
+  root = createRoot(host);
   const cancel = await renderScanner();
-  await point("down");
+  await point("down", { pointerType: "touch" });
   await advance(SHUTTER_HOLD_MS);
   decode("CCC");
-  await point("cancel");
+  await point("cancel", { pointerType: "touch" });
   decode("DDD");
   expect(cancel.onScan.mock.calls.map((c) => c[0])).toEqual(["CCC"]);
+  expect(shutter().getAttribute("data-mode")).toBe("idle");
 });
 
 test("seri modda aynı kod 1,5 sn içinde bir kez, süre dolunca yeniden sayılır", async () => {
@@ -258,6 +270,75 @@ test("X kapatır", async () => {
     host.querySelector('[data-testid="camera-scanner-close"]').click();
   });
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+function pxOf(styleText, prop) {
+  const match = String(styleText).match(new RegExp(`${prop}\\s*:\\s*([0-9.]+)px`));
+  return match ? parseFloat(match[1]) : NaN;
+}
+
+test("mobil deklanşör en az 72px, kaydırma ve seçim engelli, titreşim güvenli", async () => {
+  const { onScan } = await renderScanner();
+  const el = shutter();
+  const styleText = el.getAttribute("style") || "";
+  expect(pxOf(styleText, "width")).toBeGreaterThanOrEqual(72);
+  expect(pxOf(styleText, "height")).toBeGreaterThanOrEqual(72);
+  expect(pxOf(styleText, "min-width")).toBeGreaterThanOrEqual(72);
+  expect(pxOf(styleText, "min-height")).toBeGreaterThanOrEqual(72);
+  expect(styleText).toContain("touch-action: none");
+  expect(styleText).toContain("user-select: none");
+  expect(styleText).toContain("-webkit-user-select: none");
+  expect(styleText).toContain("-webkit-touch-callout: none");
+  expect(el.className).toMatch(/touch-none/);
+  expect(el.className).toMatch(/select-none/);
+
+  ["touchstart", "touchmove", "pointermove", "selectstart", "contextmenu"].forEach((type) => {
+    const ev = new Event(type, { bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  const down = new PointerEvent("pointerdown", {
+    bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch", button: 0,
+  });
+  await act(async () => { el.dispatchEvent(down); });
+  expect(down.defaultPrevented).toBe(true);
+  await advance(SHUTTER_HOLD_MS);
+  expect(el.getAttribute("data-mode")).toBe("serial");
+  decode("V1");
+  expect(navigator.vibrate).toHaveBeenCalledWith(60);
+  expect(onScan).toHaveBeenCalledWith("V1");
+
+  const cancel = new PointerEvent("pointercancel", {
+    bubbles: true, cancelable: true, pointerId: 7, pointerType: "touch",
+  });
+  await act(async () => { el.dispatchEvent(cancel); });
+  decode("V2");
+  expect(onScan).toHaveBeenCalledTimes(1);
+  expect(el.getAttribute("data-mode")).toBe("idle");
+
+  navigator.vibrate = jest.fn(() => { throw new Error("titreşim yok"); });
+  const up = new PointerEvent("pointerup", {
+    bubbles: true, cancelable: true, pointerId: 8, pointerType: "touch", button: 0,
+  });
+  const again = new PointerEvent("pointerdown", {
+    bubbles: true, cancelable: true, pointerId: 8, pointerType: "touch", button: 0,
+  });
+  await act(async () => { el.dispatchEvent(again); });
+  await act(async () => { el.dispatchEvent(up); });
+  decode("V3");
+  expect(onScan).toHaveBeenCalledWith("V3");
+
+  delete navigator.vibrate;
+  await act(async () => { el.dispatchEvent(new PointerEvent("pointerdown", {
+    bubbles: true, cancelable: true, pointerId: 9, pointerType: "touch", button: 0,
+  })); });
+  await act(async () => { el.dispatchEvent(new PointerEvent("pointerup", {
+    bubbles: true, cancelable: true, pointerId: 9, pointerType: "touch", button: 0,
+  })); });
+  decode("V4");
+  expect(onScan).toHaveBeenCalledWith("V4");
+  expect(host.querySelector('[data-testid="camera-scanner"]')).not.toBeNull();
 });
 
 test("adet çarpan yalnızca qtyEnabled iken görünür; continuous metni kalkar", async () => {

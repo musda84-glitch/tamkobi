@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { Camera, X, Loader2, FlipHorizontal, Zap, Check } from "lucide-react";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
@@ -43,6 +43,14 @@ export const normalizeScanText = (raw) => {
 
 const supportsNativeDetector = () =>
   typeof window !== "undefined" && typeof window.BarcodeDetector === "function";
+
+/** iOS Safari / Android Chrome: titreşim yoksa veya hata verirse okuma sürer. */
+const buzz = () => {
+  try {
+    const vibrate = typeof navigator !== "undefined" ? navigator.vibrate : undefined;
+    if (typeof vibrate === "function") vibrate(60);
+  } catch { /* sessiz */ }
+};
 
 const beep = () => {
   try {
@@ -156,7 +164,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     if (lastRef.current.code === text && now - lastRef.current.at < SHUTTER_DEDUPE_MS) return;
     lastRef.current = { code: text, at: now };
     beep();
-    try { navigator.vibrate?.(60); } catch { /* ignore */ }
+    buzz();
     setFlash(true);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => {
@@ -252,6 +260,40 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     WebkitUserSelect: "none",
     WebkitTouchCallout: "none",
   };
+  const shutterBox = {
+    ...shutterStyle,
+    width: 76,
+    height: 76,
+    minWidth: 72,
+    minHeight: 72,
+  };
+  const shutterRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const el = shutterRef.current;
+    if (!el) return undefined;
+    // iOS Safari ve Android Chrome vendor önekini ham style metninden uygular.
+    el.setAttribute(
+      "style",
+      "touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; width: 76px; height: 76px; min-width: 72px; min-height: 72px;",
+    );
+    const block = (event) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    const opts = { capture: true, passive: false };
+    el.addEventListener("touchstart", block, opts);
+    el.addEventListener("touchmove", block, opts);
+    el.addEventListener("pointermove", block, opts);
+    el.addEventListener("selectstart", block, opts);
+    el.addEventListener("contextmenu", block, opts);
+    return () => {
+      el.removeEventListener("touchstart", block, opts);
+      el.removeEventListener("touchmove", block, opts);
+      el.removeEventListener("pointermove", block, opts);
+      el.removeEventListener("selectstart", block, opts);
+      el.removeEventListener("contextmenu", block, opts);
+    };
+  });
 
   const startNative = useCallback(async (deviceId) => {
     if (!supportsNativeDetector() || !videoRef.current) return false;
@@ -598,20 +640,24 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
           </label>
         ) : null}
         <button
+          ref={shutterRef}
           type="button"
           data-testid="camera-scanner-shutter"
           data-mode={mode}
           aria-label="Deklanşör. Dokun: tek okut. Basılı tut: seri okut."
           onPointerDown={onShutterDown}
           onPointerUp={(e) => finishGesture(e, true)}
-          onPointerLeave={(e) => finishGesture(e, false)}
+          onPointerLeave={(e) => {
+            if (e.pointerType && e.pointerType !== "mouse") return;
+            finishGesture(e, false);
+          }}
           onPointerCancel={(e) => finishGesture(e, false)}
           onContextMenu={onShutterContextMenu}
           draggable={false}
-          style={shutterStyle}
-          className={`relative select-none outline-none ${serial ? "text-rose-500" : "text-white"}`}
+          style={shutterBox}
+          className={`relative select-none outline-none touch-none ${serial ? "text-rose-500" : "text-white"}`}
         >
-          <span className="pointer-events-none relative block w-[4.75rem] h-[4.75rem]">
+          <span className="pointer-events-none relative block w-full h-full">
             <span className={`absolute inset-0 rounded-full border-[5px] ${serial ? "border-rose-500 animate-pulse" : "border-white"}`} />
             {serial && (
               <span
