@@ -1,4 +1,5 @@
 """Users, roles (module permissions), e-mail invitations and activity log."""
+import contextvars
 import hashlib
 import logging
 import os
@@ -311,6 +312,17 @@ def portal_rule_for_path(path: str, method: str = "GET"):
     return None
 
 
+def cargo_label_request(path: str, method: str = "GET") -> bool:
+    """Kargo etiketi indirme. order_cargo_label kapalıysa middleware 403 döner."""
+    if _view_rule_method(method) != "GET":
+        return False
+    p = _portal_norm_path(path)
+    return (
+        _portal_template_match("/api/orders/{id}/cargo-label", p)
+        or _portal_template_match("/api/orders/{id}/cargo-label/file", p)
+    )
+
+
 def portal_orders_operation(path: str, method: str = "GET") -> bool:
     """portal_orders izin listesi. Yöntem + yol birebir; ilk şablon kazanmaz, liste kapalıdır."""
     p = _portal_norm_path(path)
@@ -479,6 +491,114 @@ def mask_money(obj):
     return obj
 
 
+# İstek boyunca PDF/Excel üreticilerinin okuduğu bayrak. Middleware call_next öncesi kurar.
+_price_mask_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar("rbac_price_mask", default=False)
+
+# CSV / Excel başlıkları. Tam eşleşme; "ödeme" durumu metinse hücre zaten sayı değildir.
+_EXPORT_MONEY_HEADERS = {
+    "matrah", "kdv", "toplam", "tutar", "birim fiyat", "birim_fiyat", "ara toplam",
+    "genel toplam", "ödenecek", "bakiye", "fiyat", "net tutar", "brüt", "brut",
+    "unit price", "grand total", "subtotal", "vat", "amount",
+}
+
+
+def price_mask_active() -> bool:
+    return bool(_price_mask_ctx.get())
+
+
+def _export_header_is_money(name: Any) -> bool:
+    text = str(name or "").strip().casefold()
+    key = " ".join(text.split()).replace(" ", "_")
+    if key in MONEY_KEYS or text in MONEY_KEYS:
+        return True
+    folded = " ".join(text.split())
+    return folded in _EXPORT_MONEY_HEADERS or key in _EXPORT_MONEY_HEADERS
+
+
+def _export_cell_is_number(value: str) -> bool:
+    s = str(value or "").strip().replace(" ", "").replace("₺", "").replace("TL", "").replace("tl", "")
+    if not s or any(ch.isalpha() for ch in s):
+        return False
+    if s.count(",") > 1 or s.count(".") > 3:
+        return False
+    # 1.250,50 veya 250,50 veya 250.00 veya 250
+    import re
+    return bool(re.fullmatch(r"-?\d{1,3}(?:\.\d{3})*,\d+|-\d+(?:,\d+)?|\d+(?:,\d+)?|-?\d+(?:\.\d+)?", s))
+
+
+def mask_delimited_export(text: str) -> str:
+    """CSV/TSV. Para başlığındaki sayısal hücreler 0 olur."""
+    import csv
+    import io
+    raw = text.lstrip("\ufeff")
+    sample = raw.splitlines()[0] if raw else ""
+    delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+    reader = csv.reader(io.StringIO(raw), delimiter=delimiter)
+    rows = list(reader)
+    if not rows:
+        return text
+    indexes = [i for i, header in enumerate(rows[0]) if _export_header_is_money(header)]
+    if not indexes:
+        return text
+    for row in rows[1:]:
+        for idx in indexes:
+            if idx < len(row) and _export_cell_is_number(row[idx]):
+                row[idx] = "0"
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL)
+    writer.writerows(rows)
+    body = buf.getvalue()
+    if text.startswith("\ufeff"):
+        return "\ufeff" + body
+    return body
+
+
+def mask_xlsx_export(data: bytes) -> bytes:
+    """İlk satır başlığı para alanıysa alttaki sayısal hücreler 0 olur."""
+    import io
+    try:
+        import openpyxl
+    except Exception:
+        return data
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+    except Exception:
+        return data
+    changed = False
+    for ws in wb.worksheets:
+        header = next(ws.iter_rows(min_row=1, max_row=1), None)
+        if not header:
+            continue
+        columns = [cell.column for cell in header if _export_header_is_money(cell.value)]
+        if not columns:
+            continue
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                if cell.column not in columns or cell.value is None:
+                    continue
+                if _money_scalar(cell.value) or (isinstance(cell.value, str) and _export_cell_is_number(cell.value)):
+                    cell.value = 0
+                    changed = True
+    if not changed:
+        return data
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _response_content_type(response) -> str:
+    return str(response.headers.get("content-type") or "").split(";")[0].strip().lower()
+
+
+def _known_price_mask(user: Optional[dict], role: Optional[dict], view_lookup_failed: bool = False) -> bool:
+    """call_next öncesi bilinen maske. Rol henüz yoksa ve sorgu düşmediyse False."""
+    if not user or user.get("role") == "admin" or write_role_exempt(user):
+        return False
+    if role is not None:
+        return not role_features(role).get("view_prices")
+    return bool(view_lookup_failed)
+
+
 def _all(level: str) -> Dict[str, str]:
     return {m: level for m, _ in MODULES}
 
@@ -588,9 +708,26 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/comm/sms/settings", "/settings"), ("/api/comm/sms/verify", "/settings"), ("/api/comm/sms/balance", "/settings"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/"),
-                  ("/api/shopfloor/devices", "/settings")]
-# Yalnız GET/HEAD görünürlük. module_for_path ve mutation_allowed bunu okumaz;
-# /api/e-invoice gibi mutasyon boşlukları bu listede kapanmaz.
+                  ("/api/shopfloor/devices", "/settings"),
+                  # Yazma boşlukları. En uzun önek kazanır.
+                  ("/api/e-invoice", "/invoices"),
+                  ("/api/marketplace/claims", "/orders"),
+                  ("/api/marketplace", "/ecommerce"),
+                  ("/api/integrations/isnet-portal/save", "/settings"),
+                  ("/api/integrations/isnet-portal/test", "/settings"),
+                  ("/api/integrations/isnet/save", "/settings"),
+                  ("/api/integrations/isnet/test", "/settings"),
+                  ("/api/pricing", "/stock"),
+                  ("/api/dispatches", "/dispatches"),
+                  ("/api/label-templates", "/settings"),
+                  ("/api/expense-budgets", "/expenses"),
+                  ("/api/tax-documents", "/accountant"),
+                  # Menüde ayrı duran modüller. Okuma module_for_get_path'te personelde kalır.
+                  ("/api/personnel/attendance", "/mesai"),
+                  ("/api/saha", "/saha"),
+                  ("/api/b2b-yonetim", "/b2b-yonetim")]
+# Yalnız GET/HEAD görünürlük. Yazma module_for_path API_MODULE_MAP'i okur.
+# Etiket şablonlarında aynı uzunlukta GET_EXTRA okumayı /stock'ta tutar.
 # En uzun önek kazanır: /api/integrations/cargo ve /api/integrations/ecommerce
 # API_MODULE_MAP'te daha uzundur, /settings'e düşmez.
 GET_EXTRA_MODULE_MAP = (
@@ -921,12 +1058,56 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         ),
     }
 
-def module_for_path(path: str) -> Optional[str]:
+def _attendance_tree(path: str) -> bool:
+    p = _portal_norm_path(path)
+    return p == "/api/personnel/attendance" or p.startswith("/api/personnel/attendance/")
+
+
+def _self_attendance_path(path: str) -> bool:
+    """Personelin kendi puantajı ve onay/itiraz. Yönetici kararı değildir."""
+    p = _portal_norm_path(path)
+    prefs = (
+        "/api/personnel/attendance/self",
+        "/api/personnel/attendance/me",
+        "/api/personnel/attendance/reminder-prefs",
+        "/api/personnel/attendance/geo",
+        "/api/personnel/attendance/early-leave-request",
+        "/api/personnel/attendance/intraday-leave-request",
+    )
+    if any(p == pref or p.startswith(pref + "/") for pref in prefs):
+        return True
+    if p.startswith("/api/personnel/attendance/geo"):
+        return True
+    return p.endswith(SELF_SERVICE_SUFFIXES)
+
+
+def _b2b_admin_path(path: str) -> bool:
+    p = _portal_norm_path(path)
+    if p.startswith("/api/public/"):
+        return False
+    return p.endswith("/b2b-settings") or p.endswith("/b2b-access") or p.endswith("/b2b-portal")
+
+
+def _longest_module(path: str, rows) -> Optional[str]:
     best = None
-    for prefix, mod in API_MODULE_MAP:
+    for prefix, mod in rows:
         if path.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
             best = (prefix, mod)
     return best[1] if best else None
+
+
+def module_for_path(path: str) -> Optional[str]:
+    """Yazma modülü. En uzun API_MODULE_MAP öneki; menü bağları önekten önce gelir."""
+    p = _portal_norm_path(path)
+    if _b2b_admin_path(p):
+        return "/b2b-yonetim"
+    if p.endswith("/create-dispatch") or p.startswith("/api/dispatches"):
+        return "/dispatches"
+    # Puantaj lisansı ve okuma /personnel kalır. /mesai yazma kapısı mutation_allowed'dadır.
+    # Aksi halde haritadaki daha uzun önek pakette /mesai kapalı firmada puantajı kilitler.
+    if _attendance_tree(p):
+        return "/personnel"
+    return _longest_module(p, API_MODULE_MAP)
 
 
 def is_accountant_evrak_ai_path(path: str, method: str = "POST") -> bool:
@@ -955,14 +1136,93 @@ def is_accountant_evrak_ai_path(path: str, method: str = "POST") -> bool:
     return False
 
 
-def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], method: str = "POST") -> bool:
-    """POST/PUT/PATCH: edit veya delete; DELETE (ve toplu silme): yalnızca delete. Atölye tablet işlemlerinde view de yeterli."""
-    if not module:
+_ISNET_ADMIN_WRITES = (
+    "/api/integrations/isnet/save",
+    "/api/integrations/isnet/test",
+    "/api/integrations/isnet-portal/save",
+    "/api/integrations/isnet-portal/test",
+)
+_ATOLYE_RUN_ACTIONS = ("/start", "/pause", "/finish")
+# Oturum açmış kullanıcının kendi kaydı. Modül eşlemesi yok; uç kendi kapısını uygular.
+# Yeni yazma uçları buraya eklenmeden deny-by-default 403 verir ve rota testi kırmızıya döner.
+MUTATION_UNMAPPED_ALLOWLIST = (
+    ("PUT", "/api/notify/prefs"),
+    ("PUT", "/api/notify/tenant-prefs"),
+    ("PUT", "/api/saas/companies/{company_id}/notify-prefs"),
+    ("POST", "/api/network-printers/probe"),
+    ("POST", "/api/network-printers/discover"),
+    ("POST", "/api/network-printers/send"),
+    ("PUT", "/api/onboarding/progress"),
+    ("POST", "/api/desktop/kiosk-exit"),
+    ("POST", "/api/storage/me/ensure"),
+    ("POST", "/api/storage/me/folders"),
+)
+_WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+
+
+def is_isnet_admin_write(path: str) -> bool:
+    return _portal_norm_path(path) in _ISNET_ADMIN_WRITES
+
+
+def _atolye_run_action(path: str) -> bool:
+    p = _portal_norm_path(path)
+    return any(p.endswith(suffix) for suffix in _ATOLYE_RUN_ACTIONS)
+
+
+def _dispatch_invoice_bridge(path: str) -> bool:
+    """İrsaliyeyi faturaya bağlayan yazma: her iki modül de gerekir."""
+    return _portal_norm_path(path).endswith("/merge-to-invoice")
+
+
+def _saha_order_create(path: str, method: str) -> bool:
+    return str(method or "").upper() == "POST" and _portal_norm_path(path) == "/api/orders"
+
+
+def mutation_path_open(path: str, method: str = "POST") -> bool:
+    """Modül eşlemesi aranmayan oturumlu yazma. Public ve SKIP ayrı kapıdır."""
+    method_u = str(method or "").upper()
+    p = _portal_norm_path(path)
+    for rule_method, template in MUTATION_UNMAPPED_ALLOWLIST:
+        if rule_method != method_u:
+            continue
+        if _portal_template_match(template, p):
+            return True
+    return False
+
+
+def mutation_route_covered(path: str, method: str = "POST") -> bool:
+    """Yazma rotası modüle, public/skip kapısına veya allowlist'e bağlı mı."""
+    method_u = str(method or "").upper()
+    if method_u not in _WRITE_METHODS:
         return True
+    p = _portal_norm_path(path)
+    if p.startswith(SKIP_PREFIXES) or is_public_api_path(p, method_u):
+        return True
+    if module_for_path(p):
+        return True
+    return mutation_path_open(p, method_u)
+
+
+def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], method: str = "POST") -> bool:
+    """POST/PUT/PATCH: edit veya delete; DELETE (ve toplu silme): yalnızca delete.
+
+    Eşleşen modül yoksa reddedilir. İşNet kayıt/test yalnız admin middleware kapısındadır.
+    Atölyede başlat/duraklat/bitir Düzenle ister; diğer tablet işlemlerinde Görüntüle yeter.
+    """
     method_u = str(method or "").upper()
     destructive = method_u == "DELETE" or "bulk-delete" in path or path.rstrip("/").endswith("/delete")
     need = "delete" if destructive else "edit"
+    if is_isnet_admin_write(path):
+        return False
+    if _dispatch_invoice_bridge(path):
+        return level_allows(perms.get("/dispatches"), need) and level_allows(perms.get("/invoices"), need)
+    if _attendance_tree(path) and not _self_attendance_path(path):
+        return level_allows(perms.get("/mesai"), need) and level_allows(perms.get("/personnel"), need)
+    if not module:
+        return False
     if level_allows(perms.get(module, "none"), need):
+        return True
+    if _saha_order_create(path, method_u) and need == "edit" and level_allows(perms.get("/saha"), "edit"):
         return True
     # Sipariş ekranından kargolama: /orders edit yeterli (ayrı /cargo yetkisi şart değil)
     if module == "/cargo" and (
@@ -971,16 +1231,19 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
         or path.startswith("/api/cargo/geliver-balance")
     ):
         return need == "edit" and level_allows(perms.get("/orders", "none"), "edit")
-    # Atölye ekranı (PIN + iş emri başlat/duraklat/bitir): modülü görebilen kullanıcı işletebilsin.
-    # Özel "Atölye" rolü çoğu zaman view ile açılır; edit şartı operatör girişini 403 yapıyordu.
+    # Atölye tablet: PIN ve sayım Görüntüle ile açılır. Başlat, duraklat ve bitir Düzenle ister.
+    # portal_atolye ataması middleware'de mutation_allowed'ı atlar; personel kendi işini yürütür.
     if module == "/atolye" and path.startswith("/api/production/work-orders"):
         if need == "delete":
             return level_allows(perms.get("/atolye", "none"), "delete") or level_allows(
                 perms.get("/production", "none"), "delete"
             )
+        if _atolye_run_action(path):
+            return level_allows(perms.get("/atolye", "none"), "edit") or level_allows(
+                perms.get("/production", "none"), "edit"
+            )
         if level_allows(perms.get("/atolye", "none"), "view"):
             return True
-        # Üretim edit yetkisi olanlar da atölye iş emirlerini işletebilir
         return level_allows(perms.get("/production", "none"), "edit")
     # Mali müşavir paneli: evrak AI yükleme (fatura/fiş/çek/ekstre) /ai-advisor gerektirmez.
     if need == "edit" and is_accountant_evrak_ai_path(path, method_u) and level_allows(perms.get("/accountant", "none"), "edit"):
@@ -1170,13 +1433,25 @@ def cross_module_view_matches(path: str, method: str = "GET") -> bool:
 
 
 def module_for_get_path(path: str) -> Optional[str]:
-    """GET/HEAD modülü. API_MODULE_MAP + GET_EXTRA; en uzun önek kazanır."""
+    """GET/HEAD modülü. API_MODULE_MAP + GET_EXTRA; en uzun önek kazanır.
+
+    Puantaj okuması /personnel kalır (yazma /mesai). Aynı uzunlukta GET_EXTRA,
+    yazma eşlemesini ezer (etiket şablonları: yazma /settings, okuma /stock).
+    """
     p = _portal_norm_path(path)
+    if _attendance_tree(p):
+        return "/personnel"
     best = None
+    best_prefix = ""
     for prefix, mod in list(API_MODULE_MAP) + list(GET_EXTRA_MODULE_MAP):
-        if p.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
-            best = (prefix, mod)
-    return best[1] if best else None
+        if p.startswith(prefix) and (best is None or len(prefix) > len(best_prefix)):
+            best = mod
+            best_prefix = prefix
+    if best is not None:
+        for prefix, mod in GET_EXTRA_MODULE_MAP:
+            if p.startswith(prefix) and len(prefix) == len(best_prefix):
+                return mod
+    return best
 
 
 def _view_module_allows(module: Optional[str], perms: Dict[str, str]) -> bool:
@@ -1364,6 +1639,98 @@ async def _shadow_get_view(request: Any, user: Optional[dict], role: Optional[di
     return None, view_role
 
 
+def write_role_exempt(user: Optional[dict]) -> bool:
+    """Admin ve sahip yazma denetiminin dışındadır. Boş rol admin sayılmaz."""
+    if not user:
+        return False
+    raw = user.get("role")
+    if raw is None or str(raw).strip() == "":
+        return False
+    return normalize_role_code(raw) == "admin"
+
+
+async def _read_response_body(response) -> bytes:
+    iterator = getattr(response, "body_iterator", None)
+    if iterator is not None:
+        return b"".join([chunk async for chunk in iterator])
+    body = getattr(response, "body", None)
+    if isinstance(body, memoryview):
+        return bytes(body)
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body)
+    return b""
+
+
+def _export_mask_headers(response) -> Dict[str, str]:
+    headers = {"X-Prices-Masked": "1"}
+    disposition = response.headers.get("content-disposition")
+    if disposition:
+        headers["Content-Disposition"] = disposition
+    return headers
+
+
+async def _apply_price_mask(response, user, role, view_lookup_failed: bool, company_id: Optional[str]):
+    """JSON, CSV ve Excel yanıtlarında tutarları maskeler. PDF üreticisi contextvar ile 0 yazar."""
+    if not user or user.get("role") == "admin" or write_role_exempt(user):
+        return response, role
+    ctype_full = response.headers.get("content-type") or ""
+    ctype = _response_content_type(response)
+    is_json = "application/json" in ctype_full or "+json" in ctype
+    is_csv = ctype in ("text/csv", "application/csv", "text/tab-separated-values")
+    is_sheet = "spreadsheetml" in ctype or ctype == "application/vnd.ms-excel"
+    if not (is_json or is_csv or is_sheet):
+        return response, role
+    if role is None:
+        try:
+            role = await role_for(user, company_id)
+        except Exception:
+            # Görünürlük kararı düştüyse ikinci sorgu da düşebilir.
+            # Rol bilinmiyorsa tutarlar maskeli kalır; istek 200 döner.
+            if not view_lookup_failed:
+                raise
+            role = None
+    if role is not None and role_features(role).get("view_prices"):
+        return response, role
+    from fastapi.responses import JSONResponse, Response
+    body = await _read_response_body(response)
+    if is_json:
+        import json as _json
+        try:
+            data = mask_money(_json.loads(body))
+        except ValueError:
+            return JSONResponse(content=None, status_code=response.status_code), role
+        return JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"}), role
+    if is_csv:
+        try:
+            masked = mask_delimited_export(body.decode("utf-8")).encode("utf-8")
+        except Exception:
+            masked = body
+        return Response(
+            content=masked,
+            status_code=response.status_code,
+            media_type=ctype_full or "text/csv",
+            headers=_export_mask_headers(response),
+        ), role
+    return Response(
+        content=mask_xlsx_export(body),
+        status_code=response.status_code,
+        media_type=ctype_full or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=_export_mask_headers(response),
+    ), role
+
+
+async def _call_with_price_mask(call_next, request, user, role, view_lookup_failed: bool):
+    """PDF/makbuz üreticileri call_next sırasında price_mask_active görsün."""
+    token = None
+    if _known_price_mask(user, role, view_lookup_failed):
+        token = _price_mask_ctx.set(True)
+    try:
+        return await call_next(request)
+    finally:
+        if token is not None:
+            _price_mask_ctx.reset(token)
+
+
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         from fastapi.responses import JSONResponse
@@ -1492,36 +1859,42 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                         role = view_role
                     if blocked is not None:
                         return blocked
-            response = await call_next(request)
-            if user and user.get("role") != "admin" and "application/json" in (response.headers.get("content-type") or ""):
+            if cargo_label_request(path, request.method) and user and not write_role_exempt(user):
                 if role is None:
                     try:
-                        role = await role_for(user)
+                        role = await role_for(user, cid)
                     except Exception:
-                        # Görünürlük kararı düştüyse ikinci sorgu da düşebilir.
-                        # Rol bilinmiyorsa tutarlar maskeli kalır; istek 200 döner.
-                        if not view_lookup_failed:
-                            raise
-                        role = None
-                if role is None or not role_features(role)["view_prices"]:
-                    import json as _json
-                    body = b"".join([chunk async for chunk in response.body_iterator])
-                    try:
-                        data = mask_money(_json.loads(body))
-                    except ValueError:
-                        return await _audit_done(JSONResponse(content=None, status_code=response.status_code))
-                    return await _audit_done(JSONResponse(content=data, status_code=response.status_code, headers={"X-Prices-Masked": "1"}))
+                        return JSONResponse(
+                            {"detail": "Bu özellik için yetkiniz yok (Sipariş: Kargo etiketi)."},
+                            status_code=403,
+                        )
+                if not role_features(role).get("order_cargo_label"):
+                    return JSONResponse(
+                        {"detail": "Bu özellik için yetkiniz yok (Sipariş: Kargo etiketi)."},
+                        status_code=403,
+                    )
+            response = await _call_with_price_mask(call_next, request, user, role, view_lookup_failed)
+            response, role = await _apply_price_mask(response, user, role, view_lookup_failed, cid)
             return await _audit_done(response)
-        if user and user.get("role") != "admin" and module and not portal_grant:
-            role = await role_for(user)
+        if (
+            user
+            and not write_role_exempt(user)
+            and not portal_grant
+            and not mutation_path_open(path, request.method)
+        ):
+            role = await role_for(user, cid)
             perms = role.get("permissions", {})
             if not mutation_allowed(module, path, perms, request.method):
-                return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {module})."}, status_code=403)
-        response = await call_next(request)
+                shown = module or "eşlenmemiş"
+                if _attendance_tree(path) and not _self_attendance_path(path):
+                    shown = "/mesai"
+                return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {shown})."}, status_code=403)
+        response = await _call_with_price_mask(call_next, request, user, role, False)
         if response.status_code < 400 and user:
             ip = request_ip(request)
             await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": user.get("active_company_id") or "comp_nexus_main_01", "user_id": user.get("id"), "user_name": user.get("name"),
                                                 "method": request.method, "path": path, "module": module, "ip": ip, "status": response.status_code, "created_at": _now()})
+        response, role = await _apply_price_mask(response, user, role, False, cid)
         return await _audit_done(response)
 
 

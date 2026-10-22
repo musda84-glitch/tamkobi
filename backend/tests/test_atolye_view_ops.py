@@ -10,8 +10,11 @@ from rbac import backfill_permissions, mutation_allowed  # noqa: E402
 def test_shopfloor_unlock_allowed_with_atolye_view():
     perms = {"/atolye": "view", "/production": "none"}
     assert mutation_allowed("/atolye", "/api/production/work-orders/shopfloor-unlock", perms) is True
-    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/start", perms) is True
-    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/finish", perms) is True
+    # Başlat / duraklat / bitir Görüntüle ile açılmaz; Düzenle gerekir.
+    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/start", perms) is False
+    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/pause", perms) is False
+    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/finish", perms) is False
+    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/start", {"/atolye": "edit"}) is True
     # Yönetici şifreli silme: view ile endpoint çağrılabilir (şifre sunucuda doğrulanır)
     assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/admin-trash", perms) is True
 
