@@ -1980,7 +1980,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
     cid = str((employee or {}).get("company_id") or "").strip()
     company = await _db.companies.find_one({"_id": cid}) or {}
     schedule = merge_schedule(company, employee)
-    existing = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid}) or {}
+    existing = await _job_db().attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid}) or {}
     if "assigned_overtime_hours" in patch:
         assigned_ot = max(0.0, _as_float(patch.get("assigned_overtime_hours"), 0.0))
     else:
@@ -2003,7 +2003,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
             rec[k] = patch[k]
         elif existing.get(k) is not None:
             rec[k] = existing[k]
-    plan = await _db.shift_plans.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
+    plan = await _job_db().shift_plans.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
     rec.update(compute_day(rec, schedule, plan))
     try:
         _wd = datetime.strptime(date, "%Y-%m-%d").weekday()
@@ -2028,12 +2028,12 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
     rec["updated_at"] = _now()
     if existing.get("location_moves"):
         rec["location_moves"] = existing["location_moves"]
-    await _db.attendance.update_one(
+    await _job_db().attendance.update_one(
         {"employee_id": employee["_id"], "date": date, "company_id": cid},
         {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}},
         upsert=True,
     )
-    saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
+    saved = await _job_db().attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
     if saved:
         saved["id"] = saved.get("_id")
         if patch.get("check_in") and not existing.get("check_in"):
@@ -2050,7 +2050,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
                 source=source,
                 official=True,
             ))
-        saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
+        saved = await _job_db().attendance.find_one({"employee_id": employee["_id"], "date": date, "company_id": cid})
     final = saved or rec
     # Çıkış saati yazılınca/silinince sistem çıkış yapmış / yapmamış gibi işlesin.
     if (
@@ -3098,14 +3098,14 @@ async def maybe_retract_auto_checkout(
         source=rec.get("source") or "auto",
         confirmed=True,
     )
-    await _db.attendance.update_one(
+    await _job_db().attendance.update_one(
         {"employee_id": emp["_id"], "date": day, "company_id": cid},
         {
             "$set": {"updated_at": _now()},
             "$unset": {"auto_checkout": "", "auto_checkout_at": "", "auto_checkout_end": ""},
         },
     )
-    saved = _clean(await _db.attendance.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid}) or saved)
+    saved = _clean(await _job_db().attendance.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid}) or saved)
     if saved:
         saved.pop("auto_checkout", None)
         saved.pop("auto_checkout_at", None)
@@ -3138,7 +3138,7 @@ async def maybe_auto_checkout(
     }
     cid = str((emp or {}).get("company_id") or (rec or {}).get("company_id") or "").strip()
     saved = await apply_day(emp, day, patch, source="auto", confirmed=True)
-    await _db.attendance.update_one(
+    await _job_db().attendance.update_one(
         {"employee_id": emp["_id"], "date": day, "company_id": cid},
         {"$set": {"auto_checkout": True, "auto_checkout_at": patch["auto_checkout_at"], "auto_checkout_end": end_hm}},
     )
@@ -3224,8 +3224,8 @@ async def process_auto_exit_overtime(
     """Mesai bitişinde otomatik çıkış + (konum varsa) tolerans sonrası fazla mesai onayı."""
     day = date or _today(schedule)
     cid = str((emp or {}).get("company_id") or (company or {}).get("_id") or "").strip()
-    plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid})
-    row = rec or await _db.attendance.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid}) or {}
+    plan = await _job_db().shift_plans.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid})
+    row = rec or await _job_db().attendance.find_one({"employee_id": emp["_id"], "date": day, "company_id": cid}) or {}
     if row:
         row["id"] = row.get("_id") or row.get("id")
     clock = now_s or now_hm(schedule)
@@ -4615,11 +4615,29 @@ def approval_notify_link(ntype: str, ref_id: str = "", link: str = "") -> str:
     return f"{base}{sep}{key}={rid}"
 
 
+def _job_db():
+    """Arka plan işi şirket deposu bağladıysa o, yoksa katalog db."""
+    import storage_router
+
+    return storage_router.active_db(_db)
+
+
+async def _bind_job_company(cid: str):
+    """Bayrak kapalıyken None. Açılmazsa hata; çağıran şirketi atlar."""
+    import storage_router
+
+    if not storage_router.enabled():
+        return None
+    store = await storage_router.open_company_store(_db, cid)
+    return storage_router.use_store(store)
+
+
 async def notify_managers(company_id: str, ntype: str, title: str, message: str, link: str = "/personnel?tab=attendance", dedupe_key: Optional[str] = None, ref_id: Optional[str] = None, ref_type: Optional[str] = None) -> dict:
+    src = _job_db()
     if dedupe_key:
-        if await _db.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id}):
+        if await src.attendance_alerts.find_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id}):
             return {"status": "duplicate", "mail": {"status": "skipped"}}
-        await _db.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
+        await src.attendance_alerts.insert_one({"_id": f"{company_id}:{dedupe_key}", "company_id": company_id, "type": ntype, "created_at": _now()})
     import notify as _notify
     roles = _notify.roles_for_type(ntype)
     event = MANAGER_NOTIFY_EVENTS.get(ntype)
@@ -4635,7 +4653,7 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
     open_link = approval_notify_link(ntype, ref_id or "", link)
     resolved_ref = ref_type or (spec[2] if spec and ref_id else None)
     if write_inapp:
-        await _notify.insert_notification(_db, _notify.notification_doc(
+        await _notify.insert_notification(src, _notify.notification_doc(
             company_id, ntype, title, message, link=open_link, roles=roles,
             ref_type=resolved_ref, ref_id=str(ref_id) if ref_id else None,
         ))
@@ -4658,7 +4676,7 @@ async def notify_managers(company_id: str, ntype: str, title: str, message: str,
 
 async def _on_leave_today(emp_id: str, date: str, company_id: str) -> bool:
     cid = str(company_id or "").strip()
-    return bool(await _db.leave_requests.find_one({
+    return bool(await _job_db().leave_requests.find_one({
         "employee_id": emp_id,
         "company_id": cid,
         "status": "approved",
@@ -4675,41 +4693,52 @@ async def run_missing_checkin_check(company_id: Optional[str] = None, force: boo
         cid = str(company.get("_id") or "").strip()
         if not cid:
             continue
-        base = merge_schedule(company)
-        if not base.get("notify_missing_checkin", True) and not force:
+        token = None
+        try:
+            token = await _bind_job_company(cid)
+        except Exception as exc:
+            import storage_router
+            storage_router.log_store_failure(cid, exc)
             continue
-        now = local_now(base)
-        today = now.strftime("%Y-%m-%d")
-        emps = await _db.employees.find({"company_id": cid, "status": "active"}).to_list(300)
-        missing = []
-        for emp in emps:
-            if employee_skips_check_in(emp):
+        try:
+            base = merge_schedule(company)
+            if not base.get("notify_missing_checkin", True) and not force:
                 continue
-            sch = merge_schedule(company, emp)
-            wd = now.weekday()
-            plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
-            if plan:
-                if plan.get("off"):
+            now = local_now(base)
+            today = now.strftime("%Y-%m-%d")
+            emps = await _job_db().employees.find({"company_id": cid, "status": "active"}).to_list(300)
+            missing = []
+            for emp in emps:
+                if employee_skips_check_in(emp):
                     continue
-                win = {"start": plan.get("start") or sch["start"]}
-            else:
-                if wd not in (sch.get("work_days") or []):
+                sch = merge_schedule(company, emp)
+                wd = now.weekday()
+                plan = await _job_db().shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
+                if plan:
+                    if plan.get("off"):
+                        continue
+                    win = {"start": plan.get("start") or sch["start"]}
+                else:
+                    if wd not in (sch.get("work_days") or []):
+                        continue
+                    win = day_window(sch, wd)
+                deadline = _hm(win["start"]) + int(sch.get("late_tolerance_minutes") or 0)
+                if not force and now.hour * 60 + now.minute < deadline:
                     continue
-                win = day_window(sch, wd)
-            deadline = _hm(win["start"]) + int(sch.get("late_tolerance_minutes") or 0)
-            if not force and now.hour * 60 + now.minute < deadline:
-                continue
-            rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
-            if rec and (rec.get("check_in") or rec.get("status") in ("leave", "absent")):
-                continue
-            if await _on_leave_today(emp["_id"], today, cid):
-                continue
-            missing.append(emp["full_name"])
-        if missing:
-            names = ", ".join(missing[:8]) + (f" (+{len(missing) - 8})" if len(missing) > 8 else "")
-            r = await notify_managers(cid, "attendance_missing", f"Giriş yapmayan {len(missing)} personel",
-                                      f"{today} · mesai başlangıcı geçti, henüz giriş yapmayanlar: {names}", dedupe_key=f"missing:{today}")
-            results.append({"company_id": cid, "missing": missing, **r})
+                rec = await _job_db().attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
+                if rec and (rec.get("check_in") or rec.get("status") in ("leave", "absent")):
+                    continue
+                if await _on_leave_today(emp["_id"], today, cid):
+                    continue
+                missing.append(emp["full_name"])
+            if missing:
+                names = ", ".join(missing[:8]) + (f" (+{len(missing) - 8})" if len(missing) > 8 else "")
+                r = await notify_managers(cid, "attendance_missing", f"Giriş yapmayan {len(missing)} personel",
+                                          f"{today} · mesai başlangıcı geçti, henüz giriş yapmayanlar: {names}", dedupe_key=f"missing:{today}")
+                results.append({"company_id": cid, "missing": missing, **r})
+        finally:
+            import storage_router
+            storage_router.reset_bound(token)
     return results
 
 
@@ -4721,44 +4750,55 @@ async def run_auto_checkout_ot_check(company_id: Optional[str] = None) -> list:
         cid = str(company.get("_id") or "").strip()
         if not cid:
             continue
-        base = merge_schedule(company)
-        now = local_now(base)
-        today = now.strftime("%Y-%m-%d")
-        now_s = now.strftime("%H:%M")
-        emps = await _db.employees.find({"company_id": cid, "status": "active"}).to_list(300)
-        for emp in emps:
-            sch = merge_schedule(company, emp)
-            plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
-            rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
-            if not rec.get("check_in"):
-                continue
-            end_hm = expected_checkout_hm(rec, sch, today, plan) or day_end_hm(sch, today, plan)
-            if not end_hm:
-                continue
-            past_end = minutes_past_hm(end_hm, now_s) > 0
-            needs_retract = should_retract_auto_checkout(rec, end_hm=end_hm, now_hm=now_s)
-            if not past_end and not needs_retract:
-                continue
-            if await _on_leave_today(emp["_id"], today, cid):
-                continue
-            workplace = await workplace_for_employee(emp, company)
-            lt = normalize_location_tracking(emp.get("location_tracking"))
-            mode = location_mode_for(lt, workplace)
-            out = await process_auto_exit_overtime(
-                emp, company, sch, rec,
-                location_active=False,  # watcher: freshness from emp signal
-                mode=mode, date=today, now_s=now_s,
-            )
-            if out.get("auto_checkout") or out.get("auto_checkout_retracted") or out.get("overtime_confirm"):
-                results.append({
-                    "company_id": cid,
-                    "employee_id": emp["_id"],
-                    "employee_name": emp.get("full_name"),
-                    "auto_checkout": bool(out.get("auto_checkout")),
-                    "auto_checkout_retracted": bool(out.get("auto_checkout_retracted")),
-                    "overtime_confirm": bool(out.get("overtime_confirm")),
-                    "check_out": (out.get("record") or {}).get("check_out"),
-                })
+        token = None
+        try:
+            token = await _bind_job_company(cid)
+        except Exception as exc:
+            import storage_router
+            storage_router.log_store_failure(cid, exc)
+            continue
+        try:
+            base = merge_schedule(company)
+            now = local_now(base)
+            today = now.strftime("%Y-%m-%d")
+            now_s = now.strftime("%H:%M")
+            emps = await _job_db().employees.find({"company_id": cid, "status": "active"}).to_list(300)
+            for emp in emps:
+                sch = merge_schedule(company, emp)
+                plan = await _job_db().shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
+                rec = await _job_db().attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
+                if not rec.get("check_in"):
+                    continue
+                end_hm = expected_checkout_hm(rec, sch, today, plan) or day_end_hm(sch, today, plan)
+                if not end_hm:
+                    continue
+                past_end = minutes_past_hm(end_hm, now_s) > 0
+                needs_retract = should_retract_auto_checkout(rec, end_hm=end_hm, now_hm=now_s)
+                if not past_end and not needs_retract:
+                    continue
+                if await _on_leave_today(emp["_id"], today, cid):
+                    continue
+                workplace = await workplace_for_employee(emp, company)
+                lt = normalize_location_tracking(emp.get("location_tracking"))
+                mode = location_mode_for(lt, workplace)
+                out = await process_auto_exit_overtime(
+                    emp, company, sch, rec,
+                    location_active=False,  # watcher: freshness from emp signal
+                    mode=mode, date=today, now_s=now_s,
+                )
+                if out.get("auto_checkout") or out.get("auto_checkout_retracted") or out.get("overtime_confirm"):
+                    results.append({
+                        "company_id": cid,
+                        "employee_id": emp["_id"],
+                        "employee_name": emp.get("full_name"),
+                        "auto_checkout": bool(out.get("auto_checkout")),
+                        "auto_checkout_retracted": bool(out.get("auto_checkout_retracted")),
+                        "overtime_confirm": bool(out.get("overtime_confirm")),
+                        "check_out": (out.get("record") or {}).get("check_out"),
+                    })
+        finally:
+            import storage_router
+            storage_router.reset_bound(token)
     return results
 
 
@@ -4770,7 +4810,7 @@ async def run_checkin_reminders(company_id: Optional[str] = None, now_utc: Optio
         ntype = "attendance_checkout_reminder" if kind == "checkout" else "attendance_checkin_reminder"
         if not emp.get("user_id") and not emp.get("_id"):
             return
-        await _notify.insert_notification(_db, _notify.notification_doc(
+        await _notify.insert_notification(_job_db(), _notify.notification_doc(
             emp["company_id"], ntype, title, message,
             link=link or "/mesai", user_id=emp.get("user_id"), employee_id=emp.get("_id"), roles=(),
         ))

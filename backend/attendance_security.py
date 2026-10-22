@@ -773,77 +773,100 @@ async def run_reminders(
     query = {"_id": company_id} if company_id else {}
     companies = await db.companies.find(query).to_list(500)
     sent = []
+    import storage_router
+
     for company in companies:
-        base = merge_schedule(company)
-        tz_name = base.get("timezone") or "Europe/Istanbul"
-        date, hm, weekday = local_clock(moment, tz_name)
-        employees = await db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(300)
-        for emp in employees:
-            sch = merge_schedule(company, emp)
-            cid = str(emp.get("company_id") or "").strip()
-            if not cid:
+        token = None
+        src = db
+        if storage_router.enabled():
+            try:
+                store = await storage_router.open_company_store(db, company.get("_id"))
+                token = storage_router.use_store(store)
+                src = store
+            except Exception as exc:
+                storage_router.log_store_failure(company.get("_id"), exc)
                 continue
-            plan = await db.shift_plans.find_one({"employee_id": emp["_id"], "date": date, "company_id": cid})
-            if not plan:
-                plan = await db.shift_plans.find_one({
-                    "employee_id": emp["_id"], "date": date, "company_id": {"$exists": False},
-                })
-            shift = shift_context(sch, weekday, plan)
-            rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": date, "company_id": cid}) or {}
-            if not rec:
-                rec = await db.attendance.find_one({
-                    "employee_id": emp["_id"], "date": date, "company_id": {"$exists": False},
-                }) or {}
-            on_leave = await _on_leave(db, emp["_id"], date, cid)
-            base_ok = day_reminder_eligible(
-                skip_check_in=bool(sch.get("skip_check_in") or emp.get("skip_check_in")),
-                on_leave=on_leave,
-                attendance_status=rec.get("status"),
-                shift_ok=bool(shift["eligible"]),
-            )
-            checked_in = bool(str(rec.get("check_in") or "").strip())
-            checked_out = bool(str(rec.get("check_out") or "").strip())
-            checkin_on = employee_reminder_on(
-                company_reminder_on(sch, "notify_checkin_reminder", True),
-                emp.get("notify_checkin_reminder"),
-            )
-            kind = checkin_reminder_kind(
-                hm, shift.get("start") or "",
-                checked_in=checked_in,
-                eligible=base_ok and checkin_on and bool(shift.get("start")),
-                window=window,
-            )
-            if kind:
-                key = f"remind-{kind}:{emp['_id']}:{date}"
-                if await claim_once(db, company["_id"], key):
-                    start = shift.get("start")
-                    if kind == "before":
-                        message = f"Mesainiz {start}’te başlıyor. Giriş ekranını açmak için bildirime dokunun."
-                    else:
-                        message = f"Mesai {start}’te başladı, giriş görünmüyor. Giriş yapmayı unutmayın."
-                    await send(
-                        emp, kind, CHECKIN_TITLE, message, CHECKIN_LINK,
-                    )
-                    sent.append({"employee_id": emp["_id"], "kind": kind, "date": date, "hm": hm, "timezone": tz_name})
-            checkout_on = employee_reminder_on(
-                company_reminder_on(sch, "notify_checkout_reminder", False),
-                emp.get("notify_checkout_reminder"),
-            )
-            if checkout_reminder_due(
-                hm, shift.get("end") or "",
-                checked_in=checked_in, checked_out=checked_out,
-                eligible=base_ok and checkout_on and bool(shift.get("end")),
-                window=window,
-            ) and checkout_reminder_target(emp, rec):
-                key = f"remind-out:{emp['_id']}:{date}"
-                if await claim_once(db, company["_id"], key):
-                    end = shift.get("end")
-                    await send(
-                        emp, "checkout", CHECKOUT_TITLE,
-                        f"Mesai bitiş saatiniz ({end}) geldi. Mesaim ekranını açabilirsiniz.",
-                        CHECKIN_LINK,
-                    )
-                    sent.append({"employee_id": emp["_id"], "kind": "checkout", "date": date, "hm": hm, "timezone": tz_name})
+        try:
+            sent.extend(await _remind_company(
+                src, company, merge_schedule, send, moment, window,
+            ))
+        finally:
+            storage_router.reset_bound(token)
+    return sent
+
+
+async def _remind_company(src, company, merge_schedule, send, moment, window) -> list:
+    sent = []
+    base = merge_schedule(company)
+    tz_name = base.get("timezone") or "Europe/Istanbul"
+    date, hm, weekday = local_clock(moment, tz_name)
+    employees = await src.employees.find({"company_id": company["_id"], "status": "active"}).to_list(300)
+    for emp in employees:
+        sch = merge_schedule(company, emp)
+        cid = str(emp.get("company_id") or "").strip()
+        if not cid:
+            continue
+        plan = await src.shift_plans.find_one({"employee_id": emp["_id"], "date": date, "company_id": cid})
+        if not plan:
+            plan = await src.shift_plans.find_one({
+                "employee_id": emp["_id"], "date": date, "company_id": {"$exists": False},
+            })
+        shift = shift_context(sch, weekday, plan)
+        rec = await src.attendance.find_one({"employee_id": emp["_id"], "date": date, "company_id": cid}) or {}
+        if not rec:
+            rec = await src.attendance.find_one({
+                "employee_id": emp["_id"], "date": date, "company_id": {"$exists": False},
+            }) or {}
+        on_leave = await _on_leave(src, emp["_id"], date, cid)
+        base_ok = day_reminder_eligible(
+            skip_check_in=bool(sch.get("skip_check_in") or emp.get("skip_check_in")),
+            on_leave=on_leave,
+            attendance_status=rec.get("status"),
+            shift_ok=bool(shift["eligible"]),
+        )
+        checked_in = bool(str(rec.get("check_in") or "").strip())
+        checked_out = bool(str(rec.get("check_out") or "").strip())
+        checkin_on = employee_reminder_on(
+            company_reminder_on(sch, "notify_checkin_reminder", True),
+            emp.get("notify_checkin_reminder"),
+        )
+        kind = checkin_reminder_kind(
+            hm, shift.get("start") or "",
+            checked_in=checked_in,
+            eligible=base_ok and checkin_on and bool(shift.get("start")),
+            window=window,
+        )
+        if kind:
+            key = f"remind-{kind}:{emp['_id']}:{date}"
+            if await claim_once(src, company["_id"], key):
+                start = shift.get("start")
+                if kind == "before":
+                    message = f"Mesainiz {start}’te başlıyor. Giriş ekranını açmak için bildirime dokunun."
+                else:
+                    message = f"Mesai {start}’te başladı, giriş görünmüyor. Giriş yapmayı unutmayın."
+                await send(
+                    emp, kind, CHECKIN_TITLE, message, CHECKIN_LINK,
+                )
+                sent.append({"employee_id": emp["_id"], "kind": kind, "date": date, "hm": hm, "timezone": tz_name})
+        checkout_on = employee_reminder_on(
+            company_reminder_on(sch, "notify_checkout_reminder", False),
+            emp.get("notify_checkout_reminder"),
+        )
+        if checkout_reminder_due(
+            hm, shift.get("end") or "",
+            checked_in=checked_in, checked_out=checked_out,
+            eligible=base_ok and checkout_on and bool(shift.get("end")),
+            window=window,
+        ) and checkout_reminder_target(emp, rec):
+            key = f"remind-out:{emp['_id']}:{date}"
+            if await claim_once(src, company["_id"], key):
+                end = shift.get("end")
+                await send(
+                    emp, "checkout", CHECKOUT_TITLE,
+                    f"Mesai bitiş saatiniz ({end}) geldi. Mesaim ekranını açabilirsiniz.",
+                    CHECKIN_LINK,
+                )
+                sent.append({"employee_id": emp["_id"], "kind": "checkout", "date": date, "hm": hm, "timezone": tz_name})
     return sent
 
 

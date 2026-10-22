@@ -35,6 +35,14 @@ logger = logging.getLogger("TamKobiERP")
 
 router = APIRouter(prefix="/api", tags=["event-notify"])
 _db = None
+
+
+def _outbox():
+    """Bağlı şirket deposu varsa kuyruk oradadır. Yoksa katalog db."""
+    import storage_router
+
+    base = storage_router.active_db(_db)
+    return base.notify_outbox
 _deps: Dict[str, Any] = {}
 _current_user: Optional[Callable[..., Awaitable[dict]]] = None
 
@@ -377,7 +385,9 @@ async def get_prefs(company_id: str) -> dict:
     cid = str(company_id or "").strip()
     if not cid:
         raise HTTPException(status_code=400, detail="Şirket seçilmedi.")
-    row = await _db.company_notify_prefs.find_one({"company_id": cid})
+    import storage_router
+
+    row = await storage_router.active_db(_db).company_notify_prefs.find_one({"company_id": cid})
     if not row:
         return default_prefs(cid)
     base = default_prefs(cid)
@@ -465,7 +475,9 @@ async def get_tenant_prefs(company_id: str) -> dict:
     if not cid or _db is None:
         return base
     try:
-        row = await _db.company_notify_tenant.find_one({"_id": f"cnt_{cid}", "company_id": cid})
+        import storage_router
+
+        row = await storage_router.active_db(_db).company_notify_tenant.find_one({"_id": f"cnt_{cid}", "company_id": cid})
     except Exception:
         logger.exception("tenant notify prefs read company=%s", cid)
         return base
@@ -748,7 +760,7 @@ async def _count_sent_since(company_id: str, since_iso: str) -> int:
         return len(logs)
     try:
         rows = await _to_list(
-            _db.notify_outbox.find({
+            _outbox().find({
                 "company_id": company_id,
                 "status": "sent",
                 "sent_at": {"$gte": since_iso},
@@ -782,7 +794,7 @@ async def notify_email_usage(company_id: str) -> dict:
             sent = [
                 {**r, "created_at": r.get("sent_at") or r.get("created_at")}
                 for r in await _to_list(
-                    _db.notify_outbox.find({
+                    _outbox().find({
                         "company_id": company_id,
                         "status": "sent",
                         "sent_at": {"$gte": d30},
@@ -794,7 +806,7 @@ async def notify_email_usage(company_id: str) -> dict:
             sent = []
     try:
         deferred = await _to_list(
-            _db.notify_outbox.find({
+            _outbox().find({
                 "company_id": company_id,
                 "status": "deferred",
             }),
@@ -1055,7 +1067,7 @@ async def _queue_outbox(
         doc["next_try_at"] = next_try_at
     if doc["status"] == "deferred":
         doc["deferred_at"] = now
-    await _db.notify_outbox.insert_one(doc)
+    await _outbox().insert_one(doc)
 
 
 async def _enqueue_order_outbox(
@@ -1091,9 +1103,9 @@ async def _enqueue_order_outbox(
     if mode in ("hourly", "daily"):
         doc["due_at"] = _due_for_digest(mode)
     try:
-        await _db.notify_outbox.insert_one(doc)
+        await _outbox().insert_one(doc)
     except Exception:
-        existing = await _db.notify_outbox.find_one({"_id": doc["_id"], "company_id": company_id})
+        existing = await _outbox().find_one({"_id": doc["_id"], "company_id": company_id})
         return bool(existing)
     return True
 
@@ -1144,9 +1156,9 @@ async def enqueue_morning_summary_email(
         "created_at": _now(),
     }
     try:
-        await _db.notify_outbox.insert_one(doc)
+        await _outbox().insert_one(doc)
     except Exception:
-        existing = await _db.notify_outbox.find_one({"_id": doc["_id"], "company_id": cid})
+        existing = await _outbox().find_one({"_id": doc["_id"], "company_id": cid})
         return "exists" if existing else "failed"
     return "queued"
 
@@ -1531,10 +1543,47 @@ async def maybe_gib_credits_low(company_id: str, balance: int, threshold: Option
     )
 
 
+async def _overdue_rows(src, cid: str, today: str):
+    return await src.invoices.find({
+        "company_id": cid,
+        "invoice_type": "sales",
+        "payment_status": {"$ne": "paid"},
+        "status": {"$nin": ["cancelled", "canceled", "void", "draft"]},
+        "due_date": {"$lt": today},
+    }, {"grand_total": 1, "paid_amount": 1, "invoice_number": 1, "due_date": 1}).to_list(500)
+
+
 async def run_receivable_overdue() -> dict:
     """Vadesi geçmiş satış faturaları özeti — admin/accountant (TYPE_ROLES)."""
+    import storage_router
+
     today = _today()
     sent = []
+    if storage_router.enabled():
+        async for cid, store in storage_router.iter_company_stores(_db):
+            token = storage_router.use_store(store)
+            try:
+                rows = await _overdue_rows(store, cid, today)
+                if not rows:
+                    continue
+                total = sum(max(0.0, float(r.get("grand_total") or 0) - float(r.get("paid_amount") or 0)) for r in rows)
+                title = f"{len(rows)} vadesi geçmiş alacak"
+                message = f"Toplam {_fmt_amount(total)}. Tahsilatları kontrol edin."
+                inv_id = str(rows[0].get("_id") or "") if len(rows) == 1 else ""
+                res = await notify_event(
+                    cid, "receivable_overdue", title, message,
+                    link=f"/invoices?open={quote(inv_id)}" if inv_id else "/invoices",
+                    ref_type="invoice" if inv_id else "receivable",
+                    ref_id=inv_id or cid,
+                    dedupe_key=f"receivable_overdue:{today}",
+                )
+                if res.get("status") not in ("skipped",):
+                    sent.append({"company_id": cid, **res})
+            except Exception as exc:
+                storage_router.log_store_failure(cid, exc)
+            finally:
+                storage_router.reset_bound(token)
+        return {"sent": len(sent), "items": sent, "checked_at": _now()}
     async for company in _db.companies.find({}, {"_id": 1, "name": 1}):
         cid = company["_id"]
         rows = await _db.invoices.find({
@@ -2401,12 +2450,15 @@ async def _to_list(cursor, limit: int = 500) -> List[dict]:
     return []
 
 
-async def _release_stale_sending() -> None:
+async def _release_stale_sending(company_id: str = "") -> None:
     cutoff = (datetime.now(timezone.utc) - STALE_SENDING_AFTER).isoformat()
+    query = {"status": "sending"}
+    if company_id:
+        query["company_id"] = company_id
     try:
         rows = await _to_list(
             # tenant-ok: zamanlayıcı, takılı sending satırlarını tüm şirketlerde tarar
-            _db.notify_outbox.find({"status": "sending"}),
+            _outbox().find(query),
             500,
         )
     except Exception:
@@ -2417,7 +2469,7 @@ async def _release_stale_sending() -> None:
         if claimed and claimed >= cutoff:
             continue
         try:
-            await _db.notify_outbox.update_one(
+            await _outbox().update_one(
                 {"_id": row["_id"], "status": "sending", "company_id": row.get("company_id")},
                 {"$set": {"status": "pending", "claim_id": None, "claimed_at": None}},
             )
@@ -2430,7 +2482,7 @@ async def _claim_pending(candidates: List[dict]) -> str:
     claim_id = str(uuid.uuid4())
     now = _now()
     patch = {"$set": {"status": "sending", "claim_id": claim_id, "claimed_at": now}}
-    coll = _db.notify_outbox
+    coll = _outbox()
     atomic = getattr(coll, "update_one_atomic", None)
     claim_status = {"$in": ["pending", "deferred"]}
     if not candidates:
@@ -2467,7 +2519,7 @@ async def _claim_pending(candidates: List[dict]) -> str:
 async def _load_claimed(claim_id: str, company_id: str) -> List[dict]:
     cid = str(company_id or "").strip()
     return await _to_list(
-        _db.notify_outbox.find({"claim_id": claim_id, "status": "sending", "company_id": cid}),
+        _outbox().find({"claim_id": claim_id, "status": "sending", "company_id": cid}),
         500,
     )
 
@@ -2475,7 +2527,7 @@ async def _load_claimed(claim_id: str, company_id: str) -> List[dict]:
 async def _update_claimed(rows: List[dict], claim_id: str, fields: dict) -> None:
     for row in rows:
         try:
-            await _db.notify_outbox.update_one(
+            await _outbox().update_one(
                 {"_id": row["_id"], "claim_id": claim_id, "company_id": row.get("company_id")},
                 {"$set": fields},
             )
@@ -2498,7 +2550,7 @@ async def _defer_rows(rows: List[dict], claim_id: str, next_try_at: Optional[str
     now = _now()
     for row in rows:
         try:
-            await _db.notify_outbox.update_one(
+            await _outbox().update_one(
                 {"_id": row["_id"], "claim_id": claim_id, "company_id": row.get("company_id")},
                 {"$set": {
                     "status": "deferred",
@@ -2527,7 +2579,7 @@ async def _retry_rows(rows: List[dict], claim_id: str, extra: Optional[dict] = N
             fields["claimed_at"] = None
             fields["next_try_at"] = (datetime.now(timezone.utc) + OUTBOX_RETRY_DELAY).isoformat()
         try:
-            await _db.notify_outbox.update_one(
+            await _outbox().update_one(
                 {"_id": row["_id"], "claim_id": claim_id, "company_id": row.get("company_id")},
                 {"$set": fields},
             )
@@ -2893,15 +2945,39 @@ async def _deliver_direct_customer_mail(company_id: str, rows: List[dict], claim
         return 0
 
 
-async def flush_notify_outbox(*, force: bool = False) -> dict:
+async def flush_notify_outbox(*, force: bool = False, company_id: str = "") -> dict:
     """Saatlik/günlük özet ve order_new gruplamasını claim ile işler."""
-    await _release_stale_sending()
+    import storage_router
+
+    if (
+        storage_router.enabled()
+        and _db is not None
+        and not company_id
+        and storage_router.current_store() is None
+    ):
+        flushed = 0
+        at = _now()
+        async for cid, store in storage_router.iter_company_stores(_db):
+            token = storage_router.use_store(store)
+            try:
+                part = await flush_notify_outbox(force=force, company_id=cid)
+                flushed += int(part.get("flushed") or 0)
+                at = part.get("at") or at
+            except Exception as exc:
+                storage_router.log_store_failure(cid, exc)
+            finally:
+                storage_router.reset_bound(token)
+        return {"flushed": flushed, "at": at}
+    await _release_stale_sending(company_id)
     now = _now_utc()
     now_iso = now.isoformat()
+    query = {"status": {"$in": ["pending", "deferred"]}}
+    if company_id:
+        query["company_id"] = company_id
     try:
         pending = await _to_list(
             # tenant-ok: saatlik özet işleyici tüm şirketlerin kuyruğunu tarar; gruplama company_id ile yapılır
-            _db.notify_outbox.find({"status": {"$in": ["pending", "deferred"]}}),
+            _outbox().find(query),
             500,
         )
     except Exception:
@@ -3175,7 +3251,7 @@ async def company_notify_mail_log(company_id: str, limit: int = 50) -> dict:
         })
     try:
         deferred_rows = await _to_list(
-            _db.notify_outbox.find({"company_id": cid, "status": "deferred"}),
+            _outbox().find({"company_id": cid, "status": "deferred"}),
             5000,
         )
     except Exception:

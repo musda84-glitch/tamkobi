@@ -737,10 +737,38 @@ def to_csv(items: List[dict]) -> str:
     return "\ufeff" + "\n".join(lines)
 
 
+async def _purge_expired_routed(db, *, now: Optional[datetime] = None) -> int:
+    """Bayrak açık: saklama süresi her şirketin kendi deposunda uygulanır."""
+    import storage_router
+
+    cutoff = _iso((now or _now()) - timedelta(days=RETENTION_DAYS))
+    deleted = 0
+    query = {"$or": [{"at": {"$lt": cutoff}}, {"expires_at": {"$lt": cutoff}}]}
+    async for cid, store in storage_router.iter_company_stores(db):
+        try:
+            scoped = {"company_id": cid, **query}
+            stale = await store[COLLECTION].find(scoped).to_list(5000)
+            for doc in stale:
+                try:
+                    await store[COLLECTION].delete_one({"_id": doc["_id"], "company_id": cid})
+                    deleted += 1
+                except Exception:
+                    logger.exception("company_audit purge %s", doc.get("_id"))
+        except Exception as exc:
+            storage_router.log_store_failure(cid, exc)
+    if deleted:
+        logger.info("company_audit purge: %s kayıt silindi", deleted)
+    return deleted
+
+
 async def purge_expired(db, *, now: Optional[datetime] = None) -> int:
     """1 yıldan eski kayıtları siler. Kullanıcı API'si bunu çağırmaz."""
     if db is None:
         return 0
+    import storage_router
+
+    if storage_router.enabled():
+        return await _purge_expired_routed(db, now=now)
     cutoff = _iso((now or _now()) - timedelta(days=RETENTION_DAYS))
     stale = await db[COLLECTION].find({"$or": [{"at": {"$lt": cutoff}}, {"expires_at": {"$lt": cutoff}}]}).to_list(5000)
     deleted = 0
