@@ -153,6 +153,7 @@ async def get_wallet(company_id: str) -> dict:
 
 async def _insert_welcome(company_id: str, wallet_id: str) -> None:
     try:
+        # tenant-ok: hoş geldin satırı cüzdan (lisans) başına tektir, şirket filtresi yok
         existing = await _db.gib_credit_ledger.find_one({"wallet_id": wallet_id, "type": "welcome"})
     except Exception:
         existing = None
@@ -217,6 +218,7 @@ async def _cursor_rows(cursor, limit: int = 100000) -> list:
 
 async def count_duplicate_consume_groups(db) -> int:
     """type=consume ve dolu invoice_id gruplarından birden fazla kaydı olanların sayısı."""
+    # tenant-ok: kurulum indeksi; consume grupları tüm şirketlerde sayılır
     cursor = db.gib_credit_ledger.find(
         {"type": "consume"},
         {"company_id": 1, "invoice_id": 1},
@@ -273,6 +275,7 @@ async def ensure_consume_index(db=None) -> None:
 
 
 async def count_duplicate_welcome_groups(db) -> int:
+    # tenant-ok: kurulum indeksi; hoş geldin grupları tüm cüzdanlarda sayılır
     cursor = db.gib_credit_ledger.find({"type": "welcome"}, {"wallet_id": 1})
     groups: Dict[str, int] = {}
     for row in await _cursor_rows(cursor):
@@ -326,6 +329,7 @@ async def ensure_welcome_index(db=None) -> None:
 
 
 async def count_duplicate_gift_requests(db) -> int:
+    # tenant-ok: kurulum indeksi; hediye istek grupları tüm şirketlerde sayılır
     cursor = db.gib_credit_ledger.find({"type": "gift"}, {"company_id": 1, "wallet_id": 1, "request_id": 1})
     groups: Dict[tuple, int] = {}
     for row in await _cursor_rows(cursor):
@@ -404,9 +408,9 @@ async def _insufficient_credits(bal: int, credits: int) -> HTTPException:
     )
 
 
-async def _rollback_consume_ledger(ledger_id: str) -> None:
+async def _rollback_consume_ledger(ledger_id: str, company_id: str) -> None:
     try:
-        await _db.gib_credit_ledger.delete_one({"_id": ledger_id})
+        await _db.gib_credit_ledger.delete_one({"_id": ledger_id, "company_id": company_id})
     except Exception:
         logger.exception("consume ledger rollback failed")
 
@@ -443,7 +447,7 @@ async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str
         {"$inc": {"balance": -credits}, "$set": {"updated_at": _now()}},
     )
     if int(getattr(wrote, "matched_count", 0) or 0) < 1:
-        await _rollback_consume_ledger(ledger["_id"])
+        await _rollback_consume_ledger(ledger["_id"], company_id)
         fresh = await get_wallet(company_id)
         raise await _insufficient_credits(int((fresh or {}).get("balance") or 0), credits)
     fresh = await _db.gib_wallets.find_one({"_id": w["_id"]}) or {}
