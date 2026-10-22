@@ -350,6 +350,13 @@ class TableCollection(SharedV2Collection):
         ).fetchone()
         return row is None
 
+    def _order_expr(self, field, token):
+        if field in self.spec.numeric:
+            # COALESCE sayıyı metne çevirir. DECIMAL kolon artan sırada NULL'u
+            # öne, azalan sırada sona alır; match_query ile aynıdır.
+            return self.spec.columns[field][0]
+        return super()._order_expr(field, token)
+
     def _search_expr(self, field, value, allow_equal: bool):
         if field in self.spec.numeric:
             return self._full_text(field)

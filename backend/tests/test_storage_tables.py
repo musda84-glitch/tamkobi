@@ -880,6 +880,202 @@ def test_text_bounds_on_amount_match_docs_v2(conn):
     _assert_text_bounds(report)
 
 
+_AMOUNT_ORDER = (
+    ("a", 5),
+    ("b", 12.5),
+    ("d", 100),
+    ("e", 0.1),
+    ("g", -3),
+)
+_NUMERIC_SORTS = (
+    ("orders", "total_amount", "order_number", "order_status", "order_date"),
+    ("invoices", "grand_total", "invoice_number", "status", "issue_date"),
+)
+_TEXT_SORTS = (
+    ("orders", "order_date", "order_status", "order_number"),
+    ("invoices", "issue_date", "status", "invoice_number"),
+)
+_TEXT_ORDER_ROWS = (
+    ("p", "2024-03-01", "open", "A-10"),
+    ("q", "2024-01-09", "closed", "A-2"),
+    ("r", "2024-01-10", "draft", "B-1"),
+    ("s", "2024-01-10 09:00:00", "Open", "a-3"),
+    ("t", "2024-12-01", "pending", "A-100"),
+)
+
+
+async def _sorted_ids(api, field, direction, skip=0, limit=None):
+    cursor = api.find({}).sort(field, direction)
+    if skip:
+        cursor = cursor.skip(skip)
+    if limit is not None:
+        cursor = cursor.limit(limit)
+    found = await cursor.to_list(20)
+    return [doc["_id"] for doc in found]
+
+
+async def _numeric_sort_parity(company):
+    report = {}
+    store = storage_shared_v2.get_store()
+    for name, field, number_field, status_field, date_field in _NUMERIC_SORTS:
+        docs = storage_shared_v2.collection_for(company, name)
+        real = storage_tables.collection_for(company, name)
+        for doc_id, amount in _AMOUNT_ORDER:
+            body = {
+                "_id": doc_id,
+                field: amount,
+                number_field: doc_id,
+                status_field: "open",
+                date_field: "2024-01-01",
+            }
+            await docs.insert_one(dict(body))
+            await real.insert_one(dict(body))
+
+        async def one(api, direction, field=field):
+            doc = await api.find_one({}, sort=[(field, direction)])
+            return None if doc is None else doc["_id"]
+
+        sides = {}
+        for label, direction, skip, limit in (
+            ("asc", 1, 0, None),
+            ("desc", -1, 0, None),
+            ("asc_limit", 1, 0, 3),
+            ("desc_limit", -1, 0, 3),
+            ("asc_page", 1, 1, 2),
+            ("desc_page", -1, 2, 2),
+        ):
+            sides[label] = (
+                await _sorted_ids(docs, field, direction, skip, limit),
+                await _sorted_ids(real, field, direction, skip, limit),
+            )
+        before = store.python_scans
+        real_desc = await _sorted_ids(real, field, -1, 0, 3)
+        scans = store.python_scans - before
+        sides["one_asc"] = (await one(docs, 1), await one(real, 1))
+        sides["one_desc"] = (await one(docs, -1), await one(real, -1))
+        sides["sql_desc_limit"] = real_desc
+        sides["scans"] = scans
+        report[name] = sides
+    return report
+
+
+def _assert_numeric_sort(report):
+    asc = ["g", "e", "a", "b", "d"]
+    desc = ["d", "b", "a", "e", "g"]
+    for name, sides in report.items():
+        assert sides["asc"][0] == asc, name
+        assert sides["desc"][0] == desc, name
+        assert sides["asc_limit"][0] == ["g", "e", "a"], name
+        assert sides["desc_limit"][0] == ["d", "b", "a"], name
+        assert sides["asc_page"][0] == ["e", "a"], name
+        assert sides["desc_page"][0] == ["a", "e"], name
+        assert sides["one_asc"][0] == "g", name
+        assert sides["one_desc"][0] == "d", name
+        assert sides["sql_desc_limit"] == ["d", "b", "a"], name
+        assert sides["scans"] == 0, name
+        for label, pair in sides.items():
+            if label in ("scans", "sql_desc_limit"):
+                continue
+            assert pair[1] == pair[0], (name, label, pair)
+
+
+def test_numeric_sort_matches_docs_v2(conn):
+    report = asyncio.run(_numeric_sort_parity("co-sort"))
+    _assert_numeric_sort(report)
+
+
+async def _numeric_null_placement(company):
+    report = {}
+    store = storage_shared_v2.get_store()
+    for name, field, number_field, status_field, date_field in _NUMERIC_SORTS:
+        real = storage_tables.collection_for(company, name)
+        for doc_id, amount in (("a", 5), ("g", -3), ("n", None)):
+            body = {
+                "_id": doc_id,
+                number_field: doc_id,
+                status_field: "open",
+                date_field: "2024-01-01",
+            }
+            if amount is not None:
+                body[field] = amount
+            await real.insert_one(body)
+        before = store.python_scans
+        report[name] = (
+            await _sorted_ids(real, field, 1),
+            await _sorted_ids(real, field, -1),
+            store.python_scans - before,
+        )
+    return report
+
+
+def _assert_numeric_null(report):
+    for name, (asc, desc, scans) in report.items():
+        assert asc == ["n", "g", "a"], (name, asc)
+        assert desc == ["a", "g", "n"], (name, desc)
+        assert scans == 0, name
+
+
+def test_numeric_nulls_sort_with_the_decimal_column(conn):
+    report = asyncio.run(_numeric_null_placement("co-nullsort"))
+    _assert_numeric_null(report)
+
+
+async def _text_column_sort_parity(company):
+    report = {}
+    for name, date_field, status_field, number_field in _TEXT_SORTS:
+        docs = storage_shared_v2.collection_for(company, name)
+        real = storage_tables.collection_for(company, name)
+        amount_field = "total_amount" if name == "orders" else "grand_total"
+        for doc_id, date_value, status, number in _TEXT_ORDER_ROWS:
+            body = {
+                "_id": doc_id,
+                date_field: date_value,
+                status_field: status,
+                number_field: number,
+                amount_field: 1,
+            }
+            await docs.insert_one(dict(body))
+            await real.insert_one(dict(body))
+        sides = {}
+        for field, label in (
+            (date_field, "date"),
+            (status_field, "status"),
+            (number_field, "number"),
+        ):
+            for direction, suffix in ((1, "asc"), (-1, "desc")):
+                key = f"{label}_{suffix}"
+                sides[key] = (
+                    await _sorted_ids(docs, field, direction),
+                    await _sorted_ids(real, field, direction),
+                )
+            sides[f"{label}_page"] = (
+                await _sorted_ids(docs, field, 1, 1, 2),
+                await _sorted_ids(real, field, 1, 1, 2),
+            )
+        report[name] = sides
+    return report
+
+
+def _assert_text_column_sort(report):
+    expected = {
+        "date_asc": ["q", "r", "s", "p", "t"],
+        "status_asc": ["s", "q", "r", "p", "t"],
+        "number_asc": ["p", "t", "q", "r", "s"],
+    }
+    for name, sides in report.items():
+        for key, ids in expected.items():
+            assert sides[key][0] == ids, (name, key, sides[key])
+            assert sides[key.replace("_asc", "_desc")][0] == list(reversed(ids)), name
+            assert sides[key.replace("_asc", "_page")][0] == ids[1:3], name
+        for label, pair in sides.items():
+            assert pair[1] == pair[0], (name, label, pair)
+
+
+def test_text_column_sort_matches_docs_v2(conn):
+    report = asyncio.run(_text_column_sort_parity("co-colsort"))
+    _assert_text_column_sort(report)
+
+
 async def _cached_amount_ids(store, company, query):
     found = await _bank(store, company).find(query).sort("_id", 1).to_list(10)
     return [doc["_id"] for doc in found]
@@ -1091,6 +1287,9 @@ def test_mariadb_datetime_case_collation_and_amount_index():
         )[0][0]
         assert float(kept) == 10.5
         _assert_text_bounds(asyncio.run(_text_bound_parity("co-text")))
+        _assert_numeric_sort(asyncio.run(_numeric_sort_parity("co-sort")))
+        _assert_numeric_null(asyncio.run(_numeric_null_placement("co-nullsort")))
+        _assert_text_column_sort(asyncio.run(_text_column_sort_parity("co-colsort")))
         other = pymysql.connect(
             host=parsed.hostname or "127.0.0.1",
             port=parsed.port or 3306,
