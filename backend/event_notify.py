@@ -43,6 +43,26 @@ def _outbox():
 
     base = storage_router.active_db(_db)
     return base.notify_outbox
+
+
+async def _outbox_for(company_id: str = ""):
+    """Satırın company_id'sine göre kuyruk.
+
+    İstek yolu depo bağlamaz. Bayrak açıkken yazı o şirketin deposuna gider.
+    Bayrak kapalıyken katalog db aynı kalır.
+    """
+    import storage_router
+
+    cid = str(company_id or "").strip()
+    current = storage_router.current_store()
+    if current is not None:
+        bound = str(getattr(current, "company_id", "") or "").strip()
+        if not cid or bound == cid:
+            return current.notify_outbox
+    if storage_router.enabled() and _db is not None and cid:
+        store = await storage_router.open_company_store(_db, cid)
+        return store.notify_outbox
+    return _outbox()
 _deps: Dict[str, Any] = {}
 _current_user: Optional[Callable[..., Awaitable[dict]]] = None
 
@@ -1067,7 +1087,7 @@ async def _queue_outbox(
         doc["next_try_at"] = next_try_at
     if doc["status"] == "deferred":
         doc["deferred_at"] = now
-    await _outbox().insert_one(doc)
+    await (await _outbox_for(company_id)).insert_one(doc)
 
 
 async def _enqueue_order_outbox(
@@ -1102,10 +1122,11 @@ async def _enqueue_order_outbox(
     }
     if mode in ("hourly", "daily"):
         doc["due_at"] = _due_for_digest(mode)
+    coll = await _outbox_for(company_id)
     try:
-        await _outbox().insert_one(doc)
+        await coll.insert_one(doc)
     except Exception:
-        existing = await _outbox().find_one({"_id": doc["_id"], "company_id": company_id})
+        existing = await coll.find_one({"_id": doc["_id"], "company_id": company_id})
         return bool(existing)
     return True
 
@@ -1155,10 +1176,11 @@ async def enqueue_morning_summary_email(
         "text": str(text or ""),
         "created_at": _now(),
     }
+    coll = await _outbox_for(cid)
     try:
-        await _outbox().insert_one(doc)
+        await coll.insert_one(doc)
     except Exception:
-        existing = await _outbox().find_one({"_id": doc["_id"], "company_id": cid})
+        existing = await coll.find_one({"_id": doc["_id"], "company_id": cid})
         return "exists" if existing else "failed"
     return "queued"
 
@@ -2945,12 +2967,18 @@ async def _deliver_direct_customer_mail(company_id: str, rows: List[dict], claim
         return 0
 
 
-async def flush_notify_outbox(*, force: bool = False, company_id: str = "") -> dict:
-    """Saatlik/günlük özet ve order_new gruplamasını claim ile işler."""
+async def flush_notify_outbox(*, force: bool = False, company_id: str = "", catalog: bool = False) -> dict:
+    """Saatlik/günlük özet ve order_new gruplamasını claim ile işler.
+
+    Bayrak açıkken önce her şirketin deposu, sonra katalog kuyruğu boşalır.
+    Katalog geçişi legacy satırları ve depoya yazılmadan kalmış satırları alır.
+    Claim durumu pending olmaktan çıktığı için aynı satır ikinci kez gitmez.
+    """
     import storage_router
 
     if (
         storage_router.enabled()
+        and not catalog
         and _db is not None
         and not company_id
         and storage_router.current_store() is None
@@ -2967,7 +2995,9 @@ async def flush_notify_outbox(*, force: bool = False, company_id: str = "") -> d
                 storage_router.log_store_failure(cid, exc)
             finally:
                 storage_router.reset_bound(token)
-        return {"flushed": flushed, "at": at}
+        part = await flush_notify_outbox(force=force, catalog=True)
+        flushed += int(part.get("flushed") or 0)
+        return {"flushed": flushed, "at": part.get("at") or at}
     await _release_stale_sending(company_id)
     now = _now_utc()
     now_iso = now.isoformat()

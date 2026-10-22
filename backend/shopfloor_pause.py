@@ -225,12 +225,14 @@ async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
     results = []
     q = {"_id": company_id} if company_id else {}
     async for company in db.companies.find(q):
-        cid = str(company.get("_id") or "").strip()
-        if not cid:
+        routed = storage_router.enabled()
+        raw_id = company.get("_id") if routed else company["_id"]
+        cid = str(raw_id or "").strip() if routed else raw_id
+        if routed and not cid:
             continue
         token = None
         src = db
-        if storage_router.enabled():
+        if routed:
             try:
                 store = await storage_router.open_company_store(db, cid)
                 token = storage_router.use_store(store)
@@ -246,8 +248,12 @@ async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
             emps = await src.employees.find({"company_id": cid, "status": "active"}).to_list(500)
             for emp in emps:
                 sch = att.merge_schedule(company, emp)
-                plan = await src.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
-                rec = await src.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
+                if not routed and not cid:
+                    plan = None
+                    rec = {}
+                else:
+                    plan = await src.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
+                    rec = await src.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
                 if not should_auto_pause_now(schedule=sch, rec=rec, date=today, plan=plan, now_hm=now_s):
                     continue
                 name = str(emp.get("full_name") or "").strip()

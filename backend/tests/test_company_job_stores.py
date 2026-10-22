@@ -566,3 +566,99 @@ async def _each_job(world: World, monkeypatch) -> None:
     license_rows = await db.license_reminders.find({}).to_list(20)
     assert len(license_rows) == 3
     assert CO_BAD not in {row.get("company_id") for row in license_rows}
+
+
+def test_flag_off_blank_company_id_still_auto_pauses(monkeypatch):
+    monkeypatch.delenv("STORAGE_ROUTER_ENABLED", raising=False)
+    storage_router.reset()
+    tenant_scope._MODE = "off"
+    db = MemDB()
+    attendance._db = db
+
+    async def boom(*_a, **_k):
+        raise AssertionError("bayrak kapalıyken depo açılmamalı")
+
+    monkeypatch.setattr(storage_router, "open_company_store", boom)
+    monkeypatch.setattr(shopfloor_pause, "should_auto_pause_now", lambda **_k: True)
+
+    async def run():
+        await db.companies.insert_one({"_id": "", "name": "Bos"})
+        await db.employees.insert_one({
+            "_id": "emp-blank", "company_id": "", "full_name": "Ali", "status": "active",
+        })
+        await db.work_orders.insert_one({
+            "_id": "wo-blank", "company_id": "", "status": "in_progress",
+            "operator_employee_id": "emp-blank", "operator_name": "Ali",
+        })
+        paused = await shopfloor_pause.run_auto_pause_work_orders()
+        assert len(paused) == 1
+        assert paused[0]["company_id"] == ""
+        row = await db.work_orders.find_one({"_id": "wo-blank", "company_id": ""})
+        assert row["status"] == "paused"
+
+    asyncio.run(run())
+
+
+def test_unbound_request_outbox_delivers_once_per_mode(world, monkeypatch):
+    asyncio.run(_unbound_outbox(world, monkeypatch))
+
+
+async def _unbound_outbox(world: World, monkeypatch) -> None:
+    assert storage_router.current_store() is None
+    delivered = []
+
+    async def _generic(_cid, _ev, rows, _claim):
+        delivered.extend(row["_id"] for row in rows)
+        return len(rows)
+
+    async def _batch(_cid, rows, _claim):
+        delivered.extend(row["_id"] for row in rows)
+        return len(rows)
+
+    monkeypatch.setattr(event_notify, "_deliver_generic", _generic)
+    monkeypatch.setattr(event_notify, "_deliver_order_batch", _batch)
+    monkeypatch.setattr(event_notify, "_deliver_morning_summary", _batch)
+    monkeypatch.setattr(
+        event_notify,
+        "effective_channel",
+        lambda *_a, **_k: {"email": True, "sms": False, "inapp": False, "digest": "instant"},
+    )
+
+    expected = []
+    for cid in GOOD:
+        assert storage_router.current_store() is None
+        await event_notify._queue_outbox(
+            cid, "bank_sync", title="t", message="m", link="",
+            ref_type=None, ref_id=None,
+            channels={"email": True, "sms": False}, digest="instant",
+            next_try_at="2000-01-01T00:00:00+00:00",
+        )
+        assert await event_notify._enqueue_order_outbox(
+            cid, f"ord-{cid}", channels={"email": True, "sms": False}, digest="instant",
+        ) is True
+        assert await event_notify.enqueue_morning_summary_email(
+            cid, emails=["a@example.test"], subject="s", html="<p>s</p>", text="s", day="2026-10-22",
+        ) == "queued"
+        rows = await world.find(cid, "notify_outbox", {"event": {"$in": ["bank_sync", "order_new", "morning_summary"]}})
+        assert len(rows) == 3
+        ids = [row["_id"] for row in rows]
+        expected.extend(ids)
+        if cid != CO_LEGACY:
+            for row_id in ids:
+                catalog = await world.catalog.notify_outbox.find({"_id": row_id}).to_list(5)
+                assert catalog == []
+
+    stray = "ob-stray-shared"
+    await world.catalog.notify_outbox.insert_one({
+        "_id": stray, "company_id": CO_SHARED, "event": "cash_approval",
+        "status": "pending", "digest": "instant", "due_at": "2000-01-01T00:00:00+00:00",
+        "channels": {"email": True, "sms": False}, "title": "t", "message": "m",
+    })
+    expected.append(stray)
+
+    first = await event_notify.flush_notify_outbox(force=True)
+    assert first["flushed"] == len(expected)
+    assert sorted(delivered) == sorted(expected)
+    second = await event_notify.flush_notify_outbox(force=True)
+    assert second["flushed"] == 0
+    assert sorted(delivered) == sorted(expected)

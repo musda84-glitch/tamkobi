@@ -893,8 +893,9 @@ class SharedV2Collection:
         expr = self._search_expr(field, prefix, allow_equal=True)
         if self.store.dialect == "mysql":
             like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            # Python '\\' SQL'de tek ters bölü olur; MariaDB tırnağı kaçırır ve 1064 verir.
             sql = (
-                f"({self._text_type_sql(field)} AND {expr} LIKE ? ESCAPE '\\' "
+                f"({self._text_type_sql(field)} AND {expr} LIKE ? ESCAPE '\\\\' "
                 "COLLATE utf8mb4_bin)"
             )
             return sql, [like], [field]

@@ -367,6 +367,7 @@ async def _morning_routed() -> None:
 
     now = datetime.now(TR_TZ)
     async for cid, store in storage_router.iter_company_stores(_db):
+        token = storage_router.use_store(store)
         try:
             st = await store.morning_summary_settings.find_one({"company_id": cid, "enabled": True})
             if not st:
@@ -375,6 +376,8 @@ async def _morning_routed() -> None:
                 await send_summary(cid, source=store)
         except Exception as exc:
             storage_router.log_store_failure(cid, exc)
+        finally:
+            storage_router.reset_bound(token)
 
 
 async def scheduler_loop():
