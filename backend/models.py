@@ -55,6 +55,10 @@ class Company(BaseDocument):
     logo_url: Optional[str] = None
     e_invoice_alias: Optional[str] = "urn:mail:defaultpk@gib.gov.tr"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Boş veya yok = legacy. Bu PR'da değiştirme ucu yok; yeni kayıt alanı yazmaz.
+    storage_mode: Optional[str] = None
+    # Dedicated DSN referansı. Düz metin saklanmaz; comm_service.encrypt mühürler. Okunmaz.
+    dedicated_dsn_ref: Optional[str] = None
 
 # Cari (Müşteri & Tedarikçi)
 class Contact(BaseDocument):
