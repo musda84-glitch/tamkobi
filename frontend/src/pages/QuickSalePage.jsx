@@ -31,7 +31,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { MISSING_RECORD } from "../utils/notificationTarget";
 import { usePosSession } from "../context/PosSessionContext";
 import { actionIsFree, isPendingApproval, mixedChange } from "../utils/posCashier";
-import { CameraScanner, ScanButton } from "../components/CameraScanner";
+import { ScanButton } from "../components/CameraScanner";
 import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
@@ -156,7 +156,6 @@ export default function QuickSalePage() {
   const [customerName, setCustomerName] = useState("Perakende Müşteri");
   const [busy, setBusy] = useState(false);
   const [lastReceipt, setLastReceipt] = useState(null);
-  const [showScanner, setShowScanner] = useState(false);
   const [manualKg, setManualKg] = useState("");
   const [scalePrompt, setScalePrompt] = useState(null);
   const [lotPicker, setLotPicker] = useState(null);
@@ -892,19 +891,17 @@ export default function QuickSalePage() {
           />
         </label>
         <ScanButton
-          continuous
           qtyEnabled
           qty={scanQty}
           onQtyChange={setScanQty}
           statusText={scanStatus}
-          label="Seri"
-          title="Seri kamera okuma — adet çarpan"
+          label="Kamera"
+          title="Barkod okut"
           className={`!rounded-lg shrink-0 ${btnSize}`}
           onScan={async (code) => {
             await applyScanCode(code, scanQty);
           }}
         />
-        <button type="button" onClick={() => setShowScanner(true)} className={`px-3 rounded-lg border border-slate-200 hover:bg-slate-50 ${btnSize}`}>Kamera</button>
         <div className={`flex items-center gap-1 border border-slate-200 rounded-lg px-2 ${btnSize}`}>
           <Scale className="w-4 h-4 text-slate-500" />
           <input value={manualKg} onChange={(e) => setManualKg(e.target.value)} placeholder={scaleSupported() ? "kg / tartı" : "kg"} className="w-24 outline-none bg-transparent" data-testid="pos-manual-kg" />
@@ -1051,20 +1048,6 @@ export default function QuickSalePage() {
           </div>
         </div>
       </div>
-
-      {showScanner && (
-        <CameraScanner
-          qtyEnabled
-          qty={scanQty}
-          onQtyChange={setScanQty}
-          statusText={scanStatus}
-          onScan={async (code) => {
-            setShowScanner(false);
-            await applyScanCode(code, scanQty);
-          }}
-          onClose={() => { setShowScanner(false); focusBarcode(); }}
-        />
-      )}
 
       {scalePrompt && (
         <ScalePromptModal

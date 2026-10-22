@@ -664,7 +664,8 @@ def test_wave1_baseline_keys_removed():
     assert len(_REMOVED) == 44
     kept = ("server.py", "create_contact_balance_installments", "installments", "insert_many")
     assert base[kept] == 1
-    assert ("server.py", "delete_notification", "notifications", "delete_one") in base
+    assert ("server.py", "delete_notification", "notifications", "delete_one") not in base
+    assert ("server.py", "delete_notification", "notifications", "find_one") not in base
     script = _BACKEND / "scripts" / "tenant_scope_baseline.py"
     proc = subprocess.run(
         [sys.executable, str(script), "--check"],

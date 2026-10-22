@@ -236,7 +236,7 @@ function mobilePrimaryAction(ord, gibLookup) {
 
 function OrdersB2BPageImpl({ staffMode = false }) {
   const serverPaging = isOrdersServerPagingEnabled();
-  const { activeCompany, can, feature } = useAuth();
+  const { activeCompany, can, feature, loading: authLoading, authenticated } = useAuth();
   const canDeleteOrder = can("/orders", "delete");
   const showCargoLabel = feature("order_cargo_label");
   const showMoreActions = feature("order_more_actions");
@@ -1712,7 +1712,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
 
   return (
     <div className="space-y-6" data-testid="orders-b2b-page">
-      {!companyId && <NoCompanyNotice />}
+      {authLoading === false && authenticated === true && !companyId && <NoCompanyNotice />}
       {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
       {shipOrder && <CreateShipmentModal order={shipOrder} companyId={activeCompanyId(activeCompany)} onClose={() => setShipOrder(null)} onDone={loadData} />}
       {cargoChangeOrder && (

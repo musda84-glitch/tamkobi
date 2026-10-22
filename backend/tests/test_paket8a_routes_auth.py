@@ -38,7 +38,7 @@ import migration  # noqa: E402
 import rbac  # noqa: E402
 import saas  # noqa: E402
 import server  # noqa: E402
-from mysql_store import match_query, new_upsert_doc  # noqa: E402
+from mysql_store import DuplicateKeyError, match_query, new_upsert_doc  # noqa: E402
 
 COMP_A = "comp-a"
 COMP_B = "comp-b"
@@ -57,17 +57,22 @@ def _run(coro):
 class MemCursor:
     def __init__(self, docs):
         self._docs = docs
+        self._limit = None
 
     def sort(self, key, direction=1):
         return self
 
     def limit(self, n):
+        self._limit = int(n)
         return self
 
     async def to_list(self, length=None):
         rows = copy.deepcopy(self._docs)
+        cap = self._limit
         if length is not None:
-            rows = rows[: int(length)]
+            cap = int(length) if cap is None else min(cap, int(length))
+        if cap is not None:
+            rows = rows[:cap]
         return rows
 
     def __aiter__(self):
@@ -85,9 +90,19 @@ class MemColl:
         self.name = name
         self.db = db
         self.docs = []
+        self.index_calls = []
 
     def find(self, query=None, projection=None):
         return MemCursor([d for d in self.docs if match_query(d, query or {})])
+
+    def aggregate(self, pipeline):
+        from mysql_store import aggregate_rows
+
+        return MemCursor(aggregate_rows(list(self.docs), pipeline))
+
+    async def create_index(self, keys, unique=False, **kwargs):
+        self.index_calls.append({"keys": keys, "unique": unique, **kwargs})
+        return keys
 
     async def find_one(self, query=None, projection=None):
         for doc in self.docs:
@@ -611,23 +626,27 @@ def test_webhook_signature_and_unknown_phone(api, caplog):
     assert APP_SECRET not in caplog.text
 
     wrong = _post_webhook(client, _wa_payload("pnA", "wamid.bad", "olmaz"), secret=APP_SECRET, header="sha256=" + ("0" * 64))
-    assert wrong.status_code == 401, wrong.text
+    assert wrong.status_code == 403, wrong.text
+    assert wrong.json()["detail"] == "Webhook imzası doğrulanamadı."
     assert not any(d.get("wa_message_id") == "wamid.bad" for d in db.whatsapp_logs.docs)
+    assert "olmaz" not in caplog.text
+    assert APP_SECRET not in caplog.text
+    assert WA_TOKEN not in caplog.text
 
     missing = _post_webhook(client, _wa_payload("pnA", "wamid.miss", "eksik"), sign=False)
-    assert missing.status_code == 401, missing.text
+    assert missing.status_code == 403, missing.text
     assert not any(d.get("wa_message_id") == "wamid.miss" for d in db.whatsapp_logs.docs)
+    assert "eksik" not in caplog.text
 
     caplog.clear()
     unsigned = _post_webhook(client, _wa_payload("pnOpen", "wamid.open", "IMZA-YOK-METIN"), sign=False)
-    assert unsigned.status_code == 200, unsigned.text
-    assert unsigned.json()["saved"] == 1
-    open_row = next(d for d in db.whatsapp_logs.docs if d.get("wa_message_id") == "wamid.open")
-    assert open_row["company_id"] == COMP_A
-    assert open_row["signature_verified"] is False
-    assert '"signature_verified": False' in caplog.text
+    assert unsigned.status_code == 403, unsigned.text
+    assert unsigned.json()["detail"] == "Webhook imzası doğrulanamadı."
+    assert not any(d.get("wa_message_id") == "wamid.open" for d in db.whatsapp_logs.docs)
     assert "IMZA-YOK-METIN" not in caplog.text
     assert APP_SECRET not in caplog.text
+    assert WA_TOKEN not in caplog.text
+    assert "verify-open" not in caplog.text
 
     unknown = _post_webhook(client, _wa_payload("pn-yok", "wamid.unknown", "kaybol"), sign=False)
     assert unknown.status_code == 200, unknown.text
@@ -645,3 +664,127 @@ def test_webhook_signature_and_unknown_phone(api, caplog):
     assert mixed.json()["saved"] == 1
     assert any(d.get("wa_message_id") == "wamid.mixA" and d["signature_verified"] is True for d in db.whatsapp_logs.docs)
     assert not any(d.get("wa_message_id") == "wamid.mixB" for d in db.whatsapp_logs.docs)
+
+
+PN_CLASH = "Bu WhatsApp telefon numarası kimliği (phone_number_id) başka bir şirkette kullanılıyor."
+
+
+def test_phone_number_id_is_unique_across_companies(api):
+    client, db, _graph_calls, _bh_calls = api
+    headers_b = _auth("user-b")
+    clash = client.put("/api/comm/whatsapp/settings", json={
+        "company_id": COMP_B,
+        "phone_number_id": "pnA",
+        "verify_token": "verify-b",
+    }, headers=headers_b)
+    assert clash.status_code == 409, clash.text
+    assert clash.json()["detail"] == PN_CLASH
+    assert next(d for d in db.whatsapp_settings.docs if d["_id"] == "setA")["phone_number_id"] == "pnA"
+    assert next(d for d in db.whatsapp_settings.docs if d["_id"] == "setB")["phone_number_id"] == "pnB"
+
+    own = client.put("/api/comm/whatsapp/settings", json={
+        "company_id": COMP_A,
+        "phone_number_id": "pnA",
+        "verify_token": "verify-a",
+    }, headers=_auth("user-a"))
+    assert own.status_code == 200, own.text
+    assert own.json()["phone_number_id"] == "pnA"
+
+    cleared_a = client.put("/api/comm/whatsapp/settings", json={
+        "company_id": COMP_A,
+        "phone_number_id": "",
+        "verify_token": "verify-a",
+    }, headers=_auth("user-a"))
+    assert cleared_a.status_code == 200, cleared_a.text
+    cleared_b = client.put("/api/comm/whatsapp/settings", json={
+        "company_id": COMP_B,
+        "phone_number_id": "",
+        "verify_token": "verify-b",
+    }, headers=headers_b)
+    assert cleared_b.status_code == 200, cleared_b.text
+    assert next(d for d in db.whatsapp_settings.docs if d["_id"] == "setA")["phone_number_id"] == ""
+    assert next(d for d in db.whatsapp_settings.docs if d["_id"] == "setB")["phone_number_id"] == ""
+
+
+def test_phone_number_id_unique_index_duplicate_is_409(api, caplog):
+    client, db, _graph_calls, _bh_calls = api
+    leaked_company = "RakipUnvan-57a6"
+    leaked_key = "pn-index-leak-57a6"
+    before = copy.deepcopy(db.whatsapp_settings.docs)
+
+    async def _raise_duplicate(query, update, upsert=False):
+        raise DuplicateKeyError(f"duplicate key phone_number_id={leaked_key} company={leaked_company}")
+
+    db.whatsapp_settings.update_one = _raise_duplicate
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()
+    res = client.put("/api/comm/whatsapp/settings", json={
+        "company_id": COMP_A,
+        "phone_number_id": "pn-yeni-57a6",
+        "verify_token": "verify-a",
+    }, headers=_auth("user-a"))
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == PN_CLASH
+    assert leaked_company not in res.text
+    assert leaked_key not in res.text
+    assert leaked_company not in caplog.text
+    assert leaked_key not in caplog.text
+    assert "pn-yeni-57a6" not in caplog.text
+    assert db.whatsapp_settings.docs == before
+
+
+def test_duplicate_phone_number_id_webhook_writes_nothing(api, caplog):
+    client, db, _graph_calls, _bh_calls = api
+    db.whatsapp_settings.docs.append({
+        "_id": "setDup",
+        "company_id": "comp-dup",
+        "phone_number_id": "pnA",
+        "verify_token": "verify-dup-secret",
+        "access_token_enc": comm_service.encrypt(WA_TOKEN),
+        "app_secret_enc": comm_service.encrypt(APP_SECRET),
+    })
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+    body = "GIZLI-ORTAK-METIN"
+    res = _post_webhook(client, _wa_payload("pnA", "wamid.dup", body), secret=APP_SECRET)
+    assert res.status_code == 200, res.text
+    assert res.json()["saved"] == 0
+    assert db.whatsapp_logs.docs == []
+    assert "WhatsApp webhook belirsiz eşleme sayacı: 1" in caplog.text
+    for secret in (body, "pnA", "comp-dup", COMP_A, COMP_B, APP_SECRET, APP_SECRET_B, WA_TOKEN, "verify-a", "verify-dup-secret", "905321112233"):
+        assert secret not in caplog.text
+
+
+def test_whatsapp_phone_number_id_index_skips_duplicates(api, caplog):
+    _client, db, _graph_calls, _bh_calls = api
+    db.whatsapp_settings.docs.append({
+        "_id": "setDup",
+        "company_id": "comp-dup",
+        "phone_number_id": "pnA",
+        "verify_token": "verify-dup-secret",
+    })
+    db.whatsapp_settings.docs.append({"_id": "emptyX", "company_id": "comp-empty", "phone_number_id": ""})
+    caplog.set_level(logging.WARNING, logger="TamKobiERP")
+    caplog.clear()
+    _run(server._ensure_whatsapp_phone_number_id_index())
+    assert "whatsapp_settings phone_number_id mükerrer grup: 1" in caplog.text
+    for secret in ("pnA", "pnB", "pnOpen", "comp-dup", COMP_A, COMP_B, "verify-a", "verify-dup-secret", "comp-empty"):
+        assert secret not in caplog.text
+    assert db.whatsapp_settings.index_calls == []
+
+
+def test_whatsapp_phone_number_id_index_when_unique(api, caplog):
+    _client, db, _graph_calls, _bh_calls = api
+    db.whatsapp_settings.docs.append({"_id": "emptyA", "company_id": COMP_A, "phone_number_id": ""})
+    db.whatsapp_settings.docs.append({"_id": "emptyB", "company_id": COMP_B, "phone_number_id": ""})
+    caplog.set_level(logging.WARNING, logger="TamKobiERP")
+    caplog.clear()
+    _run(server._ensure_whatsapp_phone_number_id_index())
+    assert "mükerrer grup" not in caplog.text
+    assert len(db.whatsapp_settings.index_calls) == 1
+    call = db.whatsapp_settings.index_calls[0]
+    assert call["keys"] == "phone_number_id"
+    assert call["unique"] is True
+    partial = call["partialFilterExpression"]["phone_number_id"]
+    assert partial["$type"] == "string"
+    assert partial["$gt"] == ""

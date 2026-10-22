@@ -1,4 +1,7 @@
 """Iteration-5 backend tests: e-commerce mapping/returns/dispatch, attendance, accountant, WhatsApp, invoice draft edit."""
+import hashlib
+import hmac
+import json
 import os
 import pytest
 import requests
@@ -229,12 +232,24 @@ class TestWhatsApp:
         assert ok.text == "123"
 
     def test_webhook_inbound_message(self, c):
+        secret = "iteration5-app-secret"
+        saved = c.put(
+            f"{BASE}/comm/whatsapp/settings",
+            json={"phone_number_id": "PN1", "access_token": "TEST_TOKEN", "verify_token": "nexus-test", "app_secret": secret},
+        )
+        assert saved.status_code == 200, saved.text
         payload = {"entry": [{"changes": [{"value": {
             "metadata": {"phone_number_id": "PN1"},
             "contacts": [{"wa_id": "905323405060", "profile": {"name": "Ali"}}],
             "messages": [{"from": "905323405060", "id": "wamid.TEST1", "type": "text", "text": {"body": "Merhaba"}}]
         }}]}]}
-        r = c.post(f"{BASE}/comm/whatsapp/webhook", json=payload)
+        raw = json.dumps(payload).encode("utf-8")
+        signature = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+        r = c.post(
+            f"{BASE}/comm/whatsapp/webhook",
+            data=raw,
+            headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
+        )
         assert r.status_code == 200, r.text
         assert r.json()["saved"] == 1
         logs = c.get(f"{BASE}/comm/whatsapp/logs").json()

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import hmac
 import json
 import subprocess
 import sys
@@ -20,6 +21,7 @@ _BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_BACKEND))
 sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 
+import comm_service  # noqa: E402
 import server  # noqa: E402
 import tenant_scope_allowlist as allowlist  # noqa: E402
 from dashboard_memdb import MemColl, MemDB  # noqa: E402
@@ -524,18 +526,25 @@ def test_wa_webhook_verify_uses_token_not_other_company(iso):
 
 def test_process_wa_webhook_writes_matched_company(iso):
     db = iso
+    secret = "wave26-wa-secret"
     _add(db, "whatsapp_settings", {"_id": "wa-1", "company_id": CO_B, "phone_number_id": "pn-b", "note": SECRET_NOTE})
-    _add(db, "whatsapp_settings", {"_id": "wa-1", "company_id": CO_A, "phone_number_id": "pn-a"})
+    _add(db, "whatsapp_settings", {
+        "_id": "wa-1", "company_id": CO_A, "phone_number_id": "pn-a",
+        "app_secret_enc": comm_service.encrypt(secret),
+    })
     payload = {"entry": [{"changes": [{"value": {
         "metadata": {"phone_number_id": "pn-a"},
         "messages": [{"from": "905551112233", "id": "m1", "type": "text", "text": {"body": "merhaba"}}],
         "contacts": [],
     }}]}]}
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    signature = "sha256=" + hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
     before = _digest(db, CO_B)
-    out = _run(server._process_wa_webhook(payload))
+    out = _run(server._process_wa_webhook(payload, raw_body=raw, signature=signature))
     assert out["saved"] == 1
     logs = _rows(db, "whatsapp_logs", CO_A)
     assert len(logs) == 1 and logs[0]["company_id"] == CO_A
+    assert logs[0]["signature_verified"] is True
     assert _rows(db, "whatsapp_logs", CO_B) == []
     assert _digest(db, CO_B) == before
 

@@ -321,6 +321,36 @@ def _start_leased_background(name: str, factory):
     asyncio.get_event_loop().create_task(_runner())
 
 
+_WA_PHONE_NUMBER_ID_PARTIAL = {"phone_number_id": {"$type": "string", "$gt": ""}}
+
+
+async def _ensure_whatsapp_phone_number_id_index() -> None:
+    """phone_number_id için kısmi tekil indeks. Mükerrer grup varsa yalnız sayıyı logla, indeksi kurma."""
+    try:
+        # tenant-ok: kurulum indeksi; phone_number_id şirketler arası tekil, şirket filtresi yok
+        rows = await db.whatsapp_settings.aggregate([
+            {"$match": _WA_PHONE_NUMBER_ID_PARTIAL},
+            {"$group": {"_id": "$phone_number_id", "n": {"$sum": 1}}},
+        ]).to_list(None)
+        dup_groups = 0
+        for row in rows or []:
+            key = row.get("_id")
+            if not isinstance(key, str) or not key:
+                continue
+            if (row.get("n") or 0) > 1:
+                dup_groups += 1
+        if dup_groups:
+            logger.warning("whatsapp_settings phone_number_id mükerrer grup: %s", dup_groups)
+            return
+        await db.whatsapp_settings.create_index(
+            "phone_number_id",
+            unique=True,
+            partialFilterExpression=_WA_PHONE_NUMBER_ID_PARTIAL,
+        )
+    except Exception:
+        logger.warning("whatsapp_settings phone_number_id index oluşturma atlandı")
+
+
 @app.on_event("startup")
 async def startup_event():
     try:
@@ -395,6 +425,7 @@ async def startup_event():
             filled_companies = await company_numbers.backfill_missing_company_numbers(db)
             if filled_companies:
                 logger.info("Assigned company_no to %s existing companies", filled_companies)
+            await _ensure_whatsapp_phone_number_id_index()
             try:
                 import phone_norm as _phone_norm
                 await _phone_norm.backfill_phone_norm(db)
@@ -405,6 +436,18 @@ async def startup_event():
                 await _einv.migrate_mislabelled_paper_invoices(db)
             except Exception as _paper_exc:
                 logger.warning("paper einvoice_state migration skipped: %s", _paper_exc)
+            try:
+                await gib_credits.ensure_consume_index(db)
+            except Exception:
+                logger.warning("gib_credit_ledger consume index skipped")
+            try:
+                await gib_credits.ensure_welcome_index(db)
+            except Exception:
+                logger.warning("gib_credit_ledger welcome index skipped")
+            try:
+                await gib_credits.ensure_gift_request_index(db)
+            except Exception:
+                logger.warning("gib_credit_ledger gift request index skipped")
             logger.info("TamKobi backend startup complete. Seed & indexes ready.")
             applog.log_event("startup", "backend ready", host=_mysql_cfg["host"], database=DB_NAME)
     except Exception as e:
@@ -609,60 +652,14 @@ class SsoExchangeRequest(BaseModel):
 @api_router.post("/auth/sso-exchange")
 async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response: Response):
     """One-time handoff code → host-only access_token (+ optional sa_return)."""
-    import json as _json
-    import auth_handoff
-    import host_audience as _ha
-    from auth_utils import SUPERADMIN_ACCESS_SECONDS, decode_access_payload
+    import sso_public
 
-    blob = await auth_handoff.consume_handoff(db, req.code)
-    try:
-        data = _json.loads(blob)
-    except Exception:
-        # Legacy: raw JWT only
-        data = {"access_token": blob, "sa_return": ""}
-    access = data.get("access_token") or ""
-    sa_ret = data.get("sa_return") or ""
-    if not access:
-        raise HTTPException(status_code=401, detail="Geçersiz handoff")
-    kind = _ha.host_kind(request)
-    try:
-        payload = decode_access_payload(access)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Geçersiz handoff token")
-    tok_aud = payload.get("aud")
-    if kind == _ha.KIND_APP and tok_aud != _ha.AUD_APP:
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    if kind == _ha.KIND_IK and tok_aud != _ha.AUD_IK:
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    if kind == _ha.KIND_YNT and tok_aud != _ha.AUD_YNT:
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    if kind == _ha.KIND_SITE and tok_aud not in (None, _ha.AUD_SITE):
-        raise HTTPException(status_code=401, detail="Handoff bu host için geçerli değil")
-    # Validate token is decodable + user exists (aud already checked against host)
-    user = await get_user_from_token(access, db)
-    max_age = SUPERADMIN_ACCESS_SECONDS if user.get("is_super_admin") else 7200
-    response.set_cookie(
-        key="access_token",
-        value=access,
-        **auth_cookie_kwargs(request, max_age=max_age),
-    )
-    if sa_ret and kind == _ha.KIND_APP:
-        response.set_cookie(
-            key="sa_return",
-            value=sa_ret,
-            **auth_cookie_kwargs(request, max_age=7200),
-        )
-    if kind == _ha.KIND_APP:
-        next_path = "/panel"
-    elif kind == _ha.KIND_IK:
-        next_path = "/personelim"
-    elif kind == _ha.KIND_YNT:
-        next_path = "/sistem/sirketler"
-    else:
-        next_path = "/sistem/sirketler"
+    done = await sso_public.complete_sso_exchange(db, req.code, request)
+    sso_public.apply_sso_cookies(response, request, done)
+    user = done["user"]
     return {
         "status": "success",
-        "redirect": next_path,
+        "redirect": done["redirect"],
         "user": {"id": user.get("id"), "email": user.get("email"), "is_super_admin": user.get("is_super_admin")},
     }
 
@@ -2781,20 +2778,17 @@ async def clear_notifications(company_id: Optional[str] = None, user: dict = Dep
     return {"status": "success", "deleted": int(getattr(r, "deleted_count", 0) or len(ids)), "message": "Bildirimler silindi."}
 
 @api_router.delete("/notifications/{notif_id}")
-async def delete_notification(notif_id: str, request: Request):
-    rec = await db.notifications.find_one({"_id": notif_id})
+async def delete_notification(notif_id: str, user: dict = Depends(get_current_user)):
+    cid = tenant_access.resolve_company_id(user, None)
+    rec = await db.notifications.find_one({"_id": notif_id, "company_id": cid})
     if not rec:
         raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
-    try:
-        user = await get_current_user(request)
-    except Exception:
-        user = None
     import notify as _notify
     if not _notify.notification_can_delete(rec, user):
         if not rec.get("is_read"):
             raise HTTPException(status_code=400, detail="Yalnız okunan bildirimler silinebilir.")
         raise HTTPException(status_code=403, detail="Bu bildirimi silemezsiniz.")
-    await db.notifications.delete_one({"_id": notif_id})
+    await db.notifications.delete_one({"_id": notif_id, "company_id": cid})
     return {"status": "success", "message": "Bildirim silindi."}
 
 @api_router.post("/notifications/push-token")
@@ -5339,11 +5333,12 @@ def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
     return _b2b_track_mod.build_b2b_tracking(o, sh)
 
 
-async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]], company_id: str) -> List[Dict[str, Any]]:
     """Portal siparişlerine üretim durumu + aşama listesi ekle."""
     if not orders:
         return orders
-    await _enrich_orders_production_flags(orders)
+    cid = str(company_id or "").strip()
+    await _enrich_orders_production_flags(orders, cid)
     candidates = [
         o for o in orders
         if not (o.get("is_held_cart") or o.get("is_active_cart") or o.get("order_status") in ("held_cart", "active_cart"))
@@ -5364,13 +5359,15 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
 
     pos_by_id: Dict[str, Dict[str, Any]] = {}
     if po_ids:
-        for po in await db.production_orders.find({"_id": {"$in": po_ids}}).to_list(len(po_ids) + 10):
+        for po in await db.production_orders.find(
+            {"_id": {"$in": po_ids}, "company_id": cid},
+        ).to_list(len(po_ids) + 10):
             pos_by_id[str(po["_id"])] = po
 
     pos_by_recipe: Dict[str, Dict[str, Any]] = {}
     if recipe_ids:
         for po in await db.production_orders.find(
-            {"recipe_id": {"$in": recipe_ids}, "status": {"$ne": "cancelled"}},
+            {"recipe_id": {"$in": recipe_ids}, "status": {"$ne": "cancelled"}, "company_id": cid},
         ).sort("created_at", -1).to_list(len(recipe_ids) * 3 + 20):
             rid = str(po.get("recipe_id") or "").strip()
             if rid and rid not in pos_by_recipe:
@@ -5379,7 +5376,9 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
     recipes_by_id: Dict[str, Dict[str, Any]] = {}
     need_recipe = [rid for rid in recipe_ids if rid]
     if need_recipe:
-        for r in await db.recipes.find({"_id": {"$in": need_recipe}}).to_list(len(need_recipe) + 10):
+        for r in await db.recipes.find(
+            {"_id": {"$in": need_recipe}, "company_id": cid},
+        ).to_list(len(need_recipe) + 10):
             recipes_by_id[str(r["_id"])] = r
 
     linked: Dict[str, Dict[str, Any]] = {}
@@ -5401,7 +5400,7 @@ async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Di
     wos_by_po: Dict[str, List[Dict[str, Any]]] = {}
     if all_po_ids:
         wos = await db.work_orders.find(
-            {"order_id": {"$in": all_po_ids}},
+            {"order_id": {"$in": all_po_ids}, "company_id": cid},
             {
                 "order_id": 1, "status": 1, "step_name": 1, "step_no": 1, "original_step_no": 1,
                 "station": 1, "step_note": 1, "note": 1, "material_name": 1,
@@ -6447,7 +6446,7 @@ async def b2b_portal(token: str):
     if not bs.get("show_stock", True):
         products = [{**p, "stock_quantity": None} for p in products]
     orders = clean_docs(await db.orders.find({"company_id": c["company_id"], "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}]}).sort("order_date", -1).to_list(200))
-    shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
+    shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"company_id": c["company_id"], "order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
     pidx = {p["id"]: p for p in products}
     for o in orders:
         _decorate_b2b_held_order(o)
@@ -6470,7 +6469,7 @@ async def b2b_portal(token: str):
                 it["category"] = p.get("category")
             if not it.get("manufacturer_code") and p.get("manufacturer_code"):
                 it["manufacturer_code"] = p.get("manufacturer_code")
-    await _enrich_b2b_orders_production(orders)
+    await _enrich_b2b_orders_production(orders, c["company_id"])
     orders = _sort_b2b_cart_orders(orders)
     if bs.get("show_statement", True):
         invoice_docs = await db.invoices.find(
@@ -6481,7 +6480,7 @@ async def b2b_portal(token: str):
     else:
         invoices = []
         statement = {"rows": [], "payments": []}
-    insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
+    insts = [_decorate_installment(x) for x in await db.installments.find({"company_id": c["company_id"], "contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
     ai_cart = bs.get("allow_ai_cart") is not False and await _addons.is_on(c["company_id"], "ai.b2b_cart")
     vpos_cfg = await db.vpos_configs.find_one({"company_id": c["company_id"]})
@@ -6616,10 +6615,10 @@ async def b2b_card_payment_status(token: str, intent_id: str):
     """Yalnız bu carinin B2B kart ödemesi. Başka cari 404."""
     c, _company, _bs, _cfg = await _b2b_portal_ready(token)
     import vpos.api as vpos_api
-    intent = await db.payment_intents.find_one({"_id": intent_id})
+    intent = await db.payment_intents.find_one({"_id": intent_id, "company_id": c["company_id"]})
     if not intent or str(intent.get("contact_id") or "") != str(c.get("_id") or "") or intent.get("purpose") not in ("b2b_collection", "b2b_order"):
         raise HTTPException(status_code=404, detail="Ödeme bulunamadı.")
-    fresh = await db.contacts.find_one({"_id": c["_id"]}) or c
+    fresh = await db.contacts.find_one({"_id": c["_id"], "company_id": c["company_id"]}) or c
     return {
         "status": intent.get("status") or "",
         "charge_amount": intent.get("amount") or "",
@@ -6668,7 +6667,7 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=blocked)
     new_hash = hash_password(new_pw)
     await db.contacts.update_one(
-        {"_id": c["_id"]},
+        {"_id": c["_id"], "company_id": c["company_id"]},
         {"$set": {"b2b_password_hash": new_hash, "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
     await b2b_identity.change_own_password(db, c, new_hash, current_plain=current)
@@ -6769,7 +6768,10 @@ async def b2b_upsert_active_cart(token: str, req: Dict[str, Any]):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     if existing:
-        await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
+        await db.orders.update_one(
+            {"_id": existing["_id"], "company_id": c["company_id"], "contact_id": c["_id"]},
+            {"$set": payload},
+        )
         doc = {**existing, **payload, "_id": existing["_id"]}
     else:
         order = Order(
@@ -6931,12 +6933,13 @@ async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = Non
         doc["payment_status"] = "paid"
         doc["paid_amount"] = float(payment.get("paid_amount") or 0)
         doc["payment_method"] = "card"
+    doc["company_id"] = c["company_id"]
     try:
         await db.orders.insert_one(doc)
     except Exception as exc:
         if not (order_id and _duplicate_order_insert(exc)):
             raise
-        existing = await db.orders.find_one({"_id": order_id})
+        existing = await db.orders.find_one({"_id": order_id, "company_id": c["company_id"]})
         if not existing:
             raise
         number = existing.get("order_number")
@@ -6944,7 +6947,7 @@ async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = Non
     await _clear_b2b_active_cart(c["company_id"], c["_id"])
     await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) sipariş verdi.", doc["_id"])
     await _attach_draft_invoice_on_intake(doc, source="b2b")
-    refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+    refreshed = await db.orders.find_one({"_id": doc["_id"], "company_id": c["company_id"]}) or doc
     return {"status": "success", "order": clean_doc(refreshed), "message": f"Siparişiniz alındı: {doc['order_number']}"}
 
 
@@ -7120,8 +7123,8 @@ async def _acquire_b2b_order_claim(intent_id: str, *, previous: Optional[str] = 
     return claim
 
 
-async def _link_existing_b2b_order(intent_id: str, sales_id: str) -> bool:
-    existing = await db.orders.find_one({"_id": sales_id})
+async def _link_existing_b2b_order(intent_id: str, sales_id: str, company_id: str) -> bool:
+    existing = await db.orders.find_one({"_id": sales_id, "company_id": company_id})
     if not existing:
         return False
     await db.payment_intents.update_one(
@@ -7133,9 +7136,16 @@ async def _link_existing_b2b_order(intent_id: str, sales_id: str) -> bool:
 
 async def finalize_b2b_order_payment(intent_id: str) -> None:
     """Ödenmiş b2b_order intent'inden tek sipariş. Banka order_id alanına dokunulmaz."""
+    # tenant-ok: finalize yalnız intent_id alır; company_id belgeden okunur, sonraki okumalar bu şirketle süzülür
     intent = await db.payment_intents.find_one({"_id": intent_id})
     if not intent:
         return
+    company_id = str(intent.get("company_id") or "")
+    if company_id:
+        scoped = await db.payment_intents.find_one({"_id": intent_id, "company_id": company_id})
+        if not scoped:
+            return
+        intent = scoped
     if str(intent.get("purpose") or "") != "b2b_order" or str(intent.get("status") or "") != "paid":
         return
     if intent.get("b2b_order_id") or intent.get("order_error") == "review":
@@ -7143,28 +7153,27 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
     if not intent.get("collection_tx_id"):
         return
     sales_id = f"b2bord_{intent_id}"
-    if await _link_existing_b2b_order(intent_id, sales_id):
+    if await _link_existing_b2b_order(intent_id, sales_id, company_id):
         return
     previous = str(intent.get("order_claim") or "")
     if previous and not _b2b_order_claim_stale(intent):
         return
     claim = await _acquire_b2b_order_claim(intent_id, previous=previous or None)
     if not claim:
-        if await _link_existing_b2b_order(intent_id, sales_id):
+        if await _link_existing_b2b_order(intent_id, sales_id, company_id):
             return
-        fresh = await db.payment_intents.find_one({"_id": intent_id}) or {}
+        fresh = await db.payment_intents.find_one({"_id": intent_id, "company_id": company_id}) or {}
         if fresh.get("b2b_order_id") or fresh.get("order_error") == "review":
             return
         if fresh.get("order_claim") and not _b2b_order_claim_stale(fresh):
             return
-        contact = await db.contacts.find_one({"_id": intent.get("contact_id")}) if intent.get("contact_id") else None
+        contact = await db.contacts.find_one({"_id": intent.get("contact_id"), "company_id": company_id}) if intent.get("contact_id") else None
         await _mark_b2b_order_review(
             intent_id,
-            str(intent.get("company_id") or ""),
+            company_id,
             (contact or {}).get("name") or "Cari",
         )
         return
-    company_id = str(intent.get("company_id") or "")
     contact_name = "Cari"
     try:
         draft = intent.get("order_draft")
@@ -7172,7 +7181,7 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
             raise HTTPException(status_code=409, detail="review")
         if not _same_money(draft.get("grand_total"), intent.get("ledger_amount")):
             raise HTTPException(status_code=409, detail="review")
-        contact = await db.contacts.find_one({"_id": intent.get("contact_id")})
+        contact = await db.contacts.find_one({"_id": intent.get("contact_id"), "company_id": company_id})
         if not contact or str(contact.get("company_id") or "") != company_id or not contact.get("b2b_enabled"):
             raise HTTPException(status_code=409, detail="review")
         contact_name = contact.get("name") or contact_name
@@ -7205,7 +7214,7 @@ async def finalize_b2b_order_payment(intent_id: str) -> None:
         await _mark_b2b_order_review(intent_id, company_id, contact_name)
     except Exception:
         logger.exception("b2b order finalize failed intent=%s", intent_id)
-        existing = await db.orders.find_one({"_id": sales_id})
+        existing = await db.orders.find_one({"_id": sales_id, "company_id": company_id})
         if existing:
             await db.payment_intents.update_one(
                 {"_id": intent_id, "order_claim": claim},
@@ -7246,8 +7255,15 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["notes"] = req.get("note") or ""
     if "customer_order_number" in req or "po_number" in req:
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
-    await db.orders.update_one({"_id": order_id}, {"$set": update})
-    updated = await db.orders.find_one({"_id": order_id})
+    order_q = {
+        "_id": order_id,
+        "company_id": c["company_id"],
+        "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}],
+    }
+    await db.orders.update_one(order_q, {"$set": update})
+    updated = await db.orders.find_one(order_q)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     if updated.get("order_status") not in ("held_cart", "active_cart"):
         await _propagate_order_commercial(updated, update.get("items") or [])
         await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
@@ -7263,9 +7279,7 @@ async def b2b_delete_order(token: str, order_id: str):
     if o.get("is_invoiced"):
         raise HTTPException(status_code=409, detail=FATURALASMIS_DELETE_MSG)
     if o.get("invoice_id"):
-        inv_q: Dict[str, Any] = {"_id": o["invoice_id"]}
-        if o.get("company_id"):
-            inv_q["company_id"] = o["company_id"]
+        inv_q: Dict[str, Any] = {"_id": o["invoice_id"], "company_id": c["company_id"]}
         inv = await db.invoices.find_one(inv_q)
         if inv and inv.get("status") == "draft" and not o.get("is_invoiced"):
             gid = str(uuid.uuid4())
@@ -7295,8 +7309,15 @@ async def b2b_cancel_request(token: str, order_id: str, req: Dict[str, Any] = No
         return {"status": "exists", "order": clean_doc(o), "message": "İptal talebiniz zaten iletildi."}
     req = req or {}
     cr = {"status": "pending", "reason": (req.get("reason") or "").strip(), "at": datetime.now(timezone.utc).isoformat()}
-    await db.orders.update_one({"_id": order_id}, {"$set": {"cancel_request": cr}})
-    updated = await db.orders.find_one({"_id": order_id})
+    order_q = {
+        "_id": order_id,
+        "company_id": c["company_id"],
+        "$or": [{"contact_id": c["_id"]}, {"customer_name": c.get("name")}],
+    }
+    await db.orders.update_one(order_q, {"$set": {"cancel_request": cr}})
+    updated = await db.orders.find_one(order_q)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     why = f" Gerekçe: {cr['reason']}" if cr["reason"] else ""
     await _notify_company(c["company_id"], "b2b_cancel_request", f"İptal talebi {updated.get('order_number')}", f"{c.get('name')} onaylı sipariş için iptal talebi gönderdi.{why}", order_id)
     return {"status": "success", "order": clean_doc(updated), "message": "İptal talebiniz iletildi."}
@@ -18961,6 +18982,9 @@ async def accountant_export(company_id: Optional[str] = None, month: Optional[st
     return Response(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={kind}_{month}.csv"})
 
 # ----------------- WHATSAPP BUSINESS (CLOUD API) -----------------
+_WA_PHONE_NUMBER_ID_CLASH = "Bu WhatsApp telefon numarası kimliği (phone_number_id) başka bir şirkette kullanılıyor."
+
+
 async def _wa_settings_payload(company_id: str) -> dict:
     s = await db.whatsapp_settings.find_one({"company_id": company_id}) or {}
     return {"company_id": company_id, "phone_number_id": s.get("phone_number_id", ""), "verify_token": s.get("verify_token", ""), "has_token": bool(s.get("access_token_enc")),
@@ -18982,6 +19006,11 @@ async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current
         clash = await db.whatsapp_settings.find_one({"verify_token": verify_token, "company_id": {"$ne": company_id}})
         if clash:
             raise HTTPException(status_code=409, detail="Bu doğrulama anahtarı başka bir şirkette kullanılıyor.")
+    phone_number_id = update["phone_number_id"]
+    if phone_number_id:
+        pn_clash = await db.whatsapp_settings.find_one({"phone_number_id": phone_number_id, "company_id": {"$ne": company_id}})
+        if pn_clash:
+            raise HTTPException(status_code=409, detail=_WA_PHONE_NUMBER_ID_CLASH)
     if req.get("access_token"):
         update["access_token_enc"] = comm_service.encrypt(req["access_token"])
     if not update["phone_number_id"]:
@@ -18990,7 +19019,11 @@ async def save_wa_settings(req: Dict[str, Any], user: dict = Depends(get_current
         update["app_secret_enc"] = ""
     elif str(req.get("app_secret") or "").strip():
         update["app_secret_enc"] = comm_service.encrypt(str(req.get("app_secret")).strip())
-    await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    try:
+        await db.whatsapp_settings.update_one({"company_id": company_id}, {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}}, upsert=True)
+    except DuplicateKeyError:
+        # İndeks mesajı anahtar ve rakip şirket taşıyabilir; genel 409 dışında hiçbir şey dönülmez veya loglanmaz.
+        raise HTTPException(status_code=409, detail=_WA_PHONE_NUMBER_ID_CLASH) from None
     return await _wa_settings_payload(company_id)
 
 @api_router.get("/comm/whatsapp/webhook")
@@ -19022,32 +19055,35 @@ async def _process_wa_webhook(payload: Dict[str, Any], *, raw_body: bytes = b"",
     ignored = 0
     known = 0
     rejected = 0
+    ambiguous = 0
     for entry in (payload or {}).get("entry", []) or []:
         for ch in entry.get("changes", []) or []:
             v = ch.get("value", {}) or {}
             pn_id = (v.get("metadata") or {}).get("phone_number_id")
+            if not pn_id:
+                ignored += 1
+                continue
             # tenant-ok: oturumsuz Meta webhook; phone_number_id ile şirket bulunur, sonraki yazılar bu company_id ile süzülür
-            s = await db.whatsapp_settings.find_one({"phone_number_id": pn_id}) if pn_id else None
+            matches = await db.whatsapp_settings.find({"phone_number_id": pn_id}).limit(2).to_list(2)
+            if len(matches) > 1:
+                ambiguous += 1
+                continue
+            s = matches[0] if matches else None
             company_id = str((s or {}).get("company_id") or "").strip()
             if not s or not company_id:
                 ignored += 1
                 continue
             known += 1
-            signature_verified = False
+            secret = ""
             if s.get("app_secret_enc"):
                 try:
                     secret = comm_service.decrypt(s.get("app_secret_enc") or "")
                 except Exception:
                     secret = ""
-                if not _wa_hub_signature_ok(secret, raw_body, signature):
-                    rejected += 1
-                    continue
-                signature_verified = True
-            else:
-                logger.warning(
-                    'WhatsApp webhook imzası doğrulanmadan kaydedildi {"signature_verified": False, "company_id": "%s"}',
-                    company_id,
-                )
+            if not _wa_hub_signature_ok(secret, raw_body, signature):
+                rejected += 1
+                continue
+            signature_verified = True
             names = {c.get("wa_id"): (c.get("profile") or {}).get("name") for c in v.get("contacts", [])}
             for m in v.get("messages", []) or []:
                 phone = comm_service.normalize_phone(m.get("from", ""))
@@ -19060,13 +19096,14 @@ async def _process_wa_webhook(payload: Dict[str, Any], *, raw_body: bytes = b"",
                                                    "to": phone or m.get("from"), "phone": phone or m.get("from"), "message": text, "direction": "inbound", "status": "received", "context": "whatsapp_api",
                                                    "wa_message_id": m.get("id"), "signature_verified": signature_verified, "created_at": datetime.now(timezone.utc).isoformat()})
                 saved += 1
-            if signature_verified:
-                logger.info(
-                    'WhatsApp webhook {"signature_verified": True, "company_id": "%s"}',
-                    company_id,
-                )
+            logger.info(
+                'WhatsApp webhook {"signature_verified": True, "company_id": "%s"}',
+                company_id,
+            )
+    if ambiguous:
+        logger.warning("WhatsApp webhook belirsiz eşleme sayacı: %s", ambiguous)
     if known and rejected == known:
-        raise HTTPException(status_code=401, detail="Webhook imzası doğrulanamadı.")
+        raise HTTPException(status_code=403, detail="Webhook imzası doğrulanamadı.")
     return {"status": "ok", "saved": saved, "ignored": ignored}
 
 
@@ -26601,6 +26638,11 @@ async def ai_order_confirm(req: Dict[str, Any], user: dict = Depends(get_current
         items = _order_item_models(rows)
         if not items or not o.get("customer_name"):
             continue
+        contact_id = o.get("contact_id")
+        if contact_id:
+            existing = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+            if not existing:
+                raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         channel = (o.get("channel") or "manual").lower()
         num = (o.get("order_number") or "").strip()
         if not num or await db.orders.find_one({"company_id": company_id, "order_number": num}):
@@ -26613,7 +26655,7 @@ async def ai_order_confirm(req: Dict[str, Any], user: dict = Depends(get_current
         await db.orders.insert_one(doc)
         await _ensure_order_contact(doc)
         await _attach_draft_invoice_on_intake(doc, source="import")
-        refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+        refreshed = await db.orders.find_one({"_id": doc["_id"], "company_id": company_id}) or doc
         created.append(clean_doc(refreshed))
     return {"status": "success", "created": len(created), "orders": created, "message": f"{len(created)} sipariş oluşturuldu."}
 
@@ -27073,7 +27115,7 @@ async def ai_invoice_confirm(req: Dict[str, Any], user: dict = Depends(get_curre
         )
         cd = c.to_mongo(); await db.contacts.insert_one(cd); contact_id = cd["_id"]; contact_name = c.name
     else:
-        cc = await db.contacts.find_one({"_id": contact_id})
+        cc = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
         if not cc:
             raise HTTPException(status_code=404, detail="Cari bulunamadı.")
         contact_name = cc["name"]
@@ -27108,7 +27150,7 @@ async def ai_invoice_confirm(req: Dict[str, Any], user: dict = Depends(get_curre
     elif inv_type == "sales" and d.get("invoice_number"):
         extra["external_invoice_number"] = d.get("invoice_number")
     if extra:
-        await db.invoices.update_one({"_id": created["id"]}, {"$set": extra})
+        await db.invoices.update_one({"_id": created["id"], "company_id": company_id}, {"$set": extra})
     label = "satış" if inv_type == "sales" else "alış"
     return {"status": "success", "invoice": created, "contact_id": contact_id, "message": f"Taslak {label} faturası oluşturuldu: {created['invoice_number']}"}
 
@@ -27710,3 +27752,15 @@ async def mobile_manifest():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await client.close_async()
+
+
+import sso_public as _sso_public
+
+# Import-time mount, then again at the end of startup so a SPA catch-all
+# registered while the app is loading cannot sit in front of GET /sso.
+_sso_public.mount_public_sso(app)
+
+
+@app.on_event("startup")
+async def _mount_public_sso_last():
+    _sso_public.mount_public_sso(app)

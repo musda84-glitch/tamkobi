@@ -47,7 +47,7 @@ export function SevkPickScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [session, setSession] = useState<PickSession | null>(null);
   const [code, setCode] = useState("");
-  const [scan, setScan] = useState<null | "once" | "serial">(null);
+  const [scan, setScan] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -318,10 +318,7 @@ export function SevkPickScreen() {
               />
             </View>
             <View style={{ flex: 1 }}>
-              <PrimaryButton title="Okut" onPress={() => setScan("once")} color={colors.indigo} testID="sevk-scan-btn" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <PrimaryButton title="Seri okut" onPress={() => setScan("serial")} color={colors.indigo} testID="sevk-scan-serial-btn" />
+              <PrimaryButton title="Okut" onPress={() => setScan(true)} color={colors.indigo} testID="sevk-scan-btn" />
             </View>
             <View style={{ flex: 1 }}>
               <PrimaryButton title="Ekle" onPress={() => submitScan(code)} loading={busy} color={colors.primary} testID="sevk-add-btn" />
@@ -567,12 +564,11 @@ export function SevkPickScreen() {
       ) : null}
 
       <BarcodeScannerModal
-        visible={!!scan}
-        continuous={scan === "serial"}
+        visible={scan}
         qtyEnabled
         qty={scanQty}
         onQtyChange={setScanQty}
-        onClose={() => setScan(null)}
+        onClose={() => setScan(false)}
         onScan={submitScan}
       />
     </Screen>

@@ -5,11 +5,14 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mysql_store import (
+    DuplicateKeyError,
     apply_update,
     chunk_list,
     document_from_upsert,
     has_unique_index,
     match_query,
+    unique_conflict,
+    unique_index_applies,
     mysql_settings_from_env,
     project_doc,
     sort_docs,
@@ -299,6 +302,25 @@ def test_chunk_list_covers_1883_products():
     assert [x for part in chunks for x in part] == ids
     assert chunk_list([], 200) == []
     assert chunk_list(["a"], 0) == [["a"]]
+
+
+def test_unique_index_applies_skips_blank_phone_number_id():
+    partial = {"phone_number_id": {"$type": "string", "$gt": ""}}
+    assert unique_index_applies({"phone_number_id": "pnA"}, partial) is True
+    assert unique_index_applies({"phone_number_id": ""}, partial) is False
+    assert unique_index_applies({"phone_number_id": None}, partial) is False
+    assert unique_index_applies({}, partial) is False
+    assert unique_index_applies({"phone_number_id": 12}, partial) is False
+    assert unique_index_applies({"email": "a@b.c"}, None) is True
+    indexes = [(("phone_number_id",), True, partial)]
+    blank = {"_id": "a", "phone_number_id": ""}
+    unique_conflict(dict(blank, _id="b"), [blank], indexes, "whatsapp_settings")
+    filled = {"_id": "c", "phone_number_id": "pnA"}
+    try:
+        unique_conflict(dict(filled, _id="d"), [filled], indexes, "whatsapp_settings")
+        raise AssertionError("dolu phone_number_id çakışmalı")
+    except DuplicateKeyError:
+        pass
 
 
 def test_has_unique_index_skips_non_unique_product_indexes():

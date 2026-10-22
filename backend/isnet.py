@@ -33,6 +33,7 @@ from xml.sax.saxutils import escape as xml_esc
 import httpx
 from fastapi import HTTPException
 
+import isnet_tls
 from buyer_tax import buyer_tax_choice
 from safe_error import as_text, mask_sensitive_text, public_provider_detail, provider_error_code
 
@@ -91,6 +92,35 @@ def declared_production_ips() -> List[str]:
 
 # Geriye dönük tek IP sabiti (birincil).
 DECLARED_PRODUCTION_IP = declared_production_ips()[0]
+
+
+def einvoice_source_ip() -> str:
+    """İşNet HTTPS çıkış adresi. Boşsa işletim sisteminin varsayılan rotası kullanılır.
+
+    EINVOICE_SOURCE_IP, yoksa ISNET_SOURCE_IP. Üretimde eth0 üzerinde hem
+    85.95.240.136 hem 85.95.240.184 varken varsayılan rota .136'dır. İşNet
+    yalnız .184'ü beyaz listedeyse EINVOICE_SOURCE_IP=85.95.240.184 yazılır;
+    aksi halde SOAP TLS zaman aşımına düşer.
+    """
+    raw = (os.environ.get("EINVOICE_SOURCE_IP") or os.environ.get("ISNET_SOURCE_IP") or "").strip()
+    if not raw:
+        return ""
+    parts = raw.split(".")
+    if len(parts) == 4 and all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+        return raw
+    logger.warning("EINVOICE_SOURCE_IP / ISNET_SOURCE_IP geçersiz; varsayılan rota kullanılacak")
+    return ""
+
+
+def _isnet_async_client(**kwargs: Any) -> httpx.AsyncClient:
+    """İşNet HTTP istemcisi.
+
+    Kaynak IP tanımlıysa soket o adresten bağlanır. TLS, certifi kökleri ve
+    depoya gömülü GlobalSign ara sertifikası ile doğrulanır.
+    """
+    return isnet_tls.open_async_client(httpx, einvoice_source_ip(), **kwargs)
+
+
 # İşNet test portalı (http://efatura.isnet.net.tr) — resmi deneme hesabı
 TEST_PORTAL_USER = "12345678901"
 TEST_PORTAL_PASSWORD = "1234"
@@ -424,7 +454,7 @@ def _company_request(settings: dict, tax: Optional[str] = None) -> Dict[str, str
 async def health_check(settings: dict) -> bool:
     url = f"{api_base(settings)}/api/Account/GetHealthCheck"
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=15.0, follow_redirects=True) as client:
             r = await client.get(url)
         if r.status_code >= 500:
             return False
@@ -457,7 +487,7 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
         {"Username": username, "Password": password},
     ]
     last_detail = "İşNet girişi başarısız."
-    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+    async with _isnet_async_client(timeout=25.0, follow_redirects=True) as client:
         for body in payloads:
             try:
                 r = await client.post(url, json=body)
@@ -595,7 +625,6 @@ async def isnet_ip_registration_info() -> Dict[str, Any]:
 def _sync_tls_probe(host: str, port: int, timeout: float) -> Dict[str, Any]:
     """TCP + TLS el sıkışması (İşNet SOAP WCF: ClientHello sonrası ServerHello gelmezse IP allow-list)."""
     import socket
-    import ssl as sslmod
 
     out: Dict[str, Any] = {
         "host": host,
@@ -619,7 +648,7 @@ def _sync_tls_probe(host: str, port: int, timeout: float) -> Dict[str, Any]:
         target = (ips[0], port) if ips else (host, port)
         sock = socket.create_connection(target, timeout=timeout)
         out["tcp_ok"] = True
-        ctx = sslmod.create_default_context()
+        ctx = isnet_tls.ssl_context()
         ssock = ctx.wrap_socket(sock, server_hostname=host)
         out["tls_ok"] = True
         out["tls_version"] = ssock.version()
@@ -1304,13 +1333,25 @@ async def _soap_call(
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction": soap_action_header(service_interface, action),
     }
+    quiet_credit = action == "GetCompanyBalance"
+
+    def _credit_http(status: int, detail: str, kind: str, upstream: Optional[int] = None) -> HTTPException:
+        exc = HTTPException(status_code=status, detail=detail)
+        exc.integrator_kind = kind
+        if upstream in (401, 403):
+            exc.integrator_http_status = upstream
+        return exc
+
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=timeout, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
     except httpx.RequestError as e:
+        if quiet_credit:
+            raise _credit_http(502, "Entegratör SOAP'a ulaşılamadı.", "network") from e
         logger.warning(
-            "İşNet SOAP unreachable (%s): %s",
+            "İşNet SOAP unreachable (%s) src=%s: %s",
             action,
+            einvoice_source_ip() or "-",
             mask_sensitive_text(_soap_unreachable_hint(e) or str(e))[:2000],
         )
         raise HTTPException(
@@ -1319,6 +1360,14 @@ async def _soap_call(
         ) from e
     text = _as_text(getattr(resp, "text", "") or "")
     if resp.status_code >= 400:
+        if quiet_credit:
+            kind = "ip" if resp.status_code in (401, 403) else "http"
+            raise _credit_http(
+                502,
+                "Entegratör SOAP yanıtı alınamadı.",
+                kind,
+                resp.status_code,
+            )
         raise _provider_http_exc(
             502,
             "Entegratör SOAP yanıtı alınamadı.",
@@ -1328,6 +1377,8 @@ async def _soap_call(
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
+        if quiet_credit:
+            raise _credit_http(502, "Entegratör SOAP yanıtı okunamadı.", "parse") from e
         logger.warning(
             "İşNet SOAP XML parse (%s): %s body=%s",
             action,
@@ -1340,6 +1391,8 @@ async def _soap_call(
         body = root
     fault = _find_text(body, "faultstring", "FaultString", "Message")
     if body is not None and any(_local(c.tag).lower() == "fault" for c in list(body)):
+        if quiet_credit:
+            raise _credit_http(502, "Entegratör SOAP hatası.", "fault")
         raise _provider_http_exc(
             502,
             "Entegratör SOAP hatası.",
@@ -1381,7 +1434,7 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
     elapsed_ms = 0
     t0 = time.time()
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=15.0, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
         elapsed_ms = int((time.time() - t0) * 1000)
         http_status = resp.status_code
@@ -1392,7 +1445,7 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
     rest_text = ""
     rest_status = None
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=10.0, follow_redirects=True) as client:
             rr = await client.get(f"{LIVE_API}/api/Account/GetHealthCheck")
         rest_status = rr.status_code
         rest_text = (rr.text or "")[:500]
@@ -1416,6 +1469,7 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
         f"http_status={http_status if http_status is not None else 'NONE (TLS/TCP, HTTP oluşmadı)'}\n"
         f"elapsed_ms={elapsed_ms}\n"
         f"error={error or '-'}\n"
+        f"soap_source_ip={einvoice_source_ip() or '-'}\n"
         f"soap_host={LIVE_SOAP_HOST}\n"
         f"soap_resolved_ip={', '.join(soap_probe.get('ips') or []) or '?'}\n"
         f"soap_tcp_ok={soap_probe.get('tcp_ok')}\n"
@@ -3358,7 +3412,7 @@ async def _http_get_invoice_pdf(settings: dict, key: str) -> bytes:
     # encodeURIComponent ile aynı: + / = bozulmasın (+ query'de boşluk sayılır)
     url = f"{api_base(settings)}/api/Invoice/GetInvoicePdf?key={quote(key, safe='')}"
     try:
-        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+        async with _isnet_async_client(timeout=90.0, follow_redirects=True) as client:
             r = await client.get(
                 url,
                 headers={
@@ -3796,7 +3850,7 @@ async def download_invoice_xml(
 
         url = f"{portal_url(settings).rstrip('/')}/DocumentViewer/DownloadXml?key={quote(key, safe='')}"
         try:
-            async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+            async with _isnet_async_client(timeout=90.0, follow_redirects=True) as client:
                 r = await client.get(
                     url,
                     headers={

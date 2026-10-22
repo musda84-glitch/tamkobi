@@ -227,3 +227,55 @@ test("Boş tutarda fazla ödeme uyarısı çıkmaz; hesaba yaz açıkken bakiyey
   expect(host.querySelector('[data-testid="emp-pay-line-effect-0"]')).toBeTruthy();
   expect(host.querySelector('[data-testid="emp-pay-preview"]').textContent).toMatch(/Fazla ödeme/);
 });
+
+test("ödeme sonrası makbuz kendiliğinden açılmaz; yazdır butonu açar", async () => {
+  const open = jest.spyOn(window, "open").mockImplementation(() => null);
+  const onClose = jest.fn();
+  const onDone = jest.fn();
+  axios.post.mockImplementation(() => Promise.resolve({
+    data: {
+      message: "Ödeme kaydedildi.",
+      receipt_id: "rcpt_abc",
+      receipt_no: "PM-2026-0007",
+      overpaid: true,
+      remaining_after: -2000,
+      lines: [{ kind: "salary", amount: 100, account_name: "Ziraat Bankası" }],
+    },
+  }));
+  render(
+    <EmployeePayModal
+      employee={{ id: "e1", full_name: "Ayşe Yılmaz", pay_start_date: "2026-01-01" }}
+      companyId="c1"
+      accounts={accounts}
+      card={card}
+      onClose={onClose}
+      onDone={onDone}
+    />,
+  );
+  act(() => setNative(host.querySelector('[data-testid="emp-pay-line-amount-0"]'), "100"));
+  await act(async () => {
+    host.querySelector('[data-testid="emp-pay-submit"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(open).not.toHaveBeenCalled();
+  const saved = host.querySelector('[data-testid="emp-pay-saved-modal"]');
+  expect(saved).not.toBeNull();
+  expect(saved.textContent).toContain("Ödeme kaydedildi");
+  expect(host.querySelector('[data-testid="emp-pay-saved-person"]').textContent).toContain("Ayşe Yılmaz");
+  expect(host.querySelector('[data-testid="emp-pay-saved-amount"]').textContent).toContain("100,00");
+  expect(host.querySelector('[data-testid="emp-pay-saved-account"]').textContent).toContain("Ziraat Bankası");
+  expect(host.querySelector('[data-testid="emp-pay-saved-no"]').textContent).toContain("PM-2026-0007");
+  expect(host.querySelector('[data-testid="emp-pay-modal"]')).toBeNull();
+  expect(host.querySelector('[data-testid="emp-pay-saved-overpay"]').textContent).toContain("sonraki maaştan düşülecek");
+  expect(onClose).not.toHaveBeenCalled();
+  expect(onDone).not.toHaveBeenCalled();
+  act(() => host.querySelector('[data-testid="emp-pay-saved-print"]').click());
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(open).toHaveBeenCalledWith("/api/personnel/receipts/rcpt_abc", "_blank", "noopener");
+  act(() => host.querySelector('[data-testid="emp-pay-saved-close"]').click());
+  expect(onDone).toHaveBeenCalledTimes(1);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  open.mockRestore();
+});

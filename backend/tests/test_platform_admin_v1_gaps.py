@@ -66,6 +66,7 @@ _NEW_SCOPES = (
     "admin.einvoice:read",
     "admin.einvoice:write",
     "admin.db:read",
+    "admin.reminders:write",
 )
 
 
@@ -618,6 +619,28 @@ def test_maintenance_on_requires_danger_and_gift_threshold(gap):
     assert gift_ok.json()["item"]["balance"] == gib_credits.WELCOME_CREDITS + 10 + 1001
 
 
+def test_gift_same_key_after_idempotency_ttl_does_not_double(gap):
+    client, db = gap
+    pub, secret = _full_key(db, name="gift-ttl")
+    path = "/api/platform/admin-v1/companies/comp_parent/gib-credits/gift"
+    body = {"credits": 10, "note": "deneme"}
+    first, _ = _send(client, secret, pub["id"], "POST", path, body, idem="gift-ttl-3a32")
+    assert first.status_code == 200, first.text
+    assert first.json()["item"]["balance"] == gib_credits.WELCOME_CREDITS + 10
+    db.idempotency_keys.docs.clear()
+    second, _ = _send(client, secret, pub["id"], "POST", path, body, idem="gift-ttl-3a32")
+    assert second.status_code == 200, second.text
+    assert second.json()["item"]["balance"] == gib_credits.WELCOME_CREDITS + 10
+    ledger = list(db.gib_credit_ledger.docs.values())
+    gifts = [row for row in ledger if row.get("type") == "gift"]
+    welcomes = [row for row in ledger if row.get("type") == "welcome"]
+    assert len(gifts) == 1
+    assert gifts[0]["request_id"] == "gift-ttl-3a32"
+    assert gifts[0]["credits"] == 10
+    assert len(welcomes) == 1
+    assert db.gib_wallets.docs["comp_parent"]["balance"] == gib_credits.WELCOME_CREDITS + 10
+
+
 def test_database_is_read_only(gap, monkeypatch):
     client, db = gap
     monkeypatch.setattr(db_relocate, "current_settings", lambda: {
@@ -721,6 +744,76 @@ def test_site_content_rejects_unknown_field(gap):
     )
     assert saved.status_code == 200, saved.text
     assert saved.json()["item"]["pages"]["home"]["hero_title"] == "Merhaba"
+    assert "faq" in saved.json()["item"]
+    assert saved.json()["item"]["features"] == {"lines": []}
+
+
+def test_both_slugs_save_faq_video_and_features(gap):
+    client, db = gap
+    writer, secret = _issue(db, [store.SCOPE_ADMIN_CMS_WRITE], name="cms-both")
+    reader, read_secret = _issue(db, [store.SCOPE_ADMIN_CMS_READ], name="cms-read")
+    body = {
+        "pages": {"home": {"hero_title": "Başlık", "hero_image": "https://cdn.example/ekran.png"}},
+        "faq": [{"question": "Soru", "answer": "Cevap", "order": 1, "published": True}],
+        "demo_video": {"url": "https://vimeo.com/12345", "published": False},
+        "features": {"lines": ["Satır bir"]},
+    }
+    for slug in ("tamkobi", "tai"):
+        path = f"/api/platform/admin-v1/sites/{slug}/content"
+        saved, _ = _send(client, secret, writer["id"], "PUT", path, body, idem=f"content-{slug}")
+        assert saved.status_code == 200, saved.text
+        item = saved.json()["item"]
+        assert item["pages"]["home"]["hero_title"] == "Başlık"
+        assert item["faq"][0]["question"] == "Soru"
+        assert item["demo_video"]["published"] is False
+        assert item["features"]["lines"] == ["Satır bir"]
+        got, _ = _send(client, read_secret, reader["id"], "GET", f"/api/platform/admin-v1/sites/{slug}", None, idem=None)
+        assert got.status_code == 200, got.text
+        assert got.json()["content"]["features"]["lines"] == ["Satır bir"]
+    assert db.sites.docs["site_tamkobi"]["theme"] == "vitrin"
+    audits = _audits(db, "admin_v1.write.site.content")
+    assert {row["target_id"] for row in audits} >= {"tamkobi", "tai"}
+
+
+def test_reminders_run_requires_scope_idempotency_and_audits(gap, monkeypatch):
+    client, db = gap
+    calls = {"n": 0}
+
+    async def fake_run():
+        calls["n"] += 1
+        return {"sent": [{"company": "Ust Firma", "kind": "d7"}], "count": 1, "checked_at": "2026-10-21T00:00:00+00:00"}
+
+    monkeypatch.setattr(saas_billing, "run_reminders", fake_run)
+    path = "/api/platform/admin-v1/reminders/run"
+    cms, cms_secret = _issue(db, [store.SCOPE_ADMIN_CMS_WRITE], name="not-reminders")
+    denied, _ = _send(client, cms_secret, cms["id"], "POST", path, {}, idem="rem-deny")
+    assert denied.status_code == 403
+    assert _detail(denied) == "Kapsam yetersiz"
+    assert calls["n"] == 0
+
+    pub, secret = _issue(db, [store.SCOPE_ADMIN_REMINDERS_WRITE], name="reminders")
+    missing, _ = _send(client, secret, pub["id"], "POST", path, {}, idem=None)
+    assert missing.status_code == 400
+    assert _detail(missing) == "Idempotency-Key gerekli"
+    assert calls["n"] == 0
+
+    first, _ = _send(client, secret, pub["id"], "POST", path, {}, idem="rem-1")
+    assert first.status_code == 200, first.text
+    assert first.json()["item"]["count"] == 1
+    assert first.json()["item"]["sent"][0]["kind"] == "d7"
+    replay, _ = _send(client, secret, pub["id"], "POST", path, {}, idem="rem-1")
+    assert replay.status_code == 200
+    assert replay.json() == first.json()
+    assert calls["n"] == 1
+    conflict, _ = _send(client, secret, pub["id"], "POST", path, {"extra": True}, idem="rem-1")
+    assert conflict.status_code == 409
+    assert calls["n"] == 1
+    rows = _audits(db, "admin_v1.write.reminders.run")
+    assert len(rows) == 1
+    assert rows[0]["target_type"] == "platform"
+    assert rows[0]["target_id"] == "reminders"
+    assert rows[0]["details"]["count"] == 1
+    assert rows[0]["details"]["idempotency"] is True
 
 
 def test_site_public_url_stays_on_https_danger_flow(gap):

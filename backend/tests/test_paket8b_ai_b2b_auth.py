@@ -808,3 +808,149 @@ def test_b2b_settings_hides_token_for_member_and_put_merges(api):
     contact = next(row for row in db.contacts.docs if row["_id"] == "ctA")
     assert contact["b2b_discount"] == 3
     assert contact["b2b_token"] == "tok-a"
+
+
+NOT_FOUND = "Cari bulunamadı."
+
+
+def _invoice_confirm_body(contact_id):
+    body = {
+        "invoice_type": "purchase",
+        "file_url": "/api/files/a/fatura.pdf",
+        "draft": {
+            "invoice_number": "TED-99",
+            "supplier": {"name": "Cari A", "tax_number": "1111111111"},
+            "items": [{
+                "name": "Urun A",
+                "quantity": 1,
+                "unit": "Adet",
+                "unit_price": 10,
+                "vat_rate": 20,
+                "discount_rate": 0,
+                "total": 12,
+            }],
+        },
+    }
+    if contact_id is not None:
+        body["contact_id"] = contact_id
+    return body
+
+
+def _order_confirm_body(contact_id, *, customer_name="Cari A", order_number="AI-OWN-1"):
+    order = {
+        "order_number": order_number,
+        "customer_name": customer_name,
+        "items": [{"product_name": "Urun A", "sku": "SKU-A", "quantity": 1, "unit_price": 10, "total": 10}],
+    }
+    if contact_id is not None:
+        order["contact_id"] = contact_id
+    return {"orders": [order]}
+
+
+def _rows(db, name, company_id):
+    return [copy.deepcopy(row) for row in getattr(db, name).docs if row.get("company_id") == company_id]
+
+
+def _docs_unchanged(before, after):
+    names = set(before) | set(after)
+    return all((before.get(name) or []) == (after.get(name) or []) for name in names)
+
+
+def test_ai_invoice_confirm_own_contact_creates_draft(api):
+    client, db, _calls = api
+    before_b = {name: _rows(db, name, COMP_B) for name in ("contacts", "invoices", "orders")}
+    balance_a = next(row for row in db.contacts.docs if row["_id"] == "ctA")["balance"]
+    response = _post_json(
+        client, "/api/ai/invoice-extract/confirm",
+        _invoice_confirm_body("ctA"),
+        headers=_auth("user-a"), company_id=COMP_A,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["contact_id"] == "ctA"
+    assert body["invoice"]["company_id"] == COMP_A
+    assert body["invoice"]["contact_name"] == "Cari A"
+    assert "oluşturuldu" in body["message"]
+    stored = next(row for row in db.invoices.docs if row.get("supplier_invoice_number") == "TED-99")
+    assert stored["company_id"] == COMP_A
+    assert stored["contact_id"] == "ctA"
+    assert stored["attachment_url"] == "/api/files/a/fatura.pdf"
+    assert stored["status"] == "draft"
+    assert next(row for row in db.contacts.docs if row["_id"] == "ctA")["balance"] == balance_a
+    assert _rows(db, "contacts", COMP_B) == before_b["contacts"]
+    assert _rows(db, "invoices", COMP_B) == before_b["invoices"]
+    assert _rows(db, "orders", COMP_B) == before_b["orders"]
+    assert "B-SECRET" not in response.text
+
+
+def test_ai_invoice_confirm_foreign_contact_is_404(api):
+    client, db, _calls = api
+    before = _snap(db)
+    missing = _post_json(
+        client, "/api/ai/invoice-extract/confirm",
+        _invoice_confirm_body("no-such-contact"),
+        headers=_auth("user-a"), company_id=COMP_A,
+    )
+    foreign = _post_json(
+        client, "/api/ai/invoice-extract/confirm",
+        _invoice_confirm_body("ctB"),
+        headers=_auth("user-a"), company_id=COMP_A,
+    )
+    assert missing.status_code == 404, missing.text
+    assert foreign.status_code == 404, foreign.text
+    assert missing.json()["detail"] == NOT_FOUND
+    assert foreign.json()["detail"] == NOT_FOUND
+    assert "B-SECRET" not in foreign.text
+    assert _docs_unchanged(before, _snap(db))
+    assert next(row for row in db.contacts.docs if row["_id"] == "ctB")["balance"] == -500
+    assert len([row for row in db.invoices.docs if row.get("company_id") == COMP_B]) == 1
+
+
+def test_ai_order_confirm_foreign_contact_is_404(api):
+    client, db, calls = api
+    before = _snap(db)
+    orders_before = len(db.orders.docs)
+    missing = _post_json(
+        client, "/api/ai/order-extract/confirm",
+        _order_confirm_body("no-such-contact", order_number="AI-MISS"),
+        headers=_auth("user-a"), company_id=COMP_A,
+    )
+    foreign = _post_json(
+        client, "/api/ai/order-extract/confirm",
+        _order_confirm_body("ctB", customer_name="B-SECRET", order_number="AI-HACK"),
+        headers=_auth("user-a"), company_id=COMP_A,
+    )
+    assert missing.status_code == 404, missing.text
+    assert foreign.status_code == 404, foreign.text
+    assert missing.json()["detail"] == NOT_FOUND
+    assert foreign.json()["detail"] == NOT_FOUND
+    assert "B-SECRET" not in foreign.text
+    assert _docs_unchanged(before, _snap(db))
+    assert len(db.orders.docs) == orders_before
+    assert not any(row.get("order_number") == "AI-HACK" for row in db.orders.docs)
+    foreign_order = next(row for row in db.orders.docs if row["_id"] == "oB")
+    assert foreign_order["order_status"] == "pending"
+    assert foreign_order["company_id"] == COMP_B
+    assert next(row for row in db.contacts.docs if row["_id"] == "ctB")["balance"] == -500
+    assert calls["orders"] == 0
+
+
+def test_ai_order_confirm_without_contact_id_still_creates(api):
+    client, db, _calls = api
+    before_b = {name: _rows(db, name, COMP_B) for name in ("contacts", "invoices", "orders")}
+    response = _post_json(
+        client, "/api/ai/order-extract/confirm",
+        _order_confirm_body(None, order_number="AI-NO-CONTACT"),
+        headers=_auth("user-a"), company_id=COMP_A,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == ORDER_CONFIRM_KEYS
+    assert body["created"] == 1
+    created = next(row for row in db.orders.docs if row.get("order_number") == "AI-NO-CONTACT")
+    assert created["company_id"] == COMP_A
+    assert created["customer_name"] == "Cari A"
+    assert _rows(db, "contacts", COMP_B) == before_b["contacts"]
+    assert _rows(db, "invoices", COMP_B) == before_b["invoices"]
+    assert _rows(db, "orders", COMP_B) == before_b["orders"]
