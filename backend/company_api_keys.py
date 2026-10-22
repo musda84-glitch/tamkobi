@@ -5,12 +5,17 @@ en az 32 bayt rastgele değerdir. Veritabanında yalnız SHA-256 özeti durur;
 düz anahtar oluşturma ve yenileme yanıtında bir kez döner. Karşılaştırma
 ``hmac.compare_digest`` ile sabit zamanlıdır.
 
+Anahtarın kendi kapsamı vardır (``cari|stok|fiyat|fatura`` → ``none|read``).
+Varsayılan hepsi ``none``. Yazma kapsamı, yazan uç gelene kadar reddedilir.
+Bağlantı isteği bu anahtarla kurulmaz; davet kodu ``company_links`` içindedir.
+
 Hash deseni ``platform_store._sha256_hex`` ile aynıdır. Şirket erişimi
 ``saas.user_may_access_company`` ve ``saas.companies_on_license`` ile doğrulanır.
 """
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -32,12 +37,15 @@ logger = logging.getLogger("tamkobi.company_api")
 router = APIRouter(prefix="/api")
 
 KEY_PREFIX = "tk_live_"
+INVITE_PREFIX = "tk_inv_"
 KEY_RANDOM_BYTES = 32
 KEY_RATE_LIMIT = 60
 IP_RATE_LIMIT = 120
 LINK_RATE_LIMIT = 30
+SCOPE_NAMES = ("cari", "stok", "fiyat", "fatura")
+SCOPE_LEVELS = ("none", "read")
 _DUMMY_HASH = _sha256_hex("tamkobi-company-api-key-dummy")
-_KEY_IN_LOG = re.compile(r"tk_live_[A-Za-z0-9_\-]{8,}")
+_SECRET_IN_LOG = re.compile(r"tk_(?:live|inv)_[A-Za-z0-9_\-]{8,}")
 
 _db = None
 _current_user = None
@@ -48,9 +56,16 @@ def _redact_message(record: logging.LogRecord) -> None:
         rendered = record.getMessage()
     except Exception:
         return
-    if "tk_live_" not in rendered:
+    if "tk_live_" not in rendered and "tk_inv_" not in rendered:
         return
-    record.msg = _KEY_IN_LOG.sub("tk_live_[gizli]", rendered)
+
+    def _hide(match: re.Match) -> str:
+        token = match.group(0)
+        if token.startswith(INVITE_PREFIX):
+            return "tk_inv_[gizli]"
+        return "tk_live_[gizli]"
+
+    record.msg = _SECRET_IN_LOG.sub(_hide, rendered)
     record.args = ()
 
 
@@ -81,6 +96,43 @@ def init(db, current_user_dep=None) -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def empty_scopes() -> dict:
+    return {name: "none" for name in SCOPE_NAMES}
+
+
+def scope_view(raw: object) -> dict:
+    """Kayıtlı kapsam. read dışında her düzey none sayılır; yazma okuma vermez."""
+    out = empty_scopes()
+    if not isinstance(raw, dict):
+        return out
+    for name in SCOPE_NAMES:
+        level = str(raw.get(name) or "none").strip().lower()
+        if level == "read":
+            out[name] = "read"
+    return out
+
+
+def normalize_scopes(raw: object) -> dict:
+    """İstek gövdesi. Yazma, uç desteklenene kadar 400."""
+    if raw is None:
+        return empty_scopes()
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="İzinler nesne olmalı.")
+    out = {}
+    for name in SCOPE_NAMES:
+        level = str(raw.get(name) or "none").strip().lower()
+        if level == "write":
+            raise HTTPException(status_code=400, detail="Yazma izni henüz desteklenmiyor.")
+        if level not in SCOPE_LEVELS:
+            raise HTTPException(status_code=400, detail="İzin düzeyi none veya read olmalı.")
+        out[name] = level
+    return out
+
+
+def scope_allows_read(raw: object, kind: str) -> bool:
+    return scope_view(raw).get(kind) == "read"
 
 
 def new_api_key() -> str:
@@ -119,6 +171,7 @@ def public_key_info(doc: dict) -> dict:
     return {
         "prefix": doc.get("key_prefix") or KEY_PREFIX,
         "last4": doc.get("key_last4") or "",
+        "scopes": scope_view(doc.get("scopes")),
         "created_at": doc.get("created_at"),
         "last_used_at": doc.get("last_used_at"),
         "last_used_by": doc.get("last_used_by"),
@@ -130,16 +183,20 @@ def _revealed(doc: dict, secret: str) -> dict:
 
 
 async def ensure_indexes(db) -> None:
-    """key_hash benzersiz; şirket başına bir anahtar; bağlantı çifti benzersiz.
+    """key_hash, davet kodu özeti ve bağlantı çifti benzersiz.
 
-    Sunucu açılışında kurulur. STARTUP_INDEXES canlı meta_indexes anlık
+    Benzersiz indeks hatası burada yutulmaz. Açılış kaydı server.py içinde
+    ``logger.exception`` ile düşer. STARTUP_INDEXES canlı meta_indexes anlık
     görüntüsüdür; süreç bu kodla bir kez açılmadan oraya yazılmaz.
     """
     keys = getattr(db, "company_api_keys", None)
     links = getattr(db, "company_links", None)
+    invites = getattr(db, "company_link_invites", None)
     if keys is not None and hasattr(keys, "create_index"):
         await keys.create_index("key_hash", unique=True)
         await keys.create_index("company_id", unique=True)
+    if invites is not None and hasattr(invites, "create_index"):
+        await invites.create_index("code_hash", unique=True)
     if links is not None and hasattr(links, "create_index"):
         await links.create_index([("from_company", 1), ("to_company", 1)], unique=True)
 
@@ -211,24 +268,25 @@ async def _audit(company_id: str, user: Optional[dict], action: str, summary: st
 
 
 async def bump_rate(bucket: str, limit: int) -> bool:
-    """Sayaç limitin altındayken artar. Dolu kova artmaz. True: istek geçebilir."""
+    """Sayaç limitin altındayken tek atomik koşullu güncelleme ile artar.
+
+    Dolu kova artmaz. Kova yoksa sayaç 0 ile açılır; artış
+    ``count < limit`` koşuluyla ``update_one_atomic`` içindedir.
+    """
     coll = _db.company_api_rate
-    doc = await coll.find_one({"_id": bucket})
-    count = int((doc or {}).get("count") or 0)
-    if count >= int(limit):
-        return False
     now = _now_iso()
-    if doc is None:
+    limit = int(limit)
+    existing = await coll.find_one({"_id": bucket})
+    if existing is None:
         try:
-            await coll.insert_one({"_id": bucket, "count": 1, "updated_at": now})
-            return True
+            await coll.insert_one({"_id": bucket, "count": 0, "updated_at": now})
         except DuplicateKeyError:
             pass
-    await coll.update_one(
-        {"_id": bucket},
+    res = await coll.update_one_atomic(
+        {"_id": bucket, "count": {"$lt": limit}},
         {"$inc": {"count": 1}, "$set": {"updated_at": now}},
     )
-    return True
+    return int(getattr(res, "matched_count", 0) or 0) == 1
 
 
 def _minute() -> int:
@@ -319,6 +377,7 @@ async def _insert_key(company_id: str, secret: str, user: dict) -> dict:
         "last_used_by": None,
         "revoked_at": None,
         "rotated_at": None,
+        "scopes": empty_scopes(),
     }
     try:
         await _db.company_api_keys.insert_one(doc)
@@ -327,14 +386,29 @@ async def _insert_key(company_id: str, secret: str, user: dict) -> dict:
     return doc
 
 
-async def _replace_secret(existing: dict, secret: str, user: dict) -> dict:
+async def _json_body(request: Request) -> dict:
+    raw = await request.body()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Geçersiz istek.")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Geçersiz istek.")
+    return data
+
+
+async def _replace_secret(existing: dict, secret: str, user: dict, *, reset_scopes: bool = False) -> dict:
     now = _now_iso()
     fields = _key_fields(existing.get("company_id") or "", secret, user, created_at=now)
+    if reset_scopes:
+        fields["scopes"] = empty_scopes()
     await _db.company_api_keys.update_one(
         {"_id": existing["_id"], "company_id": existing.get("company_id")},
         {"$set": fields},
     )
-    return {**existing, **fields}
+    return {**existing, **fields, **({"scopes": empty_scopes()} if reset_scopes else {})}
 
 
 @router.get("/license/companies/{company_id}/api-key")
@@ -360,7 +434,7 @@ async def create_company_api_key(company_id: str, request: Request):
         raise HTTPException(status_code=409, detail="Bu şirketin API anahtarı zaten var.")
     secret = new_api_key()
     if existing:
-        doc = await _replace_secret(existing, secret, user)
+        doc = await _replace_secret(existing, secret, user, reset_scopes=True)
     else:
         doc = await _insert_key(company_id, secret, user)
     await _audit(company_id, user, "create", "Şirket API anahtarı oluşturuldu", request, record_id=doc["_id"])
@@ -400,3 +474,23 @@ async def revoke_company_api_key(company_id: str, request: Request):
         existing = {**existing, "status": "revoked", "revoked_at": now}
         await _audit(company_id, user, "delete", "Şirket API anahtarı iptal edildi", request, record_id=existing["_id"])
     return public_key_info(existing)
+
+
+@router.put("/license/companies/{company_id}/api-key/scopes")
+async def update_company_api_key_scopes(company_id: str, request: Request):
+    user = await _user(request)
+    if not user_may_access_company(user, company_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    await require_admin_company(user, company_id)
+    existing = await _key_for_company(company_id)
+    if not existing or existing.get("status") != "active" or existing.get("revoked_at"):
+        raise HTTPException(status_code=404, detail="API anahtarı yok.")
+    body = await _json_body(request)
+    scopes = normalize_scopes(body.get("scopes"))
+    await _db.company_api_keys.update_one(
+        {"_id": existing["_id"], "company_id": company_id},
+        {"$set": {"scopes": scopes}},
+    )
+    saved = {**existing, "scopes": scopes}
+    await _audit(company_id, user, "permission", "Şirket API anahtarı kapsamı güncellendi", request, record_id=existing["_id"])
+    return public_key_info(saved)

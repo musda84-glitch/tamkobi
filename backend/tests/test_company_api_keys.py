@@ -27,7 +27,8 @@ import saas  # noqa: E402
 from dashboard_memdb import MemDB  # noqa: E402
 from platform_store import _sha256_hex  # noqa: E402
 
-INFO_FIELDS = {"prefix", "last4", "created_at", "last_used_at", "last_used_by"}
+INFO_FIELDS = {"prefix", "last4", "scopes", "created_at", "last_used_at", "last_used_by"}
+EMPTY_SCOPES = {"cari": "none", "stok": "none", "fiyat": "none", "fatura": "none"}
 
 
 def _company(cid, name):
@@ -76,6 +77,8 @@ def world():
             "name": "Cari B",
             "email": "cari-b@example.com",
             "b2b_token": "secret-b2b-token-b",
+            "tax_number_or_id": "1234567890",
+            "tax_office": "KadikoyVD",
             "balance": 20,
         },
     ])
@@ -113,6 +116,7 @@ def world():
         "currency": "TRY",
         "status": "issued",
         "notes": "gizli-fatura-notu",
+        "ettn": "ETTN-GIZLI-00112233",
         "items": [{"name": "Urun B", "quantity": 1, "unit": "ad", "unit_price": 30, "vat_rate": 20, "total": 36, "cost": 888}],
     })
     mem.pricing_rules.docs.append({
@@ -161,6 +165,25 @@ def _secret_absent(blob, secret):
     assert "secret_enc" not in blob
 
 
+def _invite(client, uid, company_id):
+    res = client.post(f"/api/license/companies/{company_id}/link-invites", headers=_h(uid))
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert str(body.get("invite_code") or "").startswith("tk_inv_")
+    assert "code_hash" not in body
+    return body
+
+
+def _set_key_scopes(client, uid, company_id, scopes):
+    res = client.put(
+        f"/api/license/companies/{company_id}/api-key/scopes",
+        headers=_h(uid),
+        json={"scopes": scopes},
+    )
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
 def test_key_returned_once_and_only_hash_is_stored(world):
     client, db = world["client"], world["db"]
     created = _create_key(client, "usrA", "coA")
@@ -186,14 +209,15 @@ def test_key_returned_once_and_only_hash_is_stored(world):
     _secret_absent(dumped, secret)
     assert "api_key" not in doc
     assert doc["company_id"] == "coA"
+    assert created["scopes"] == EMPTY_SCOPES
+    assert doc["scopes"] == EMPTY_SCOPES
 
 
 def test_rotate_invalidates_old_key_immediately(world):
     client = world["client"]
     first = _create_key(client, "usrB", "coB")["api_key"]
     own = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {first}"})
-    assert own.status_code == 200
-    assert own.json()["items"][0]["name"] == "Cari B"
+    assert own.status_code == 403
     rotated = client.post("/api/license/companies/coB/api-key/rotate", headers=_h("usrB"))
     assert rotated.status_code == 200
     second = rotated.json()["api_key"]
@@ -202,7 +226,7 @@ def test_rotate_invalidates_old_key_immediately(world):
     old = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {first}"})
     assert old.status_code == 401
     new = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {second}"})
-    assert new.status_code == 200
+    assert new.status_code == 403
     info = client.get("/api/license/companies/coB/api-key", headers=_h("usrB"))
     assert "api_key" not in info.json()
     assert second not in info.text
@@ -227,7 +251,7 @@ def test_compare_digest_runs_for_miss_and_hit(world, monkeypatch):
     assert seen, "yanlış anahtarda compare_digest çağrılmadı"
     seen.clear()
     hit = client.get("/api/shared/coA/cari", headers={"Authorization": f"Bearer {secret}"})
-    assert hit.status_code == 200
+    assert hit.status_code == 403
     assert any(real(left, right) and left == right for left, right in seen)
 
 
@@ -249,10 +273,19 @@ def test_pending_scope_third_party_and_disconnect(world):
     secret_b = _create_key(client, "usrB", "coB")["api_key"]
     secret_a = _create_key(client, "usrA", "coA")["api_key"]
     secret_c = _create_key(client, "usrC", "coC")["api_key"]
-    asked = client.post(
+    _set_key_scopes(client, "usrA", "coA", {"cari": "read", "stok": "read", "fiyat": "read", "fatura": "read"})
+    rejected_key = client.post(
         "/api/license/companies/coA/links",
         headers=_h("usrA"),
         json={"api_key": secret_b},
+    )
+    assert rejected_key.status_code == 400
+    assert secret_b not in rejected_key.text
+    invite = _invite(client, "usrB", "coB")
+    asked = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": invite["invite_code"]},
     )
     assert asked.status_code == 200, asked.text
     link = asked.json()
@@ -261,22 +294,34 @@ def test_pending_scope_third_party_and_disconnect(world):
     assert link["to_company"] == "coB"
     assert link["scopes"] == {"cari": "none", "stok": "none", "fiyat": "none", "fatura": "none"}
     assert secret_b not in json.dumps(db.company_links.docs)
+    assert invite["invite_code"] not in json.dumps(db.company_link_invites.docs)
     pending = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
     assert pending.status_code == 403
     session_pending = client.get("/api/shared/coB/cari", headers=_h("usrA"))
     assert session_pending.status_code == 403
-    approved = client.post(
+    write_denied = client.post(
         f"/api/license/companies/coB/links/{link['id']}/approve",
         headers=_h("usrB"),
         json={"scopes": {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "write"}},
     )
+    assert write_denied.status_code == 400
+    approved = client.post(
+        f"/api/license/companies/coB/links/{link['id']}/approve",
+        headers=_h("usrB"),
+        json={"scopes": {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "read"}},
+    )
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "active"
-    assert approved.json()["scopes"]["fatura"] == "write"
-    assert db.company_links.docs[0]["scopes"]["fatura"] == "write"
+    assert approved.json()["scopes"]["fatura"] == "read"
+    assert approved.json()["scopes"]["cari"] == "read"
+    assert db.company_links.docs[0]["scopes"]["fatura"] == "read"
     cari = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
     assert cari.status_code == 200
     assert cari.json()["items"][0]["name"] == "Cari B"
+    assert "tax_number_or_id" not in cari.json()["items"][0]
+    assert "tax_office" not in cari.json()["items"][0]
+    assert "1234567890" not in cari.text
+    assert "KadikoyVD" not in cari.text
     assert "secret-b2b-token-b" not in cari.text
     stok = client.get("/api/shared/coB/stok", headers={"Authorization": f"Bearer {secret_a}"})
     assert stok.status_code == 403
@@ -286,10 +331,10 @@ def test_pending_scope_third_party_and_disconnect(world):
     assert fatura.status_code == 200
     assert fatura.json()["items"][0]["invoice_number"] == "FTR-B-1"
     assert "gizli-fatura-notu" not in fatura.text
+    assert "ETTN-GIZLI-00112233" not in fatura.text
     assert "888" not in json.dumps(fatura.json()["items"][0].get("items"))
     own = client.get("/api/shared/coA/stok", headers={"Authorization": f"Bearer {secret_a}"})
-    assert own.status_code == 200
-    assert own.json()["items"][0]["sku"] == "SKU-A"
+    assert own.status_code == 403
     assert "purchase_price" not in own.text
     assert "999" not in own.text
     third_bearer = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_c}"})
@@ -306,7 +351,9 @@ def test_pending_scope_third_party_and_disconnect(world):
     after = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
     assert after.status_code == 403
     owner_still = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_b}"})
-    assert owner_still.status_code == 200
+    assert owner_still.status_code == 403
+    owner_session = client.get("/api/shared/coB/cari", headers=_h("usrB"))
+    assert owner_session.status_code == 403
 
 
 def test_rate_limit_blocks_repeated_key_use(world, monkeypatch):
@@ -314,8 +361,8 @@ def test_rate_limit_blocks_repeated_key_use(world, monkeypatch):
     secret = _create_key(client, "usrA", "coA")["api_key"]
     monkeypatch.setattr(keys, "KEY_RATE_LIMIT", 2)
     headers = {"Authorization": f"Bearer {secret}"}
-    assert client.get("/api/shared/coA/cari", headers=headers).status_code == 200
-    assert client.get("/api/shared/coA/cari", headers=headers).status_code == 200
+    assert client.get("/api/shared/coA/cari", headers=headers).status_code == 403
+    assert client.get("/api/shared/coA/cari", headers=headers).status_code == 403
     blocked = client.get("/api/shared/coA/cari", headers=headers)
     assert blocked.status_code == 429
     assert secret not in blocked.text
@@ -333,24 +380,30 @@ def test_audit_mail_and_logs_omit_the_secret(world, caplog):
         )
         assert asked.status_code == 400
         secret_b = _create_key(client, "usrB", "coB")["api_key"]
+        invite = _invite(client, "usrB", "coB")
+        code = invite["invite_code"]
         asked = client.post(
             "/api/license/companies/coA/links",
             headers=_h("usrA"),
-            json={"api_key": secret_b},
+            json={"invite_code": code},
         )
         assert asked.status_code == 200, asked.text
         logging.getLogger("tamkobi.company_api.test").warning("yanlışlıkla %s", secret)
         logging.getLogger("tamkobi.company_api.test").warning("yanlışlıkla %s", secret_b)
+        logging.getLogger("tamkobi.company_api.test").warning("yanlışlıkla %s", code)
     blob = json.dumps({
         "keys": db.company_api_keys.docs,
         "links": db.company_links.docs,
         "audit": db.company_audit_log.docs,
         "mail": db.notify_outbox.docs,
+        "invites": db.company_link_invites.docs,
         "logs": caplog.text,
     })
     _secret_absent(blob, secret)
     _secret_absent(blob, secret_b)
+    _secret_absent(blob, code)
     assert "tk_live_[gizli]" in caplog.text
+    assert "tk_inv_[gizli]" in caplog.text
     assert db.company_audit_log.docs
     assert db.notify_outbox.docs
     assert db.notify_outbox.docs[0]["event"] == "company_link_request"
@@ -358,7 +411,7 @@ def test_audit_mail_and_logs_omit_the_secret(world, caplog):
     assert "&lt;B&gt;" in db.notify_outbox.docs[0]["html"]
     assert "Firma <B>" not in db.notify_outbox.docs[0]["html"]
     touched = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_b}"})
-    assert touched.status_code == 200
+    assert touched.status_code == 403
     info = client.get("/api/license/companies/coB/api-key", headers=_h("usrB")).json()
     assert info["last_used_by"] == "external"
     assert secret_b not in json.dumps(info)
@@ -375,7 +428,8 @@ def test_revoke_key_rejects_bearer_and_reissue_returns_a_new_secret(world):
     reissued = _create_key(client, "usrA", "coA")
     assert reissued["api_key"] != secret
     ok = client.get("/api/shared/coA/cari", headers={"Authorization": f"Bearer {reissued['api_key']}"})
-    assert ok.status_code == 200
+    assert ok.status_code == 403
+    assert reissued["scopes"] == EMPTY_SCOPES
 
 
 def test_shared_prefix_is_public_and_license_key_path_is_not():
@@ -399,3 +453,200 @@ def test_direct_mail_events_include_company_links():
         "company_link_revoked",
     ):
         assert name in event_notify._COMPANY_LINK_DIRECT_EVENTS
+
+
+def _active_link(client, scopes=None):
+    scopes = scopes or {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "none"}
+    invite = _invite(client, "usrB", "coB")
+    asked = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": invite["invite_code"]},
+    )
+    assert asked.status_code == 200, asked.text
+    approved = client.post(
+        f"/api/license/companies/coB/links/{asked.json()['id']}/approve",
+        headers=_h("usrB"),
+        json={"scopes": scopes},
+    )
+    assert approved.status_code == 200, approved.text
+    return invite, approved.json()
+
+
+def test_shared_without_invite_or_approval_is_forbidden(world):
+    client = world["client"]
+    secret_a = _create_key(client, "usrA", "coA")["api_key"]
+    _create_key(client, "usrB", "coB")
+    _set_key_scopes(client, "usrA", "coA", {"cari": "read", "stok": "read", "fiyat": "read", "fatura": "read"})
+    anon = client.get("/api/shared/coB/cari")
+    assert anon.status_code == 401
+    own = client.get("/api/shared/coA/cari", headers={"Authorization": f"Bearer {secret_a}"})
+    assert own.status_code == 403
+    invite = _invite(client, "usrB", "coB")
+    asked = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": invite["invite_code"]},
+    )
+    assert asked.status_code == 200, asked.text
+    pending = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
+    assert pending.status_code == 403
+    session_pending = client.get("/api/shared/coB/cari", headers=_h("usrA"))
+    assert session_pending.status_code == 403
+
+
+def test_used_expired_and_revoked_invites_are_rejected(world):
+    client, db = world["client"], world["db"]
+    _create_key(client, "usrA", "coA")
+    first = _invite(client, "usrB", "coB")
+    code = first["invite_code"]
+    opened = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": code},
+    )
+    assert opened.status_code == 200, opened.text
+    again = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": code},
+    )
+    assert again.status_code == 400
+    assert code not in again.text
+    expired = _invite(client, "usrB", "coB")
+    digest = hashlib.sha256(expired["invite_code"].encode()).hexdigest()
+    matched = [doc for doc in db.company_link_invites.docs if doc.get("code_hash") == digest]
+    assert matched
+    matched[0]["expires_at"] = "2000-01-01T00:00:00+00:00"
+    stale = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": expired["invite_code"]},
+    )
+    assert stale.status_code == 400
+    assert expired["invite_code"] not in stale.text
+    cancelled = _invite(client, "usrB", "coB")
+    revoked = client.post(
+        f"/api/license/companies/coB/link-invites/{cancelled['id']}/revoke",
+        headers=_h("usrB"),
+    )
+    assert revoked.status_code == 200
+    assert "invite_code" not in revoked.json()
+    denied = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": cancelled["invite_code"]},
+    )
+    assert denied.status_code == 400
+    listed = client.get("/api/license/companies/coB/link-invites", headers=_h("usrB"))
+    assert listed.status_code == 200
+    blob = listed.text + json.dumps(db.company_link_invites.docs)
+    assert code not in blob
+    assert expired["invite_code"] not in blob
+    assert cancelled["invite_code"] not in blob
+
+
+def test_rerequest_after_revoke_drops_old_scopes(world):
+    client, db = world["client"], world["db"]
+    secret_a = _create_key(client, "usrA", "coA")["api_key"]
+    _create_key(client, "usrB", "coB")
+    _set_key_scopes(client, "usrA", "coA", {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "read"})
+    invite, approved = _active_link(client, {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "read"})
+    assert approved["scopes"]["cari"] == "read"
+    assert approved["scopes"]["fatura"] == "read"
+    cut = client.post(
+        f"/api/license/companies/coB/links/{approved['id']}/revoke",
+        headers=_h("usrB"),
+    )
+    assert cut.status_code == 200
+    assert cut.json()["status"] == "revoked"
+    after = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
+    assert after.status_code == 403
+    stale = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": invite["invite_code"]},
+    )
+    assert stale.status_code == 400
+    fresh = _invite(client, "usrB", "coB")
+    asked = client.post(
+        "/api/license/companies/coA/links",
+        headers=_h("usrA"),
+        json={"invite_code": fresh["invite_code"]},
+    )
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["status"] == "pending"
+    assert asked.json()["scopes"] == EMPTY_SCOPES
+    assert db.company_links.docs[0]["scopes"] == EMPTY_SCOPES
+    still = client.get("/api/shared/coB/fatura", headers={"Authorization": f"Bearer {secret_a}"})
+    assert still.status_code == 403
+
+
+def test_narrow_key_scope_blocks_until_read_is_granted(world):
+    client = world["client"]
+    secret_a = _create_key(client, "usrA", "coA")["api_key"]
+    _create_key(client, "usrB", "coB")
+    _active_link(client, {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "none"})
+    blocked = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
+    assert blocked.status_code == 403
+    write_scope = client.put(
+        "/api/license/companies/coA/api-key/scopes",
+        headers=_h("usrA"),
+        json={"scopes": {"cari": "write", "stok": "none", "fiyat": "none", "fatura": "none"}},
+    )
+    assert write_scope.status_code == 400
+    _set_key_scopes(client, "usrA", "coA", {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "none"})
+    opened = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
+    assert opened.status_code == 200
+    assert "tax_number_or_id" not in opened.json()["items"][0]
+    assert "1234567890" not in opened.text
+    assert "KadikoyVD" not in opened.text
+
+
+def test_shared_request_writes_audit_without_secrets(world):
+    client, db = world["client"], world["db"]
+    secret_a = _create_key(client, "usrA", "coA")["api_key"]
+    _create_key(client, "usrB", "coB")
+    _set_key_scopes(client, "usrA", "coA", {"cari": "read", "stok": "none", "fiyat": "none", "fatura": "none"})
+    _active_link(client)
+    before = len(db.company_audit_log.docs)
+    res = client.get("/api/shared/coB/cari", headers={"Authorization": f"Bearer {secret_a}"})
+    assert res.status_code == 200, res.text
+    fresh = db.company_audit_log.docs[before:]
+    assert any(str(row.get("path") or "").startswith("/api/shared/") for row in fresh)
+    blob = json.dumps(fresh)
+    assert secret_a not in blob
+    assert "1234567890" not in blob
+    assert "KadikoyVD" not in blob
+    assert "ETTN-GIZLI-00112233" not in blob
+    assert "tk_live_" not in blob
+    assert "tk_inv_" not in blob
+
+
+def test_shared_gate_is_explicit_and_index_errors_propagate():
+    import asyncio
+
+    text = (_BACKEND / "company_links.py").read_text(encoding="utf-8")
+    assert "_allow_shared_prefix" not in text
+    assert "rbac.PUBLIC_API_ALLOWLIST =" not in text
+    assert "require_shared_reader" in text
+    server_text = (_BACKEND / "server.py").read_text(encoding="utf-8")
+    assert "company api indexes skipped" not in server_text
+    assert "code_hash benzersiz indeksi" in server_text
+    assert "logger.exception" in server_text
+
+    class Ok:
+        async def create_index(self, *args, **kwargs):
+            return "ok"
+
+    class Boom:
+        async def create_index(self, *args, **kwargs):
+            raise RuntimeError("invite-index-failed")
+
+    class DB:
+        company_api_keys = Ok()
+        company_links = Ok()
+        company_link_invites = Boom()
+
+    with pytest.raises(RuntimeError, match="invite-index-failed"):
+        asyncio.run(keys.ensure_indexes(DB()))

@@ -385,7 +385,9 @@ async def startup_event():
             try:
                 await company_api_keys.ensure_indexes(db)
             except Exception:
-                logger.warning("company api indexes skipped")
+                logger.exception(
+                    "company_api_keys key_hash veya company_link_invites code_hash benzersiz indeksi oluşturulamadı"
+                )
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
             except Exception:

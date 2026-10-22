@@ -278,7 +278,7 @@ async def export_my_data(request: Request, company_id: Optional[str] = None):
             "payrolls": len(payrolls),
             "activity_logs": len(activity),
         },
-        "excluded": ["images", "pdf", "xlsx", "binaries", "passwords", "api_keys", "company_api_keys", "company_links"],
+        "excluded": ["images", "pdf", "xlsx", "binaries", "passwords", "api_keys", "company_api_keys", "company_links", "company_link_invites"],
         "note": "Yalnızca metin tabanlı kişisel veriler ve faturalar.",
     }
     files = {

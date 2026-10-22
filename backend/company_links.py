@@ -1,16 +1,20 @@
 """Şirketler arası veri paylaşımı.
 
-A şirketi, B şirketinin API anahtarını girerek bağlantı ister.
-``from_company`` isteği gönderen (veriyi okuyacak taraf), ``to_company`` anahtarın
-sahibi ve verinin sahibidir. Kayıt ``company_id`` olarak verinin sahibini taşır.
-Kapsam ``cari|stok|fiyat|fatura`` için ``none|read|write``. Bağlantı yalnız
-veri sahibi onayladıktan sonra ``active`` olur. İki taraf da kesebilir.
+Veri sahibi tek kullanımlık, 7 günlük bir davet kodu üretir. İsteyen şirket
+bu kodu gönderir. Kodun yalnız SHA-256 özeti saklanır; düz değer bir kez
+döner, kullanılınca veya iptal edilince geçersiz olur. ``from_company`` veriyi
+okuyacak taraf, ``to_company`` ve ``company_id`` verinin sahibidir.
 
-Okuma uçları ``/api/shared/{company_id}/...``. Yazma kapsamı saklanır; yazan uç
-bu PR'da yoktur. Oturum, kullanıcının bağlı şirketi üzerinden; dış sistem
-``Authorization: Bearer tk_live_...`` ile yalnız anahtarın sahibinin kendi
-verisini ve ona paylaşılan veriyi görür.
+Kapsam ``cari|stok|fiyat|fatura`` için ``none|read``. Yazma, uç gelene kadar
+reddedilir. Bağlantı yalnız veri sahibi onayladıktan sonra ``active`` olur.
 
+``/api/shared/{company_id}/...`` yalnız onaylı bağlantının kapsamıyla okunur.
+Anahtarın şirketi hedefle aynı olsa da kısayol yoktur. Anahtarın kendi kapsamı
+ayrıca read olmalıdır. Oturum, kullanıcının eriştiği şirket üzerinden aynı
+bağlantı kuralına girer.
+
+Middleware yolu ``rbac.PUBLIC_API_ALLOWLIST`` içindeki sabit ``/api/shared/``
+kuralıyla geçirir. Kimlik ve denetim bu modüldeki dependency'dedir.
 Bildirim yalnız ``notify_outbox`` kuyruğuna yazılır.
 """
 from __future__ import annotations
@@ -18,50 +22,32 @@ from __future__ import annotations
 import html
 import json
 import logging
+import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import company_api_keys as keys
 import tenant_scope
 from mysql_store import DuplicateKeyError
+from platform_store import _sha256_hex
 
 logger = logging.getLogger("tamkobi.company_api")
 
 router = APIRouter(prefix="/api")
 
-SCOPE_NAMES = ("cari", "stok", "fiyat", "fatura")
-SCOPE_LEVELS = ("none", "read", "write")
+SCOPE_NAMES = keys.SCOPE_NAMES
+SCOPE_LEVELS = keys.SCOPE_LEVELS
+INVITE_PREFIX = keys.INVITE_PREFIX
+INVITE_DAYS = 7
 _NOTICE_DAILY = 20
 _READ_LIMIT = 200
+_DUMMY_INVITE_HASH = _sha256_hex("tamkobi-company-link-invite-dummy")
 
 _db = None
 _current_user = None
-
-
-def _allow_shared_prefix() -> None:
-    """Bearer tk_live_ JWT değildir. rbac.py değişmez.
-
-    PermissionAndAuditMiddleware geçersiz JWT'yi herkese açık olmayan yolda 401
-    ile keser. Önek allowlist'e eklenince istek bu modüle ulaşır; anahtar yoksa
-    yine 401 döner. Oturumlu kullanıcı da aynı uçtan, bağlı şirketiyle girer.
-    """
-    try:
-        import rbac
-    except Exception:
-        return
-    current = getattr(rbac, "PUBLIC_API_ALLOWLIST", None)
-    if not isinstance(current, tuple):
-        return
-    rule = "/api/shared/"
-    if rule in current:
-        return
-    rbac.PUBLIC_API_ALLOWLIST = current + (rule,)
-
-
-_allow_shared_prefix()
 
 
 def init(db, current_user_dep=None) -> None:
@@ -77,21 +63,11 @@ def _now_iso() -> str:
 
 
 def empty_scopes() -> dict:
-    return {name: "none" for name in SCOPE_NAMES}
+    return keys.empty_scopes()
 
 
 def normalize_scopes(raw: object) -> dict:
-    if raw is None:
-        return empty_scopes()
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=400, detail="İzinler nesne olmalı.")
-    out = {}
-    for name in SCOPE_NAMES:
-        level = str(raw.get(name) or "none").strip().lower()
-        if level not in SCOPE_LEVELS:
-            raise HTTPException(status_code=400, detail="İzin düzeyi none, read veya write olmalı.")
-        out[name] = level
-    return out
+    return keys.normalize_scopes(raw)
 
 
 def _public_link(row: dict) -> dict:
@@ -222,12 +198,16 @@ async def _save(row: dict, fields: dict) -> dict:
 
 
 async def link_allows(viewer: str, owner: str, kind: str) -> bool:
-    """Aktif bağlantı ve read/write kapsamı. viewer isteyen, owner verinin sahibi."""
+    """Aktif bağlantı ve read kapsamı. viewer isteyen, owner verinin sahibi.
+
+    Hedef şirketle aynı görüntüleyen kısayolu yoktur. write okuma vermez.
+    """
+    if not viewer or viewer == owner:
+        return False
     row = await _pair(viewer, owner)
     if not row or row.get("status") != "active":
         return False
-    level = str((row.get("scopes") or {}).get(kind) or "none")
-    return level in ("read", "write")
+    return keys.scope_allows_read(row.get("scopes"), kind)
 
 
 def _cap(limit: int) -> int:
@@ -255,7 +235,8 @@ def _pick(doc: dict, fields: tuple) -> dict:
 
 
 def _public_contact(doc: dict) -> dict:
-    return _pick(doc, ("name", "type", "tax_number_or_id", "tax_office", "email", "phone", "city", "address", "balance", "currency"))
+    # Vergi numarası ve vergi dairesi paylaşılan caride yok.
+    return _pick(doc, ("name", "type", "email", "phone", "city", "address", "balance", "currency"))
 
 
 def _public_stock(doc: dict) -> dict:
@@ -325,7 +306,24 @@ async def read_kind(company_id: str, kind: str, limit: int) -> dict:
     return {"company_id": company_id, "items": [_public_invoice(row) for row in rows]}
 
 
-async def authorize_shared(request: Request, user: Optional[dict], company_id: str, kind: str, *, member: bool) -> None:
+def _session_viewer(user: dict) -> str:
+    """Oturumun okuyacağı şirket. Üyelik company_ids ile; hedef şirket kısayol değildir."""
+    viewer = str(user.get("active_company_id") or "").strip()
+    if viewer and user_may_access_company(user, viewer):
+        return viewer
+    ids = [str(item) for item in (user.get("company_ids") or []) if item]
+    ids = [item for item in ids if user_may_access_company(user, item)]
+    if len(ids) == 1:
+        return ids[0]
+    return ""
+
+
+async def _audit_shared(company_id: str, user: Optional[dict], kind: str, request: Request, summary: str, viewer: str) -> None:
+    await keys._audit(company_id, user, "update", summary, request, record_id=viewer)
+
+
+async def _authorize_shared(request: Request, company_id: str, kind: str) -> None:
+    """API anahtarı veya oturum. Aktif bağlantı ve read kapsamı şart. Denetim yazar."""
     token = keys.bearer_token(request)
     if token.startswith(keys.KEY_PREFIX):
         await keys.enforce_ip_rate(request)
@@ -336,31 +334,37 @@ async def authorize_shared(request: Request, user: Optional[dict], company_id: s
         await keys.enforce_key_rate(str(doc.get("_id") or ""))
         await keys.touch_key(doc)
         viewer = str(doc.get("company_id") or "")
-        if viewer == company_id:
-            return
-        if not await link_allows(viewer, company_id, kind):
+        allowed = keys.scope_allows_read(doc.get("scopes"), kind) and await link_allows(viewer, company_id, kind)
+        if not allowed:
+            await _audit_shared(company_id, None, kind, request, f"Paylaşılan {kind} reddedildi", viewer)
             raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
+        await _audit_shared(company_id, None, kind, request, f"Paylaşılan {kind} okundu", viewer)
         return
+    user = await keys.optional_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     await keys.enforce_user_rate(str(user.get("_id") or user.get("id") or "user"))
-    if member or user_may_access_company(user, company_id):
-        return
-    viewer = str(user.get("active_company_id") or "").strip()
-    if not viewer or not user_may_access_company(user, viewer):
-        ids = [item for item in (user.get("company_ids") or []) if item]
-        viewer = str(ids[0]) if len(ids) == 1 else ""
-    if not viewer or not user_may_access_company(user, viewer) or viewer == company_id:
+    viewer = _session_viewer(user)
+    if not viewer or not await link_allows(viewer, company_id, kind):
+        await _audit_shared(company_id, user, kind, request, f"Paylaşılan {kind} reddedildi", viewer)
         raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
-    if not await link_allows(viewer, company_id, kind):
-        raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
+    await _audit_shared(company_id, user, kind, request, f"Paylaşılan {kind} okundu", viewer)
 
 
-async def _shared(request: Request, company_id: str, kind: str, limit: int, member: bool) -> dict:
-    user = await keys.optional_user(request)
-    if user and user_may_access_company(user, company_id):
-        member = True
-    await authorize_shared(request, user, company_id, kind, member=member)
+def require_shared_reader(kind: str):
+    """``/api/shared`` kapısı. Anahtarı doğrular, kapsamı uygular, denetim yazar."""
+
+    async def dependency(company_id: str, request: Request) -> dict:
+        if kind not in SCOPE_NAMES:
+            raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+        await _authorize_shared(request, company_id, kind)
+        return {"company_id": company_id, "kind": kind}
+
+    dependency.__name__ = f"require_shared_{kind}"
+    return dependency
+
+
+async def _shared_read(company_id: str, kind: str, limit: int) -> dict:
     scope = tenant_scope.current()
     if scope is not None and company_id not in scope.allowed:
         with tenant_scope.unscoped("paylaşım kapsamı doğrulandı; hedef şirketin verisi okunur"):
@@ -369,31 +373,39 @@ async def _shared(request: Request, company_id: str, kind: str, limit: int, memb
 
 
 @router.get("/shared/{company_id}/cari")
-async def shared_cari(company_id: str, request: Request, limit: int = 100):
-    user = await keys.optional_user(request)
-    member = bool(user) and user_may_access_company(user, company_id)
-    return await _shared(request, company_id, "cari", limit, member)
+async def shared_cari(
+    company_id: str,
+    limit: int = 100,
+    access: dict = Depends(require_shared_reader("cari")),
+):
+    return await _shared_read(access["company_id"], access["kind"], limit)
 
 
 @router.get("/shared/{company_id}/stok")
-async def shared_stok(company_id: str, request: Request, limit: int = 100):
-    user = await keys.optional_user(request)
-    member = bool(user) and user_may_access_company(user, company_id)
-    return await _shared(request, company_id, "stok", limit, member)
+async def shared_stok(
+    company_id: str,
+    limit: int = 100,
+    access: dict = Depends(require_shared_reader("stok")),
+):
+    return await _shared_read(access["company_id"], access["kind"], limit)
 
 
 @router.get("/shared/{company_id}/fiyat")
-async def shared_fiyat(company_id: str, request: Request, limit: int = 100):
-    user = await keys.optional_user(request)
-    member = bool(user) and user_may_access_company(user, company_id)
-    return await _shared(request, company_id, "fiyat", limit, member)
+async def shared_fiyat(
+    company_id: str,
+    limit: int = 100,
+    access: dict = Depends(require_shared_reader("fiyat")),
+):
+    return await _shared_read(access["company_id"], access["kind"], limit)
 
 
 @router.get("/shared/{company_id}/fatura")
-async def shared_fatura(company_id: str, request: Request, limit: int = 100):
-    user = await keys.optional_user(request)
-    member = bool(user) and user_may_access_company(user, company_id)
-    return await _shared(request, company_id, "fatura", limit, member)
+async def shared_fatura(
+    company_id: str,
+    limit: int = 100,
+    access: dict = Depends(require_shared_reader("fatura")),
+):
+    return await _shared_read(access["company_id"], access["kind"], limit)
 
 
 @router.get("/license/companies/{company_id}/links")
@@ -410,6 +422,142 @@ async def list_company_links(company_id: str, request: Request):
     return {"links": [_public_link(row) for row in rows]}
 
 
+def new_invite_code() -> str:
+    return INVITE_PREFIX + secrets.token_urlsafe(keys.KEY_RANDOM_BYTES)
+
+
+def _invite_expires() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=INVITE_DAYS)).isoformat()
+
+
+def _invite_expired(doc: dict, now: Optional[str] = None) -> bool:
+    exp = str(doc.get("expires_at") or "")
+    if not exp:
+        return True
+    return exp <= (now or _now_iso())
+
+
+def _public_invite(doc: dict) -> dict:
+    """Düz davet kodu ve özeti yok."""
+    return {
+        "id": doc.get("_id"),
+        "company_id": doc.get("company_id"),
+        "status": doc.get("status"),
+        "created_at": doc.get("created_at"),
+        "expires_at": doc.get("expires_at"),
+        "used_at": doc.get("used_at"),
+        "revoked_at": doc.get("revoked_at"),
+    }
+
+
+async def resolve_invite(code: str) -> Optional[dict]:
+    """Kodu hash ile bulur. Düz değer yazılmaz. Bulunamazsa sabit zamanlı karşılaştırma yine çalışır."""
+    raw = str(code or "")
+    computed = _sha256_hex(raw)
+    doc = None
+    if raw.startswith(INVITE_PREFIX):
+        with tenant_scope.unscoped("bağlantı daveti şirket bilinmeden hash ile aranır"):
+            doc = await _db.company_link_invites.find_one({"code_hash": computed})
+    stored = _DUMMY_INVITE_HASH
+    if doc and doc.get("code_hash"):
+        stored = str(doc.get("code_hash"))
+    if not keys._digest_equal(stored, computed):
+        return None
+    return doc
+
+
+def _reject_unusable_invite(doc: Optional[dict]) -> dict:
+    if not doc:
+        logger.info("company link invite rejected")
+        raise HTTPException(status_code=400, detail="Davet kodu geçersiz.")
+    if doc.get("status") == "revoked" or doc.get("revoked_at"):
+        raise HTTPException(status_code=400, detail="Davet kodu iptal edilmiş.")
+    if doc.get("status") == "used" or doc.get("used_at"):
+        raise HTTPException(status_code=400, detail="Davet kodu kullanılmış.")
+    if _invite_expired(doc):
+        raise HTTPException(status_code=400, detail="Davet kodunun süresi dolmuş.")
+    if doc.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Davet kodu geçersiz.")
+    return doc
+
+
+async def _consume_invite(doc: dict, from_company: str) -> None:
+    now = _now_iso()
+    res = await _db.company_link_invites.update_one_atomic(
+        {
+            "_id": doc["_id"],
+            "company_id": doc.get("company_id"),
+            "status": "active",
+            "expires_at": {"$gt": now},
+        },
+        {"$set": {"status": "used", "used_at": now, "used_by_company": from_company}},
+    )
+    if int(getattr(res, "matched_count", 0) or 0) != 1:
+        raise HTTPException(status_code=400, detail="Davet kodu geçersiz.")
+
+
+@router.post("/license/companies/{company_id}/link-invites")
+async def create_company_link_invite(company_id: str, request: Request):
+    user = await keys._user(request)
+    if not user_may_access_company(user, company_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    await keys.require_admin_company(user, company_id)
+    await keys.enforce_link_rate(company_id, request)
+    code = new_invite_code()
+    now = _now_iso()
+    doc = {
+        "_id": f"inv_{uuid.uuid4().hex[:16]}",
+        "company_id": company_id,
+        "code_hash": _sha256_hex(code),
+        "status": "active",
+        "created_at": now,
+        "created_by": str(user.get("_id") or user.get("id") or ""),
+        "expires_at": _invite_expires(),
+        "used_at": None,
+        "used_by_company": None,
+        "revoked_at": None,
+    }
+    try:
+        await _db.company_link_invites.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Davet kodu oluşturulamadı.")
+    await keys._audit(company_id, user, "create", "Şirket bağlantı daveti oluşturuldu", request, record_id=doc["_id"])
+    return {**_public_invite(doc), "invite_code": code}
+
+
+@router.get("/license/companies/{company_id}/link-invites")
+async def list_company_link_invites(company_id: str, request: Request):
+    user = await keys._user(request)
+    if not user_may_access_company(user, company_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    await keys.require_admin_company(user, company_id)
+    rows = await _db.company_link_invites.find({"company_id": company_id}).to_list(100)
+    rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {"invites": [_public_invite(row) for row in rows]}
+
+
+@router.post("/license/companies/{company_id}/link-invites/{invite_id}/revoke")
+async def revoke_company_link_invite(company_id: str, invite_id: str, request: Request):
+    user = await keys._user(request)
+    if not user_may_access_company(user, company_id):
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    await keys.require_admin_company(user, company_id)
+    row = await _db.company_link_invites.find_one({"_id": invite_id, "company_id": company_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
+    if row.get("status") == "used":
+        raise HTTPException(status_code=409, detail="Kullanılmış davet iptal edilmez.")
+    if row.get("status") != "revoked":
+        now = _now_iso()
+        await _db.company_link_invites.update_one(
+            {"_id": invite_id, "company_id": company_id},
+            {"$set": {"status": "revoked", "revoked_at": now}},
+        )
+        row = {**row, "status": "revoked", "revoked_at": now}
+        await keys._audit(company_id, user, "delete", "Şirket bağlantı daveti iptal edildi", request, record_id=invite_id)
+    return _public_invite(row)
+
+
 @router.post("/license/companies/{company_id}/links")
 async def create_company_link(company_id: str, request: Request):
     user = await keys._user(request)
@@ -418,19 +566,18 @@ async def create_company_link(company_id: str, request: Request):
     await keys.require_admin_company(user, company_id)
     await keys.enforce_link_rate(company_id, request)
     body = await _json_body(request)
-    secret = str(body.pop("api_key", "") or "").strip()
-    if not secret.startswith(keys.KEY_PREFIX):
-        raise HTTPException(status_code=400, detail="Anahtar geçersiz.")
-    target = await keys.resolve_api_key(secret)
-    if not target:
-        raise HTTPException(status_code=400, detail="Anahtar geçersiz.")
-    to_company = str(target.get("company_id") or "")
+    if "api_key" in body:
+        raise HTTPException(status_code=400, detail="Bağlantı API anahtarı ile kurulamaz.")
+    code = str(body.get("invite_code") or "").strip()
+    invite = _reject_unusable_invite(await resolve_invite(code))
+    to_company = str(invite.get("company_id") or "")
     if not to_company or to_company == company_id:
-        raise HTTPException(status_code=400, detail="Kendi şirket anahtarınızla bağlantı kurulamaz.")
+        raise HTTPException(status_code=400, detail="Kendi şirketinize bağlantı kurulamaz.")
     existing = await _pair(company_id, to_company)
-    now = _now_iso()
     if existing and existing.get("status") == "active":
         raise HTTPException(status_code=409, detail="Bağlantı zaten aktif.")
+    await _consume_invite(invite, company_id)
+    now = _now_iso()
     if existing and existing.get("status") == "pending":
         return _public_link(existing)
     if existing:
@@ -438,6 +585,7 @@ async def create_company_link(company_id: str, request: Request):
             "status": "pending",
             "scopes": empty_scopes(),
             "revoked_at": None,
+            "approved_at": None,
             "updated_at": now,
         })
     else:
