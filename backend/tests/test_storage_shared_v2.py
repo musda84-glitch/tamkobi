@@ -9,9 +9,11 @@ import asyncio
 import copy
 import json
 import logging
+import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -37,7 +39,7 @@ import storage_router  # noqa: E402
 import storage_shared_v2  # noqa: E402
 import tenant_db  # noqa: E402
 
-MIGRATION = _BACKEND / "storage_migrations" / "migrations" / "0003_docs_v2.sql"
+MIGRATION = _BACKEND / "storage_migrations" / "migrations" / "0003_docs_v2.py"
 _DOCS_WORD = re.compile(r"\bdocs\b", re.IGNORECASE)
 _ALLOWED = re.compile(r"^(create|insert|alter)\b", re.IGNORECASE)
 _FILE = re.compile(r"^(\d{4})_([a-z0-9_]+)\.(sql|py)$")
@@ -45,45 +47,11 @@ CO = "co"
 OTHER = "co_b"
 
 
-def _split_sql(text: str) -> list:
-    parts = []
-    buf = []
-    quote = ""
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            buf.append(ch)
-            if ch == quote and text[i - 1] != "\\":
-                quote = ""
-            i += 1
-            continue
-        if ch in ("'", '"'):
-            quote = ch
-            buf.append(ch)
-            i += 1
-            continue
-        if ch == "-" and text[i:i + 2] == "--":
-            newline = text.find("\n", i)
-            i = len(text) if newline < 0 else newline
-            continue
-        if ch == ";":
-            statement = "".join(buf).strip()
-            if statement:
-                parts.append(statement)
-            buf = []
-            i += 1
-            continue
-        buf.append(ch)
-        i += 1
-    tail = "".join(buf).strip()
-    if tail:
-        parts.append(tail)
-    return parts
-
-
 def _apply(conn):
-    conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+    from storage_migrations.engine import apply
+    from storage_migrations.session import Session
+
+    apply(Session(conn, "sqlite", read_only=False), confirm=True, dry_run=False)
 
 
 @pytest.fixture
@@ -356,44 +324,67 @@ async def _exercise(api):
 
 
 def test_migration_contract_and_no_startup_create():
+    from storage_migrations.loader import load_migrations
+
     assert _FILE.match(MIGRATION.name)
     version, name, suffix = _FILE.match(MIGRATION.name).groups()
     assert version == "0003"
     assert name == "docs_v2"
-    assert suffix == "sql"
-    steps = _split_sql(MIGRATION.read_text(encoding="utf-8"))
-    assert steps
-    for step in steps:
+    assert suffix == "py"
+    mig = next(item for item in load_migrations() if item.version == 3)
+    assert mig.mysql_steps
+    for step in mig.steps + mig.mysql_steps:
         assert _ALLOWED.match(step)
         assert _DOCS_WORD.search(step) is None
-    blob = "\n".join(steps)
-    assert "PRIMARY KEY (company_id, collection, id)" in blob
+    sqlite_blob = "\n".join(mig.steps)
+    mysql_blob = "\n".join(mig.mysql_steps)
+    for blob in (sqlite_blob, mysql_blob):
+        assert "PRIMARY KEY (company_id, collection, id)" in blob
+        assert "PRIMARY KEY (company_id, collection, field_name, field_value)" in blob
+        assert " g_status TEXT" not in blob
+        assert "doc TEXT " not in blob
+    assert "doc LONGTEXT NOT NULL" in sqlite_blob
+    assert "json_extract(doc, '$.status')" in sqlite_blob
+    assert "CREATE INDEX IF NOT EXISTS idx_v2_status " in sqlite_blob
+    assert "doc JSON NOT NULL" in mysql_blob
+    assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.status'))" in mysql_blob
+    assert "g_status VARCHAR(64)" in mysql_blob
+    assert "g_account_name VARCHAR(191)" in mysql_blob
+    assert "CREATE INDEX IF NOT EXISTS" not in mysql_blob
+    assert "CREATE INDEX idx_v2_status " in mysql_blob
     for column, field in storage_shared_v2.GENERATED_COLUMNS:
-        assert column in blob
-        assert f"{column}_bad" in blob
-        assert f"$.{field}" in blob
-        assert f"idx_v2_{field} " in blob or f"idx_v2_{field}\n" in blob
-        assert f"idx_v2_{field}_bad" in blob
+        for blob in (sqlite_blob, mysql_blob):
+            assert column in blob
+            assert f"{column}_bad" in blob
+            assert f"$.{field}" in blob
+            assert f"idx_v2_{field} " in blob
+            assert f"idx_v2_{field}_bad" in blob
     source = (_BACKEND / "storage_shared_v2.py").read_text(encoding="utf-8")
     assert "CREATE TABLE" not in source
     assert "docs_v2" not in (_BACKEND / "mysql_store.py").read_text(encoding="utf-8")
     assert "docs_v2" not in (_BACKEND / "schema.mysql.sql").read_text(encoding="utf-8")
 
 
-def test_mysql_equality_sql_quotes_json_strings():
+def test_mysql_equality_uses_unquoted_generated_text():
     store = storage_shared_v2.SharedV2Store()
     store.dialect = "mysql"
     coll = storage_shared_v2.SharedV2Collection(store, CO, "invoices")
     where, params, fields = coll._filter_sql({"status": "open", "company_id": CO})
-    assert "JSON_QUOTE(?)" in where
+    assert "g_status = ?" in where
+    assert "JSON_QUOTE" not in where
+    assert "JSON_UNQUOTE(g_status)" not in where
     assert "STRING" in where
     assert params == ["open"]
     assert fields == ("status",)
+    note_where, note_params, _note_fields = coll._filter_sql({"note": "bir"})
+    assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.note')) = ?" in note_where
+    assert note_params == ["bir"]
     store.dialect = "sqlite"
     where, params, _fields = coll._filter_sql({"status": "open"})
     assert "g_status = ?" in where
     assert "COALESCE(json_type(doc, '$.status'), '') = 'text'" in where
     assert "JSON_QUOTE" not in where
+    assert "JSON_UNQUOTE" not in where
 
 
 def test_same_results_as_legacy_python_path(conn):
@@ -628,3 +619,229 @@ def test_list_benchmark_against_legacy_python(conn):
     print(
         f"BENCHMARK n={total} legacy={legacy_s:.4f}s shared={shared_s:.4f}s warm={warm_s:.4f}s"
     )
+
+
+def test_unique_index_is_company_scoped_and_releases_on_delete(conn):
+    coll = _shared(CO, "invoices")
+
+    async def run():
+        await coll.insert_one({
+            "_id": "1", "company_id": CO, "invoice_number": "INV-1", "status": "open", "created_at": "2024-01-01",
+        })
+        await coll.insert_one({
+            "_id": "2", "company_id": CO, "invoice_number": "INV-1", "status": "open", "created_at": "2024-01-02",
+        })
+        await coll.create_index("invoice_number", unique=True)
+        with pytest.raises(DuplicateKeyError):
+            await coll.insert_one({
+                "_id": "3", "company_id": CO, "invoice_number": "INV-9", "status": "open", "created_at": "2024-01-03",
+            })
+        return "backfill-should-have-failed"
+
+    with pytest.raises(DuplicateKeyError):
+        asyncio.run(run())
+    storage_shared_v2.reset_store()
+    storage_shared_v2.bind_sqlite(conn)
+
+    async def clean():
+        fresh = _shared(CO, "invoices")
+        other = _shared(OTHER, "invoices")
+        orders = _shared(CO, "orders")
+        await fresh.delete_many({})
+        await fresh.create_index("invoice_number", unique=True)
+        await fresh.insert_one({
+            "_id": "1", "company_id": CO, "invoice_number": "INV-1", "status": "open", "created_at": "2024-01-01",
+        })
+        with pytest.raises(DuplicateKeyError):
+            await fresh.insert_one({
+                "_id": "2", "company_id": CO, "invoice_number": "INV-1", "status": "paid", "created_at": "2024-01-02",
+            })
+        await other.insert_one({
+            "_id": "2", "company_id": OTHER, "invoice_number": "INV-1", "status": "open", "created_at": "2024-01-02",
+        })
+        await orders.insert_one({
+            "_id": "2", "company_id": CO, "invoice_number": "INV-1", "status": "open", "created_at": "2024-01-02",
+        })
+        await fresh.delete_one({"_id": "1"})
+        await fresh.insert_one({
+            "_id": "3", "company_id": CO, "invoice_number": "INV-1", "status": "open", "created_at": "2024-01-03",
+        })
+        return conn.execute("SELECT company_id, collection, doc_id FROM docs_v2_unique ORDER BY company_id, collection").fetchall()
+
+    rows = asyncio.run(clean())
+    assert ("co", "invoices", "3") in [(row[0], row[1], row[2]) for row in rows]
+    assert ("co", "invoices", "1") not in [(row[0], row[1], row[2]) for row in rows]
+    held = conn.execute(
+        "SELECT company_id, collection FROM docs_v2_unique "
+        "WHERE field_name='invoice_number' AND field_value=? ORDER BY company_id",
+        ('v:["INV-1"]',),
+    ).fetchall()
+    assert [(row[0], row[1]) for row in held] == [(CO, "invoices"), (OTHER, "invoices")]
+
+
+def _mariadb_dsn():
+    return (os.environ.get("STORAGE_SHARED_V2_TEST_DSN") or "").strip()
+
+
+def test_mariadb_migration_twice_and_concurrent_unique():
+    dsn = _mariadb_dsn()
+    if not dsn:
+        pytest.skip("STORAGE_SHARED_V2_TEST_DSN yok")
+    import pymysql
+    from urllib.parse import unquote, urlparse
+
+    from storage_migrations.engine import apply
+    from storage_migrations.session import connect
+
+    parsed = urlparse(dsn.replace("mariadb://", "mysql://", 1))
+    database = (parsed.path or "/").lstrip("/").split("?")[0]
+    admin = pymysql.connect(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
+        database=database,
+        charset="utf8mb4",
+        autocommit=True,
+        connect_timeout=5,
+    )
+    try:
+        with admin.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS docs_v2_unique")
+            cur.execute("DROP TABLE IF EXISTS docs_v2")
+            cur.execute("DROP TABLE IF EXISTS schema_version")
+            cur.execute("DROP TABLE IF EXISTS storage_marker")
+            cur.execute("DROP TABLE IF EXISTS storage_meta")
+    finally:
+        admin.close()
+
+    opened = connect(dsn, write=True)
+    try:
+        first = apply(opened, confirm=True, dry_run=False)
+        assert first.advanced == 3
+        assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+        second = apply(opened, confirm=True, dry_run=False)
+        assert second.advanced == 0
+        indexes = opened.fetchall(
+            "SELECT index_name FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND table_name = 'docs_v2'"
+        )
+        names = {row[0] for row in indexes}
+        assert "idx_v2_status" in names
+        assert "PRIMARY" in names
+        total = opened.fetchall(
+            "SELECT step_no FROM schema_version WHERE version = 3"
+        )[0][0]
+        opened.execute(
+            "UPDATE schema_version SET state = %s, step_no = %s WHERE version = %s",
+            ("applying", int(total) - 1, 3),
+        )
+        opened.commit()
+        third = apply(opened, confirm=True, dry_run=False)
+        assert third.rows[2].state == "uygulandı"
+        unique_idx = opened.fetchall(
+            "SELECT COUNT(*) FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND table_name = 'docs_v2_unique' "
+            "AND index_name = 'idx_v2_unique_doc'"
+        )[0][0]
+        assert int(unique_idx) >= 1
+        columns = opened.fetchall(
+            "SELECT column_type FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 'docs_v2' AND column_name = 'g_status'"
+        )
+        assert columns and "varchar" in str(columns[0][0]).lower()
+        doc_type = opened.fetchall(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 'docs_v2' AND column_name = 'doc'"
+        )[0][0]
+        assert str(doc_type).lower() in ("json", "longtext")
+    finally:
+        opened.close()
+
+    left = pymysql.connect(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
+        database=database,
+        charset="utf8mb4",
+        autocommit=False,
+        connect_timeout=5,
+    )
+    right = pymysql.connect(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
+        database=database,
+        charset="utf8mb4",
+        autocommit=False,
+        connect_timeout=5,
+    )
+    storage_shared_v2.reset_store()
+    original = storage_shared_v2.SharedV2Collection._sync_unique
+    try:
+        store_a = storage_shared_v2.SharedV2Store()
+        store_b = storage_shared_v2.SharedV2Store()
+        store_a.attach(left, "mysql", owned=False)
+        store_b.attach(right, "mysql", owned=False)
+        store_b.indexes = store_a.indexes
+        coll_a = storage_shared_v2.SharedV2Collection(store_a, CO, "invoices")
+        coll_b = storage_shared_v2.SharedV2Collection(store_b, CO, "invoices")
+
+        async def prepare():
+            await coll_a.create_index("invoice_number", unique=True)
+            await coll_a.insert_one({
+                "_id": "keep", "company_id": CO, "invoice_number": "OTHER",
+                "status": "open", "created_at": "2024-01-01",
+            })
+
+        asyncio.run(prepare())
+        barrier = threading.Barrier(2)
+
+        def synced(self, doc):
+            barrier.wait(timeout=8)
+            return original(self, doc)
+
+        storage_shared_v2.SharedV2Collection._sync_unique = synced
+        outcomes = []
+
+        def worker(coll, doc_id):
+            try:
+                asyncio.run(coll.insert_one({
+                    "_id": doc_id,
+                    "company_id": CO,
+                    "invoice_number": "RACE",
+                    "status": "open",
+                    "created_at": "2024-02-01",
+                }))
+                outcomes.append("ok")
+            except DuplicateKeyError:
+                outcomes.append("dup")
+
+        threads = [
+            threading.Thread(target=worker, args=(coll_a, "race-a")),
+            threading.Thread(target=worker, args=(coll_b, "race-b")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert sorted(outcomes) == ["dup", "ok"]
+        with left.cursor() as cur:
+            cur.execute(
+                "SELECT id, JSON_UNQUOTE(JSON_EXTRACT(doc, '$.invoice_number')) "
+                "FROM docs_v2 WHERE company_id=%s AND collection=%s AND "
+                "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.invoice_number'))=%s",
+                (CO, "invoices", "RACE"),
+            )
+            raced = cur.fetchall()
+        assert len(raced) == 1
+        found = asyncio.run(coll_a.find({"invoice_number": "RACE"}).to_list(10))
+        assert len(found) == 1
+        assert found[0]["invoice_number"] == "RACE"
+    finally:
+        storage_shared_v2.SharedV2Collection._sync_unique = original
+        storage_shared_v2.reset_store()
+        left.close()
+        right.close()

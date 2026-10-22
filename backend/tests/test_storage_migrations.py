@@ -73,19 +73,22 @@ def _count(session, table):
 
 def test_pack_versions_are_contiguous():
     pack = load_migrations()
-    assert [item.version for item in pack] == [1, 2]
+    assert [item.version for item in pack] == [1, 2, 3]
     assert pack[0].name == "storage_meta"
     assert pack[1].name == "marker_steps"
+    assert pack[2].name == "docs_v2"
     assert len(pack[0].steps) == 2
     assert len(pack[1].steps) == 2
+    assert pack[2].mysql_steps
+    assert pack[0].mysql_steps == ()
 
 
 def test_empty_target_then_second_apply_writes_nothing():
     session = _memory()
     first = apply(session, confirm=True, dry_run=False)
     assert first.wrote is True
-    assert first.advanced == 2
-    assert [row.state for row in first.rows] == ["uygulandı", "uygulandı"]
+    assert first.advanced == 3
+    assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
     assert _count(session, "storage_meta") == 1
     assert _count(session, "storage_marker") == 1
     session.writes = 0
@@ -113,8 +116,8 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
     ]
     assert len(creates) == 1
     done = apply(session, confirm=True, dry_run=False)
-    assert done.advanced == 1
-    assert [row.state for row in done.rows] == ["uygulandı", "uygulandı"]
+    assert done.advanced == 2
+    assert [row.state for row in done.rows] == ["uygulandı", "uygulandı", "uygulandı"]
     assert _count(session, "storage_marker") == 1
     creates = [
         sql for sql in session.calls
@@ -125,6 +128,35 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
     again = apply(session, confirm=True, dry_run=False)
     assert again.advanced == 0
     assert session.writes == 0
+
+
+def test_finished_index_step_is_not_created_again():
+    session = _memory()
+    apply(session, confirm=True, dry_run=False)
+    pack = load_migrations()
+    last = len(pack[2].steps)
+    name = "idx_v2_unique_doc"
+    found = session.fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (name,),
+    )
+    assert found
+    session.execute(
+        "UPDATE schema_version SET state = ?, step_no = ? WHERE version = ?",
+        ("applying", last - 1, 3),
+    )
+    session.commit()
+    session.calls.clear()
+    done = apply(session, confirm=True, dry_run=False)
+    assert done.rows[2].state == "uygulandı"
+    assert done.rows[2].step == last
+    created = [sql for sql in session.calls if sql.lstrip().upper().startswith("CREATE")]
+    assert created == []
+    found = session.fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (name,),
+    )
+    assert len(found) == 1
 
 
 def test_dry_run_and_missing_confirm_do_not_write():
