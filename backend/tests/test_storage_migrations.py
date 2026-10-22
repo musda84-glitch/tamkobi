@@ -432,6 +432,11 @@ def _assert_mariadb_schema(session):
 
 def _drop_storage(session):
     for table in (
+        "t_row_unique",
+        "t_orders",
+        "t_invoices",
+        "t_stock_moves",
+        "t_bank_transactions",
         "docs_v2_unique",
         "docs_v2",
         "storage_records",

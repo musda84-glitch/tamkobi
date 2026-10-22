@@ -1,0 +1,788 @@
+"""Gerçek tablo katmanı. Canlı veritabanına ve 8021 portuna bağlanmaz.
+
+orders, invoices, stock_movements, bank_transactions shared_v2 kipinde
+kendi tablolarına gider. Migration sürümleri load_migrations() sonucundan okunur.
+"""
+from __future__ import annotations
+
+import asyncio
+import itertools
+import os
+import re
+import sqlite3
+import sys
+import threading
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+import pytest
+
+_BACKEND = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_BACKEND))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
+
+from dashboard_memdb import MemDB  # noqa: E402
+from mysql_store import DuplicateKeyError  # noqa: E402
+from storage_migrations.engine import apply  # noqa: E402
+from storage_migrations.loader import load_migrations, steps_for  # noqa: E402
+from storage_migrations.session import Session  # noqa: E402
+from tenant_scope import TenantScope  # noqa: E402
+import storage_router  # noqa: E402
+import storage_shared_v2  # noqa: E402
+import storage_tables  # noqa: E402
+import tenant_db  # noqa: E402
+
+_DOCS_WORD = re.compile(r"\bdocs\b", re.IGNORECASE)
+_ALLOWED = re.compile(r"^(create|insert|alter)\b", re.IGNORECASE)
+_LAYOUT_NAMES = frozenset({"docs_v2", "storage_records", "collection_tables"})
+CO = "co"
+OTHER = "co_b"
+
+
+class _CountSession(Session):
+    def __init__(self, conn):
+        super().__init__(conn, "sqlite", read_only=False)
+        self.writes = 0
+
+    def execute(self, sql, params=None):
+        head = sql.strip().lstrip().upper()
+        if not head.startswith(("SELECT", "PRAGMA", "WITH", "EXPLAIN", "SHOW")):
+            self.writes += 1
+        return super().execute(sql, params)
+
+
+def _memory():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    return _CountSession(conn)
+
+
+def _apply_conn(conn):
+    apply(Session(conn, "sqlite", read_only=False), confirm=True, dry_run=False)
+
+
+def _pack():
+    return load_migrations()
+
+
+def _by_name(pack=None):
+    items = pack if pack is not None else _pack()
+    return {item.name: item for item in items}
+
+
+def _real(pack=None):
+    return _by_name(pack)["collection_tables"]
+
+
+@pytest.fixture
+def conn():
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    connection = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
+    _apply_conn(connection)
+    storage_shared_v2.bind_sqlite(connection)
+    yield connection
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    connection.close()
+
+
+def _orders(company_id=CO):
+    return storage_tables.collection_for(company_id, "orders")
+
+
+def _scope(company_id):
+    return TenantScope(
+        company_id=company_id,
+        allowed=frozenset({company_id}),
+        kind="user",
+        actor_id="user-a",
+        reason="test",
+    )
+
+
+def test_migration_matches_layout_and_stays_independent():
+    pack = _pack()
+    named = _by_name(pack)
+    assert set(_LAYOUT_NAMES) <= set(named)
+    real = named["collection_tables"]
+    assert real.mysql_steps
+    blob = "\n".join(real.steps + real.mysql_steps)
+    lowered = blob.lower()
+    assert _DOCS_WORD.search(blob) is None
+    assert "docs_v2" not in lowered
+    assert "storage_records" not in lowered
+    for step in real.steps + real.mysql_steps:
+        assert _ALLOWED.match(step)
+    sqlite_blob = "\n".join(real.steps)
+    mysql_blob = "\n".join(real.mysql_steps)
+    assert "doc LONGTEXT NOT NULL" in sqlite_blob
+    assert "doc JSON NOT NULL" in mysql_blob
+    assert "CREATE INDEX IF NOT EXISTS" in sqlite_blob
+    assert "CREATE INDEX IF NOT EXISTS" not in mysql_blob
+    assert "PRIMARY KEY (company_id, id)" in sqlite_blob
+    assert "PRIMARY KEY (company_id, collection, field_name, value_hash)" in sqlite_blob
+    for spec in storage_tables.SPECS.values():
+        assert f"CREATE TABLE IF NOT EXISTS {spec.table} " in sqlite_blob
+        for column, _field, width in spec.fields:
+            assert f"{column} VARCHAR({width})" in sqlite_blob
+            assert f"{column} VARCHAR({width})" in mysql_blob
+        for index_name, columns in spec.indexes:
+            listed = ", ".join(columns)
+            assert f"idx" in index_name
+            assert f"{index_name} ON {spec.table} ({listed})" in mysql_blob
+            assert f"IF NOT EXISTS {index_name} ON {spec.table} ({listed})" in sqlite_blob
+    assert "company_id VARCHAR(64) NOT NULL" in sqlite_blob
+    assert "id VARCHAR(191) NOT NULL" in sqlite_blob
+    others = "\n".join(named["docs_v2"].steps + named["storage_records"].steps).lower()
+    assert "t_orders" not in others
+    assert "t_row_unique" not in others
+    source = (_BACKEND / "storage_tables.py").read_text(encoding="utf-8")
+    assert "CREATE TABLE" not in source
+    versions = [item.version for item in pack]
+    assert versions == sorted(versions)
+    assert versions[0] == 1
+    assert real.version == 5
+    assert named["docs_v2"].version < real.version
+    assert named["storage_records"].version < real.version
+
+
+def test_second_apply_writes_nothing_and_interrupted_index_resumes():
+    session = _memory()
+    pack = _pack()
+    real = _real(pack)
+    first = apply(session, confirm=True, dry_run=False)
+    assert first.advanced == len(pack)
+    assert [row.state for row in first.rows] == ["uygulandı"] * len(first.rows)
+    assert "t_orders" in session.tables()
+    assert "t_invoices" in session.tables()
+    assert "t_stock_moves" in session.tables()
+    assert "t_bank_transactions" in session.tables()
+    assert "t_row_unique" in session.tables()
+    session.writes = 0
+    second = apply(session, confirm=True, dry_run=False)
+    assert second.advanced == 0
+    assert session.writes == 0
+    total = len(steps_for(real, session.dialect))
+    index_name = "idx_t_orders_date"
+    found = session.fetchall(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (index_name,),
+    )[0][0]
+    assert found == 1
+    session.execute(
+        "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+        ("applying", total - 1, "", real.version),
+    )
+    session.commit()
+    resumed = apply(session, confirm=True, dry_run=False)
+    row = next(item for item in resumed.rows if item.version == real.version)
+    assert row.state == "uygulandı"
+    assert row.step == total
+    found = session.fetchall(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (index_name,),
+    )[0][0]
+    assert found == 1
+    session.execute(
+        "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+        ("applying", 4, "", real.version),
+    )
+    session.commit()
+    continued = apply(session, confirm=True, dry_run=False)
+    row = next(item for item in continued.rows if item.version == real.version)
+    assert row.state == "uygulandı"
+    assert row.step == row.total
+    session.writes = 0
+    idle = apply(session, confirm=True, dry_run=False)
+    assert idle.advanced == 0
+    assert session.writes == 0
+
+
+def test_layout_migrations_apply_cleanly_in_any_order():
+    pack = _pack()
+    named = _by_name(pack)
+    chosen = tuple(named[name] for name in sorted(_LAYOUT_NAMES))
+    floor = min(item.version for item in chosen)
+    earlier = tuple(item for item in pack if item.version < floor)
+    expected = {
+        "docs_v2": "docs_v2",
+        "storage_records": "storage_records",
+        "collection_tables": "t_orders",
+    }
+    for item in chosen:
+        session = _memory()
+        alone = apply(session, earlier + (item,), confirm=True, dry_run=False)
+        assert alone.advanced == len(earlier) + 1
+        assert expected[item.name] in session.tables()
+        for other in chosen:
+            if other.name == item.name:
+                continue
+            assert expected[other.name] not in session.tables()
+        rest = apply(session, confirm=True, dry_run=False)
+        assert rest.advanced == len(pack) - len(earlier) - 1
+        assert [row.state for row in rest.rows] == ["uygulandı"] * len(rest.rows)
+        for marker in expected.values():
+            assert marker in session.tables()
+    for order in itertools.permutations(chosen):
+        session = _memory()
+        applied = apply(session, earlier + order, confirm=True, dry_run=False)
+        assert applied.advanced == len(earlier) + len(order)
+        assert [row.state for row in applied.rows] == ["uygulandı"] * len(applied.rows)
+        for marker in expected.values():
+            assert marker in session.tables()
+        session.writes = 0
+        again = apply(session, earlier + order, confirm=True, dry_run=False)
+        assert again.advanced == 0
+        assert session.writes == 0
+
+
+def test_crud_query_sort_page_and_company_isolation(conn):
+    own = _orders(CO)
+    other = _orders(OTHER)
+    invoices = storage_tables.collection_for(CO, "invoices")
+    stock = storage_tables.collection_for(CO, "stock_movements")
+    bank = storage_tables.collection_for(OTHER, "bank_transactions")
+
+    async def run():
+        await own.create_index(
+            [("company_id", 1), ("channel", 1), ("order_number", 1)],
+            unique=True,
+        )
+        rows = [
+            {"_id": "b", "order_number": "B-1", "order_status": "open", "order_date": "2024-03-01",
+             "contact_id": "c1", "channel": "b2b", "total_amount": 20, "note": "iki"},
+            {"_id": "a", "order_number": "A-1", "order_status": "open", "order_date": "2024-01-01",
+             "contact_id": "c2", "channel": "manual", "total_amount": "10.50", "note": "bir"},
+            {"_id": "c", "order_number": "C-1", "order_status": "closed", "order_date": "2024-02-01",
+             "contact_id": "c1", "channel": "b2b", "total_amount": 5, "note": "uc"},
+        ]
+        for row in rows:
+            await own.insert_one(row)
+        await other.insert_one({
+            "_id": "a", "order_number": "A-1", "order_status": "open", "order_date": "2024-01-01",
+            "contact_id": "c9", "channel": "b2b", "total_amount": 1,
+        })
+        await other.insert_one({
+            "_id": "z", "order_number": "B-1", "order_status": "open", "order_date": "2024-04-01",
+            "contact_id": "c9", "channel": "b2b", "total_amount": 9,
+        })
+        page = await own.find({"order_status": "open"}).sort("order_date", -1).skip(1).limit(1).to_list(10)
+        counted = await own.count_documents({"order_status": "open"})
+        by_note = await own.find({"note": "bir"}).to_list(5)
+        by_contact = await own.find({"contact_id": "c1"}).sort("order_date", 1).to_list(10)
+        ranged = await own.find({
+            "$and": [
+                {"order_date": {"$gte": "2024-02-01"}},
+                {"order_date": {"$lt": "2024-04-01"}},
+            ],
+        }).to_list(10)
+        hidden = await own.find({"company_id": OTHER}).to_list(10)
+        prefix = await own.find({"order_number": {"$regex": "^A-"}}).to_list(5)
+        grouped = await own.aggregate([
+            {"$match": {"order_status": "open"}},
+            {"$group": {"_id": "$contact_id", "n": {"$sum": "$total_amount"}}},
+        ]).to_list(None)
+        distinct = await own.distinct("channel", {"order_status": "open"})
+        updated = await own.update_one({"_id": "a"}, {"$set": {"order_status": "paid", "total_amount": 11}})
+        same = await own.update_one({"_id": "a"}, {"$set": {"order_status": "paid"}})
+        removed = await own.delete_one({"_id": "c"})
+        await invoices.insert_one({
+            "_id": "i1", "invoice_number": "F-1", "status": "open", "issue_date": "2024-01-15",
+            "contact_id": "c2", "grand_total": 12.5,
+        })
+        invoice_page = await invoices.find({"status": "open"}).sort("issue_date", -1).limit(1).to_list(5)
+        await stock.insert_one({
+            "_id": "m1", "product_id": "p1", "date": "2024-01-02", "change": -2, "status": "done",
+            "doc_no": "ST-1",
+        })
+        moves = await stock.find({"product_id": "p1"}).to_list(5)
+        await bank.insert_one({
+            "_id": "t1", "date": "2024-05-01", "amount": 10.5, "contact_id": "c1",
+            "match_status": "unmatched", "account_id": "acc", "doc_no": "DK-1",
+        })
+        txs = await bank.find({"match_status": "unmatched", "contact_id": "c1"}).sort("date", -1).to_list(5)
+        leaked = await own.find({}).to_list(20)
+        with pytest.raises(DuplicateKeyError):
+            await own.insert_one({
+                "_id": "dup", "order_number": "B-1", "order_status": "open", "order_date": "2024-06-01",
+                "channel": "b2b", "contact_id": "c3",
+            })
+        await own.insert_one({
+            "_id": "other-channel", "order_number": "B-1", "order_status": "open",
+            "order_date": "2024-06-02", "channel": "manual", "contact_id": "c3",
+        })
+        many = await own.delete_many({"order_status": "open"})
+        return {
+            "page": [doc["_id"] for doc in page],
+            "counted": counted,
+            "note": [doc["_id"] for doc in by_note],
+            "contact": [doc["_id"] for doc in by_contact],
+            "range": sorted(doc["_id"] for doc in ranged),
+            "hidden": hidden,
+            "prefix": [doc["_id"] for doc in prefix],
+            "group": sorted((row.get("_id"), row.get("n")) for row in grouped),
+            "distinct": sorted(distinct),
+            "updated": (updated.matched_count, updated.modified_count),
+            "same": (same.matched_count, same.modified_count),
+            "removed": removed.deleted_count,
+            "many": many.deleted_count,
+            "invoice": invoice_page[0]["invoice_number"],
+            "move": moves[0]["change"],
+            "tx": txs[0]["amount"],
+            "companies": {doc["company_id"] for doc in leaked},
+            "left": await own.count_documents({}),
+        }
+
+    storage_shared_v2.get_store().capture_plans = True
+    storage_shared_v2.get_store().python_scans = 0
+    got = asyncio.run(run())
+    assert got["page"] == ["a"]
+    assert got["counted"] == 2
+    assert got["note"] == ["a"]
+    assert got["contact"] == ["c", "b"]
+    assert got["range"] == ["b", "c"]
+    assert got["hidden"] == []
+    assert got["prefix"] == ["a"]
+    assert got["group"] == [("c1", 20.0), ("c2", 10.5)]
+    assert got["distinct"] == ["b2b", "manual"]
+    assert got["updated"] == (1, 1)
+    assert got["same"] == (1, 0)
+    assert got["removed"] == 1
+    assert got["many"] == 2
+    assert got["invoice"] == "F-1"
+    assert got["move"] == -2
+    assert got["tx"] == 10.5
+    assert got["companies"] == {CO}
+    assert got["left"] == 1
+    assert storage_shared_v2.get_store().python_scans == 0
+    assert "company_id" in storage_shared_v2.get_store().last_plan
+    status = conn.execute("SELECT order_status, total_amount FROM t_orders WHERE id = 'a'").fetchone()
+    assert status[0] == "paid"
+    assert status[1] == "11"
+    amount = conn.execute("SELECT amount, doc_date FROM t_stock_moves WHERE id = 'm1'").fetchone()
+    assert amount == ("-2", "2024-01-02")
+    bank_row = conn.execute(
+        "SELECT amount, doc_date, match_status FROM t_bank_transactions WHERE company_id = ?",
+        (OTHER,),
+    ).fetchone()
+    assert bank_row[0] == "10.5"
+    assert bank_row[1] == "2024-05-01"
+    assert bank_row[2] == "unmatched"
+    invoice = conn.execute("SELECT grand_total FROM t_invoices WHERE id = 'i1'").fetchone()
+    assert invoice[0] == "12.5"
+    foreign = conn.execute("SELECT id FROM t_orders WHERE company_id = ?", (OTHER,)).fetchall()
+    assert sorted(row[0] for row in foreign) == ["a", "z"]
+
+
+def test_long_values_are_clipped_in_column_and_match_full_text(conn):
+    number = "N" * 64 + "A"
+    other_number = "N" * 64 + "B"
+    status = "S" * 100
+    coll = _orders()
+
+    async def run():
+        await coll.create_index("order_number", unique=True)
+        await coll.insert_one({
+            "_id": "long",
+            "order_number": number,
+            "order_status": status,
+            "order_date": "2024-01-01",
+            "channel": "b2b",
+            "contact_id": "C" * 80,
+        })
+        await coll.insert_one({
+            "_id": "tail",
+            "order_number": other_number,
+            "order_status": "open",
+            "order_date": "2024-01-02",
+            "channel": "b2b",
+        })
+        stored = await coll.find_one({"_id": "long"})
+        by_full = await coll.find({"order_number": number}).to_list(5)
+        by_prefix = await coll.find({"order_number": "N" * 64}).to_list(5)
+        by_status = await coll.find({"order_status": status}).to_list(5)
+        return stored, by_full, by_prefix, by_status
+
+    stored, by_full, by_prefix, by_status = asyncio.run(run())
+    assert stored["order_number"] == number
+    assert stored["order_status"] == status
+    assert stored["contact_id"] == "C" * 80
+    assert [doc["_id"] for doc in by_full] == ["long"]
+    assert by_prefix == []
+    assert [doc["_id"] for doc in by_status] == ["long"]
+    column = conn.execute(
+        "SELECT order_number, order_status, contact_id FROM t_orders WHERE id = 'long'"
+    ).fetchone()
+    assert column[0] == "N" * storage_tables.TEXT_WIDTH
+    assert column[1] == "S" * storage_tables.TEXT_WIDTH
+    assert column[2] == "C" * storage_tables.TEXT_WIDTH
+    assert len(column[0]) == storage_tables.TEXT_WIDTH
+
+
+def test_overlong_key_names_the_field(conn):
+    coll = storage_tables.TableCollection(
+        storage_shared_v2.get_store(), "K" * (storage_tables.COMPANY_WIDTH + 1), "orders",
+        storage_tables.SPECS["orders"],
+    )
+
+    async def long_company():
+        await coll.insert_one({"_id": "1", "order_number": "A-1", "order_status": "open"})
+
+    with pytest.raises(ValueError, match="company_id"):
+        asyncio.run(long_company())
+
+    async def long_id():
+        await _orders().insert_one({
+            "_id": "I" * (storage_tables.ID_WIDTH + 1),
+            "order_number": "A-2",
+            "order_status": "open",
+        })
+
+    with pytest.raises(ValueError, match="_id"):
+        asyncio.run(long_id())
+    assert conn.execute("SELECT COUNT(*) FROM t_orders").fetchone()[0] == 0
+
+
+def test_router_sends_only_the_four_collections(monkeypatch):
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    monkeypatch.delenv("STORAGE_ROUTER_ENABLED", raising=False)
+    db = MemDB()
+
+    async def off():
+        await db.companies.insert_one({"_id": CO, "storage_mode": "shared_v2"})
+        handle = tenant_db.TenantDB(db, _scope(CO))
+        return handle._collection("orders")._raw, handle._collection("invoices")._raw
+
+    orders_off, invoices_off = asyncio.run(off())
+    assert orders_off is db.orders
+    assert invoices_off is db.invoices
+
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    storage_router.reset()
+
+    async def on():
+        await db.companies.insert_one({"_id": OTHER, "storage_mode": "legacy"})
+        shared = tenant_db.TenantDB(db, _scope(CO))
+        legacy = tenant_db.TenantDB(db, _scope(OTHER))
+        routed = {
+            name: type(shared._collection(name)._raw).__name__
+            for name in ("orders", "invoices", "stock_movements", "bank_transactions", "products", "contacts")
+        }
+        legacy_orders = legacy._collection("orders")._raw
+        return routed, legacy_orders
+
+    routed, legacy_orders = asyncio.run(on())
+    assert routed["orders"] == "TableCollection"
+    assert routed["invoices"] == "TableCollection"
+    assert routed["stock_movements"] == "TableCollection"
+    assert routed["bank_transactions"] == "TableCollection"
+    assert routed["products"] == "SharedV2Collection"
+    assert routed["contacts"] == "SharedV2Collection"
+    assert legacy_orders is db.orders
+    assert storage_shared_v2.get_store().conn is None
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+
+
+def test_concurrent_unique_write_has_one_winner(tmp_path):
+    path = tmp_path / "tables.db"
+    setup = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=15)
+    _apply_conn(setup)
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    storage_shared_v2.bind_sqlite(setup)
+    coll = _orders()
+
+    async def prepare():
+        await coll.create_index("order_number", unique=True)
+        await coll.insert_one({
+            "_id": "keep", "order_number": "KEEP", "order_status": "open",
+            "order_date": "2024-01-01", "channel": "b2b",
+        })
+
+    asyncio.run(prepare())
+    indexes = storage_shared_v2.get_store().indexes
+    outcomes = []
+    errors = []
+
+    def worker(doc_id):
+        local = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=15)
+        try:
+            store = storage_shared_v2.SharedV2Store()
+            store.attach(local, "sqlite", owned=False)
+            store.indexes = indexes
+            api = storage_tables.TableCollection(store, CO, "orders", storage_tables.SPECS["orders"])
+            try:
+                asyncio.run(api.insert_one({
+                    "_id": doc_id,
+                    "order_number": "RACE",
+                    "order_status": "open",
+                    "order_date": "2024-02-01",
+                    "channel": "b2b",
+                }))
+                outcomes.append("ok")
+            except DuplicateKeyError:
+                outcomes.append("dup")
+            except Exception as exc:
+                errors.append(f"{doc_id} {type(exc).__name__}: {exc}")
+        finally:
+            local.close()
+
+    threads = [
+        threading.Thread(target=worker, args=("race-a",)),
+        threading.Thread(target=worker, args=("race-b",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+    assert not [thread.name for thread in threads if thread.is_alive()]
+    assert errors == [], errors
+    assert sorted(outcomes) == ["dup", "ok"]
+    raced = setup.execute(
+        "SELECT id FROM t_orders WHERE company_id = ? AND order_number = ?",
+        (CO, "RACE"),
+    ).fetchall()
+    assert len(raced) == 1
+    storage_shared_v2.reset_store()
+    setup.close()
+
+
+def _mariadb_dsn():
+    return (
+        os.environ.get("STORAGE_MARIADB_DSN")
+        or os.environ.get("STORAGE_SHARED_V2_TEST_DSN")
+        or ""
+    ).strip()
+
+
+def _drop_mariadb(cur):
+    for table in (
+        "t_row_unique",
+        "t_orders",
+        "t_invoices",
+        "t_stock_moves",
+        "t_bank_transactions",
+        "docs_v2_unique",
+        "docs_v2",
+        "storage_records",
+        "storage_marker",
+        "storage_meta",
+        "schema_version",
+    ):
+        cur.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+def test_mariadb_strict_migration_and_concurrent_unique():
+    dsn = _mariadb_dsn()
+    if not dsn:
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+    import pymysql
+
+    from storage_migrations.session import connect
+
+    parsed = urlparse(dsn.replace("mariadb://", "mysql://", 1).replace("mysql+pymysql://", "mysql://", 1))
+    database = (parsed.path or "/").lstrip("/").split("?")[0]
+    admin = pymysql.connect(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
+        database=database,
+        charset="utf8mb4",
+        autocommit=True,
+        connect_timeout=5,
+    )
+    try:
+        with admin.cursor() as cur:
+            _drop_mariadb(cur)
+    finally:
+        admin.close()
+
+    pack = _pack()
+    real = _real(pack)
+    opened = connect(dsn, write=True)
+    try:
+        opened.execute(
+            "SET SESSION sql_mode = "
+            "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        )
+        first = apply(opened, confirm=True, dry_run=False)
+        assert first.advanced == len(pack)
+        assert {row.version for row in first.rows} == {item.version for item in pack}
+        assert [row.state for row in first.rows] == ["uygulandı"] * len(pack)
+        second = apply(opened, confirm=True, dry_run=False)
+        assert second.advanced == 0
+        total = len(steps_for(real, opened.dialect))
+        opened.execute(
+            "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+            ("applying", total - 1, "", real.version),
+        )
+        opened.commit()
+        resumed = apply(opened, confirm=True, dry_run=False)
+        row = next(item for item in resumed.rows if item.version == real.version)
+        assert row.state == "uygulandı"
+        assert row.step == total
+        indexes = {
+            str(item[0])
+            for item in opened.fetchall(
+                "SELECT index_name FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 't_orders'"
+            )
+        }
+        assert "idx_t_orders_date" in indexes
+        assert "idx_t_orders_status" in indexes
+        assert "idx_t_orders_contact" in indexes
+        doc_type = opened.fetchall(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 't_invoices' AND column_name = 'doc'"
+        )[0][0]
+        assert str(doc_type).lower() in ("json", "longtext")
+        status_type = opened.fetchall(
+            "SELECT column_type FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 't_invoices' AND column_name = 'status'"
+        )[0][0]
+        assert "varchar(64)" in str(status_type).lower()
+    finally:
+        opened.close()
+
+    def connect_worker():
+        worker = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=database,
+            charset="utf8mb4",
+            autocommit=False,
+            connect_timeout=5,
+        )
+        with worker.cursor() as cur:
+            cur.execute(
+                "SET SESSION sql_mode = "
+                "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+            )
+            cur.execute("SET SESSION innodb_lock_wait_timeout = 2")
+        worker.commit()
+        return worker
+
+    storage_shared_v2.reset_store()
+    original = storage_tables.TableCollection._sync_unique
+    setup = connect_worker()
+    number = "F" * 80
+    try:
+        store = storage_shared_v2.SharedV2Store()
+        store.attach(setup, "mysql", owned=False)
+        api = storage_tables.TableCollection(store, CO, "invoices", storage_tables.SPECS["invoices"])
+
+        async def prepare():
+            await api.create_index("invoice_number", unique=True)
+            await api.insert_one({
+                "_id": "keep",
+                "invoice_number": number,
+                "status": "S" * 100,
+                "issue_date": "2024-01-01",
+                "grand_total": "1",
+            })
+
+        asyncio.run(prepare())
+        kept = asyncio.run(api.find_one({"invoice_number": number}))
+        assert kept["status"] == "S" * 100
+        assert asyncio.run(api.find({"status": "S" * 64}).to_list(5)) == []
+        column = setup.cursor()
+        column.execute(
+            "SELECT status, invoice_number FROM t_invoices WHERE id = %s",
+            ("keep",),
+        )
+        stored = column.fetchone()
+        column.close()
+        assert stored[0] == "S" * storage_tables.TEXT_WIDTH
+        assert stored[1] == "F" * storage_tables.TEXT_WIDTH
+        indexes = store.indexes
+        barrier = threading.Barrier(2)
+        entered = {"n": 0}
+        gate = threading.Lock()
+
+        def synced(self, doc):
+            with gate:
+                entered["n"] += 1
+                turn = entered["n"]
+            if turn <= 2:
+                barrier.wait(timeout=8)
+            return original(self, doc)
+
+        storage_tables.TableCollection._sync_unique = synced
+        outcomes = []
+        errors = []
+
+        def worker(doc_id):
+            local = connect_worker()
+            try:
+                local_store = storage_shared_v2.SharedV2Store()
+                local_store.attach(local, "mysql", owned=False)
+                local_store.indexes = indexes
+                coll = storage_tables.TableCollection(
+                    local_store, CO, "invoices", storage_tables.SPECS["invoices"],
+                )
+                try:
+                    asyncio.run(coll.insert_one({
+                        "_id": doc_id,
+                        "invoice_number": "RACE",
+                        "status": "open",
+                        "issue_date": "2024-02-01",
+                    }))
+                    outcomes.append("ok")
+                except DuplicateKeyError:
+                    outcomes.append("dup")
+                except Exception as exc:
+                    errors.append(f"{doc_id} {type(exc).__name__}: {exc}")
+            except Exception as exc:
+                errors.append(f"{doc_id} bağlantı {type(exc).__name__}: {exc}")
+            finally:
+                local.close()
+
+        threads = [
+            threading.Thread(target=worker, args=("race-a",), name="race-a"),
+            threading.Thread(target=worker, args=("race-b",), name="race-b"),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+        assert not [thread.name for thread in threads if thread.is_alive()]
+        assert errors == [], errors
+        assert sorted(outcomes) == ["dup", "ok"]
+        setup.commit()
+        with setup.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM t_invoices WHERE company_id = %s AND "
+                "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.invoice_number')) = %s",
+                (CO, "RACE"),
+            )
+            raced = cur.fetchall()
+        assert len(raced) == 1
+    finally:
+        storage_tables.TableCollection._sync_unique = original
+        storage_shared_v2.reset_store()
+        try:
+            setup.close()
+        finally:
+            admin = pymysql.connect(
+                host=parsed.hostname or "127.0.0.1",
+                port=parsed.port or 3306,
+                user=unquote(parsed.username or ""),
+                password=unquote(parsed.password or ""),
+                database=database,
+                charset="utf8mb4",
+                autocommit=True,
+                connect_timeout=5,
+            )
+            try:
+                with admin.cursor() as cur:
+                    _drop_mariadb(cur)
+            finally:
+                admin.close()

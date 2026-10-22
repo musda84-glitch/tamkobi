@@ -1,7 +1,9 @@
 """StorageRouter. Canlı veritabanına bağlanmaz.
 
 Bayrak kapalıyken TenantDB bugünkü koleksiyonu döner. Bayrak açıkken
-legacy aynı arka uçtur. shared_v2 docs_v2 koleksiyonuna gider ve bağlantı açmaz.
+legacy aynı arka uçtur. shared_v2 ürün gibi koleksiyonları docs_v2'ye,
+orders, invoices, stock_movements ve bank_transactions kendi tablolarına
+gider; bağlantı açılmaz.
 dedicated ayrı veritabanına gider; DSN yoksa açık hata verir, legacy'ye düşmez.
 Bilinmeyen kip açık hata verir.
 """

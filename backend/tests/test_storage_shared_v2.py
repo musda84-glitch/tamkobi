@@ -775,6 +775,11 @@ def test_mariadb_migration_twice_and_concurrent_unique():
     )
     try:
         with admin.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS t_row_unique")
+            cur.execute("DROP TABLE IF EXISTS t_orders")
+            cur.execute("DROP TABLE IF EXISTS t_invoices")
+            cur.execute("DROP TABLE IF EXISTS t_stock_moves")
+            cur.execute("DROP TABLE IF EXISTS t_bank_transactions")
             cur.execute("DROP TABLE IF EXISTS docs_v2_unique")
             cur.execute("DROP TABLE IF EXISTS docs_v2")
             cur.execute("DROP TABLE IF EXISTS storage_records")
