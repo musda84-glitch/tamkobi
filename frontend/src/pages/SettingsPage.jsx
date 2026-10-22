@@ -871,19 +871,21 @@ export default function SettingsPage({ embedded = false }) {
     axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {});
     return undefined;
   }, [companyId]);
+  // Rol düzenleyici 1280px'te üç sütun ister; ayar menüsü bu sekmede üste alınır.
+  const rolesWide = shownTab === "users";
   return (
     <div className="space-y-6" data-testid="settings-page">
       {!companyId && <NoCompanyNotice />}
       {!embedded && <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Firma Ayarları</h1><p className="text-xs sm:text-sm text-slate-500">Şirket bilgileri, form şablonları ve tüm entegrasyon ayarları tek yerde</p></div>}
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
-        <nav className="w-full lg:w-60 shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex lg:flex-col gap-1 overflow-x-auto lg:sticky lg:top-20" data-testid="settings-side-menu">
+      <div className={`flex flex-col items-start ${rolesWide ? "gap-3" : "gap-6 lg:flex-row"}`}>
+        <nav className={`w-full shrink-0 bg-white border border-slate-200 rounded-2xl p-2 flex gap-1 overflow-x-auto ${rolesWide ? "" : "lg:w-60 lg:flex-col lg:sticky lg:top-20"}`} data-testid="settings-side-menu">
           {SETTINGS_TAB_GROUPS.map((g) => {
             const tabs = navTabs.filter(([k]) => g.tabs.includes(k));
             if (!tabs.length) return null;
             const groupActive = g.tabs.includes(shownTab);
             return (
-              <div key={g.id} className={`flex lg:flex-col gap-1 shrink-0 ${groupActive ? "lg:bg-slate-50 lg:rounded-xl" : ""}`} data-testid={`settings-group-${g.id}`}>
-                <div className={`hidden lg:block px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider ${groupActive ? "text-emerald-700" : "text-slate-400"}`}>{g.label}</div>
+              <div key={g.id} className={`flex gap-1 shrink-0 ${rolesWide ? "" : "lg:flex-col"} ${!rolesWide && groupActive ? "lg:bg-slate-50 lg:rounded-xl" : ""}`} data-testid={`settings-group-${g.id}`}>
+                <div className={`${rolesWide ? "hidden" : "hidden lg:block"} px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider ${groupActive ? "text-emerald-700" : "text-slate-400"}`}>{g.label}</div>
                 {tabs.map(([k, l, Icon]) => (
                   <button key={k} onClick={() => selectTab(k)} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition text-left ${shownTab === k ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`} data-testid={`settings-tab-${k}`}>
                     <Icon className={`w-4 h-4 shrink-0 ${shownTab === k ? "text-white" : "text-slate-400"}`} /> {l}
@@ -893,7 +895,7 @@ export default function SettingsPage({ embedded = false }) {
             );
           })}
         </nav>
-        <div className="flex-1 min-w-0 space-y-6">
+        <div className={`min-w-0 space-y-6 ${rolesWide ? "w-full" : "flex-1"}`}>
           {shownTab === "company" && <div className="space-y-4"><CompanyForm companyId={companyId} /><CompanyLocationPanel companyId={companyId} /></div>}
           {shownTab === "notifications" && <TenantNotifyPanel companyId={companyId} canEdit={notifyCanEdit} />}
           {shownTab === "plan" && <MyPlanPanel companyId={companyId} />}
