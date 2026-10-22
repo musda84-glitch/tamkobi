@@ -18,6 +18,15 @@ const COOL_IDS = STATION_PALETTE.map((item) => item.id);
 const WARM_IDS = PROJECT_PALETTE.map((item) => item.id);
 
 describe("stationColor", () => {
+  test("mockup paleti: Kesim mor, Montaj yeşil, proje sıcak ton", () => {
+    expect(stationColor("Kesim istasyonu").bg).toBe("#6d28d9");
+    expect(stationColor("Montaj istasyonu").bg).toBe("#0f766e");
+    expect(stationColor("Kesim istasyonu").fg).toBe("#ffffff");
+    expect(projectColor("prj-0001").stripe).toBe("hsl(330 70% 38%)");
+    expect(projectColor("prj-0002").stripe).toBe("hsl(80 70% 38%)");
+    expect(projectColor("prj-0001").id).not.toBe(stationColor("Kesim istasyonu").id);
+  });
+
   test("aynı istasyon adı her zaman aynı soğuk rengi verir", () => {
     const names = ["CNC", "Montaj", "Kesim", "Delik", "Kenar Bant", "Paketleme", "HOLZHER", ""];
     names.forEach((name) => {

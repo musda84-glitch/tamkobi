@@ -181,8 +181,8 @@ test("kart reçete adını büyük başlık yapar, etiket ve renkleri çizer", a
 
   const tag = host.querySelector('[data-testid="wo-station-tag-URT-2026-0003-1"]');
   const tone = stationColor("CNC");
-  expect(tag.textContent).toBe("CNC");
-  expect(tag.className).toMatch(/bg-(blue|sky|cyan|teal|indigo|violet|purple)-100/);
+  expect(tag.textContent).toBe("■ CNC");
+  expect(tag.className).not.toMatch(/-100/);
   expect(tag.getAttribute("data-station-color")).toBe(tone.id);
   expect(tag.style.backgroundColor).toBe(cssColor("backgroundColor", tone.bg));
   expect(tag.style.color).toBe(cssColor("color", tone.fg));
@@ -190,9 +190,9 @@ test("kart reçete adını büyük başlık yapar, etiket ve renkleri çizer", a
   const project = projectColor("p14");
   expect(project.id).not.toBe("neutral");
   expect(card.getAttribute("data-project-color")).toBe(project.id);
-  expect(card.className).toMatch(/border-l-4/);
+  expect(card.className).toMatch(/border-l-8/);
   expect(card.className).toMatch(/border-blue-200/);
-  expect(card.style.borderLeftWidth).toBe("4px");
+  expect(card.style.borderLeftWidth).toBe("8px");
   expect(card.style.borderLeftColor).toBe(cssColor("borderLeftColor", project.stripe));
 
   const banner = host.querySelector('[data-testid="shopfloor-station-banner-cnc"]');
