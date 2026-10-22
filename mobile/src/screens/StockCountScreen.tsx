@@ -74,7 +74,7 @@ export function StockCountScreen() {
   return (
     <Screen onRefresh={load}>
       <H1>Stok Sayımı</H1>
-      <Muted>Barkod okutun, adet çarpanı ve seri okuma ile sayın.</Muted>
+      <Muted>Barkod okutun: dokununca tek, basılı tutunca seri. Adet çarpanı geçerlidir.</Muted>
       <ErrorBanner message={error} />
 
       {canEdit ? (
