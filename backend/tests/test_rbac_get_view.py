@@ -156,18 +156,25 @@ def test_unmapped_path_and_missing_role_deny():
 
 
 def test_get_extra_does_not_change_mutation_mapping():
-    assert rbac.module_for_path("/api/e-invoice/inv_1/pdf") is None
+    assert rbac.module_for_path("/api/e-invoice/inv_1/pdf") == "/invoices"
     assert rbac.module_for_get_path("/api/e-invoice/inv_1/pdf") == "/invoices"
-    assert rbac.mutation_allowed(None, "/api/e-invoice/inv_1/pdf", {"/invoices": "none"}, "POST") is True
+    assert rbac.mutation_allowed(None, "/api/unknown-write", {"/invoices": "edit"}, "POST") is False
+    assert rbac.mutation_allowed("/invoices", "/api/e-invoice/create", {"/invoices": "none"}, "POST") is False
+    assert rbac.mutation_allowed("/invoices", "/api/e-invoice/create", {"/invoices": "edit"}, "POST") is True
     assert rbac.module_for_get_path("/api/integrations/cargo") == "/cargo"
     assert rbac.module_for_get_path("/api/integrations/ecommerce/mappings") == "/ecommerce"
     assert rbac.module_for_get_path("/api/integrations/isnet/egress") == "/settings"
     assert rbac.module_for_path("/api/integrations/isnet/egress") is None
+    assert rbac.module_for_path("/api/integrations/isnet/save") == "/settings"
     assert rbac.module_for_get_path("/api/expense-budgets") == "/expenses"
+    assert rbac.module_for_path("/api/expense-budgets") == "/expenses"
     assert rbac.module_for_get_path("/api/marketplace/products") == "/ecommerce"
+    assert rbac.module_for_path("/api/marketplace/claims/c1/approve") == "/orders"
     assert rbac.module_for_get_path("/api/account/gib-credits") == "/settings"
     assert rbac.module_for_get_path("/api/label-templates") == "/stock"
-    assert rbac.module_for_path("/api/label-templates") is None
+    assert rbac.module_for_path("/api/label-templates") == "/stock"
+    assert rbac.module_for_get_path("/api/personnel/attendance") == "/personnel"
+    assert rbac.module_for_path("/api/personnel/attendance/att_1/confirm") == "/personnel"
 
 
 def _http(method, path, query, token):

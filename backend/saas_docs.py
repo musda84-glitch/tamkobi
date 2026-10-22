@@ -79,6 +79,12 @@ def init(db):
 
 
 def _tl(n: float) -> str:
+    try:
+        import rbac
+        if rbac.price_mask_active():
+            n = 0.0
+    except Exception:
+        pass
     return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"
 
 
