@@ -5,10 +5,11 @@ bugünkü koleksiyonu döner. Bayrak açıkken firma ayarı kısa TTL ile
 önbelleğe alınır; her istekte companies sorgusu yapılmaz.
 
 Kip, TenantDB kurulurken bir kez sabitlenir. TTL istek ortasında dolsa
-da aynı örnek yeniden okumaz ve gerçek sürücüde senkron hataya düşmez.
-Önbellek boşsa giriş noktaları async yükler. Giriş noktası dışında
-senkron okuma yoksa bilinen eski kip kullanılır; o da yoksa legacy
-sayılır ve hata verilmez.
+da aynı örnek yeniden okumaz. Önbellek hiç yoksa giriş noktası dışında
+gerçek sürücüye sorulmaz ve legacy sayılır; hata verilmez. Süresi
+dolmuş kayıt katalogdan yeniden okunur. Kip değişince storage_epoch
+artar. Yazma kilidi katalogdaki storage_write_lock alanındadır; her
+süreç kısa TTL ile bakar.
 
 Bu sürüm legacy, shared_v2 ve dedicated arka uçlarını tanır.
 shared_v2 kipinde orders, invoices, stock_movements ve bank_transactions
@@ -23,7 +24,10 @@ yalnız dedicated koleksiyon açılırken yapılır.
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
+import inspect
+import json
 import logging
 import os
 import re
@@ -39,6 +43,7 @@ DEDICATED = "dedicated"
 KNOWN_MODES = frozenset({LEGACY, SHARED_V2, DEDICATED})
 DSN_FIELD = "dedicated_dsn_ref"
 MODE_FIELD = "storage_mode"
+EPOCH_FIELD = "storage_epoch"
 WRITE_LOCK_FIELD = "storage_write_lock"
 ENV_FLAG = "STORAGE_ROUTER_ENABLED"
 WRITE_LOCK_MESSAGE = (
@@ -46,12 +51,17 @@ WRITE_LOCK_MESSAGE = (
     "Yazma istekleri taşıma bitene kadar reddedilir."
 )
 TTL_SECONDS = 15.0
+LOCK_TTL_SECONDS = 2.0
 CACHE_MAX = 1024
 
 _ON = frozenset({"1", "true", "yes", "on"})
 _MISS = object()
+_UNREAD = object()
 UNSET = object()
-_cache: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
+# (mode, exp, epoch, locked)
+_cache: "OrderedDict[str, tuple]" = OrderedDict()
+# (locked, exp) — yazma yolu bunu okur, şirket belgesini her yazışta değil
+_lock_cache: "OrderedDict[str, tuple[bool, float]]" = OrderedDict()
 read_count = 0
 _write_locks: set[str] = set()
 _move_owner: Optional[str] = None
@@ -75,6 +85,26 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _env_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name, "")
+    if not str(raw).strip():
+        return max(0.0, float(default))
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return max(0.0, float(default))
+
+
+def mode_ttl() -> float:
+    """Kip önbelleği. Taşıma, kilidi açmadan önce en az bu kadar bekler."""
+    return _env_seconds("STORAGE_MOVE_MODE_TTL", TTL_SECONDS)
+
+
+def lock_ttl() -> float:
+    """Yazma kilidi önbelleği. Kopyadan önce en az bu kadar beklenir."""
+    return _env_seconds("STORAGE_MOVE_LOCK_TTL", LOCK_TTL_SECONDS)
+
+
 def enabled() -> bool:
     """Ortam bayrağı. Boş veya tanımsız değer kapalıdır."""
     return os.environ.get(ENV_FLAG, "").strip().lower() in _ON
@@ -84,6 +114,7 @@ def reset() -> None:
     """Testler önbelleği ve sayacı sıfırlar. Ortam bayrağına dokunmaz."""
     global read_count, _move_owner
     _cache.clear()
+    _lock_cache.clear()
     read_count = 0
     _write_locks.clear()
     _move_owner = None
@@ -150,7 +181,7 @@ def _cached(company_id: str):
     row = _cache.get(company_id)
     if not row:
         return _MISS
-    mode, exp = row
+    mode, exp = row[0], row[1]
     if _now() >= exp:
         return _MISS
     _cache.move_to_end(company_id)
@@ -165,12 +196,28 @@ def _stale(company_id: str):
     return row[0]
 
 
-def _store(company_id: str, mode: str) -> str:
-    _cache[company_id] = (mode, _now() + TTL_SECONDS)
+def _view(doc: Optional[dict]) -> tuple[str, int, bool]:
+    mode = _mode_from_doc(doc)
+    epoch = 0
+    if isinstance(doc, dict):
+        try:
+            epoch = int(doc.get(EPOCH_FIELD) or 0)
+        except (TypeError, ValueError):
+            epoch = 0
+    locked = bool(doc.get(WRITE_LOCK_FIELD)) if isinstance(doc, dict) else False
+    return mode, epoch, locked
+
+
+def _store(company_id: str, mode: str, epoch: int = 0, locked: bool = False) -> str:
+    now = _now()
+    _cache[company_id] = (mode, now + mode_ttl(), int(epoch), bool(locked))
     _cache.move_to_end(company_id)
+    _lock_cache[company_id] = (bool(locked), now + lock_ttl())
+    _lock_cache.move_to_end(company_id)
     limit = CACHE_MAX if CACHE_MAX >= 1 else 1
     while len(_cache) > limit:
-        _cache.popitem(last=False)
+        gone, _row = _cache.popitem(last=False)
+        _lock_cache.pop(gone, None)
     return mode
 
 
@@ -189,28 +236,145 @@ def _mode_from_doc(doc: Optional[dict]) -> str:
     return normalize_mode(doc.get(MODE_FIELD))
 
 
+def _memory_doc(db, company_id: str):
+    """Bellek içi docs listesi. Gerçek sürücüde _UNREAD."""
+    companies = _companies(db)
+    docs = getattr(companies, "docs", None)
+    if not isinstance(docs, list):
+        return _UNREAD
+    for doc in docs:
+        if str((doc or {}).get("_id") or "") == company_id:
+            return doc
+    return None
+
+
+def _drive(awaitable):
+    """Döngü yokken bekler. Döngü varken ayrı iş parçacığında bekler.
+
+    aiomysql havuzu burada kullanılmaz; bu yol bellek ve sahte sürücü içindir.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    box: dict = {}
+
+    def _worker() -> None:
+        try:
+            box["value"] = asyncio.run(awaitable)
+        except BaseException as exc:  # noqa: BLE001 — çağıran _UNREAD'e çevirir
+            box["error"] = exc
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
+def _sql_company(settings: dict, company_id: str):
+    """Katalog belgesi. Bağlantı ayarı loglanmaz. Hata _UNREAD döner."""
+    try:
+        import pymysql
+    except Exception:
+        return _UNREAD
+    conn = None
+    try:
+        import db_ssl
+
+        conn = pymysql.connect(
+            host=settings.get("host") or "127.0.0.1",
+            port=int(settings.get("port") or 3306),
+            user=settings.get("user") or "",
+            password=settings.get("password") or "",
+            database=settings.get("db") or "",
+            charset=settings.get("charset") or "utf8mb4",
+            autocommit=True,
+            connect_timeout=3,
+            **db_ssl.connect_kwargs(settings),
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT doc FROM docs WHERE collection=%s AND id=%s",
+                ("companies", company_id),
+            )
+            row = cur.fetchone()
+    except Exception:
+        return _UNREAD
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if not row:
+        return None
+    raw = row[0]
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return _UNREAD
+    return raw if isinstance(raw, dict) else _UNREAD
+
+
+def _read_company_doc(db, company_id: str):
+    """Şirket belgesi. Yoksa None. Okunamazsa _UNREAD. Hata atmaz."""
+    if db is None:
+        return _UNREAD
+    memory = _memory_doc(db, company_id)
+    if memory is not _UNREAD:
+        return memory
+    settings = getattr(db, "_settings", None)
+    if isinstance(settings, dict) and settings.get("host") and settings.get("db"):
+        return _sql_company(settings, company_id)
+    find_one = getattr(_companies(db), "find_one", None)
+    if find_one is None:
+        return _UNREAD
+    try:
+        result = find_one({"_id": company_id})
+        if inspect.isawaitable(result):
+            result = _drive(result)
+    except Exception:
+        return _UNREAD
+    if result is None:
+        return None
+    return result if isinstance(result, dict) else _UNREAD
+
+
 def _read_sync(db, company_id: str):
     """Bellek içi docs listesi varsa senkron okur. Gerçek sürücüde None.
 
-    MySQL havuzu burada bekletilmez ve boş önbellek hata üretmez.
+    Soğuk önbellek gerçek sürücüye burada gitmez. Süresi dolmuş kayıt
+    _refresh_mode ile okunur.
     """
-    docs = getattr(_companies(db), "docs", None)
-    if not isinstance(docs, list):
+    memory = _memory_doc(db, company_id)
+    if memory is _UNREAD:
         return None
     _bump()
-    found = None
-    for doc in docs:
-        if str((doc or {}).get("_id") or "") == company_id:
-            found = doc
-            break
-    return _store(company_id, _mode_from_doc(found))
+    mode, epoch, locked = _view(memory if isinstance(memory, dict) else None)
+    return _store(company_id, mode, epoch, locked)
+
+
+def _refresh_mode(db, company_id: str):
+    """Süresi dolmuş kipi katalogdan yeniden okur. Okunamazsa None."""
+    doc = _read_company_doc(db, company_id)
+    if doc is _UNREAD:
+        return None
+    _bump()
+    mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
+    return _store(company_id, mode, epoch, locked)
 
 
 def mode_for_handle(db, company_id: str) -> str:
     """TenantDB kurulumunda sabitlenecek kip.
 
-    Taze önbellek, sonra bellek içi docs, sonra süresi dolmuş kayıt.
-    Hiçbiri yoksa legacy. Gerçek sürücüde sorgu atmaz, hata vermez.
+    Taze önbellek hemen döner. Önbellek hiç yoksa yalnız bellek içi
+    katalog okunur; gerçek sürücüye sorulmaz ve hata verilmez.
+    Süresi dolmuş kayıt katalogdan yeniden okunur.
     """
     cid = str(company_id or "").strip()
     if not cid:
@@ -218,9 +382,14 @@ def mode_for_handle(db, company_id: str) -> str:
     hit = _cached(cid)
     if hit is not _MISS:
         return hit
-    synced = _read_sync(db, cid)
-    if synced is not None:
-        return synced
+    if cid not in _cache:
+        synced = _read_sync(db, cid)
+        if synced is not None:
+            return synced
+        return LEGACY
+    refreshed = _refresh_mode(db, cid)
+    if refreshed is not None:
+        return refreshed
     stale = _stale(cid)
     if stale is not _MISS:
         return stale
@@ -243,7 +412,7 @@ async def load_mode(db, company_id: str) -> str:
     """Firma kipini döndürür. TTL dolmadan companies sorgusu yapmaz.
 
     shared_v2 / dedicated / bilinmeyen kip burada hata atmaz; seçim
-    legacy_collection içindedir. Projeksiyon yalnız storage_mode ister.
+    legacy_collection içindedir. Projeksiyon kip, epoch ve yazma kilidini ister.
     """
     cid = str(company_id or "").strip()
     if not cid:
@@ -252,8 +421,12 @@ async def load_mode(db, company_id: str) -> str:
     if hit is not _MISS:
         return hit
     _bump()
-    doc = await _companies(db).find_one({"_id": cid}, {MODE_FIELD: 1})
-    return _store(cid, _mode_from_doc(doc))
+    doc = await _companies(db).find_one(
+        {"_id": cid},
+        {MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1},
+    )
+    mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
+    return _store(cid, mode, epoch, locked)
 
 
 def collection_for_mode(db, mode: str, company_id: str, name: str):
@@ -265,21 +438,32 @@ def collection_for_mode(db, mode: str, company_id: str, name: str):
     dönmez.
     """
     if mode == LEGACY:
-        return db[name]
+        return _bind_catalog(db[name], db)
     if mode == SHARED_V2:
         import storage_tables
 
         if name in storage_tables.REAL_COLLECTIONS:
-            return storage_tables.collection_for(company_id, name)
+            return _bind_catalog(storage_tables.collection_for(company_id, name), db)
         import storage_shared_v2
 
-        return storage_shared_v2.collection_for(company_id, name)
+        return _bind_catalog(storage_shared_v2.collection_for(company_id, name), db)
     if mode == DEDICATED:
         import storage_dedicated
 
-        return storage_dedicated.collection(db, company_id, name)
+        return _bind_catalog(storage_dedicated.collection(db, company_id, name), db)
     reject_unless_legacy(mode, company_id)
-    return db[name]
+    return _bind_catalog(db[name], db)
+
+
+def _bind_catalog(coll, db):
+    """Yazma yolu şirket kilidini bu katalogdan okur."""
+    if coll is None or db is None:
+        return coll
+    try:
+        setattr(coll, "_catalog_db", db)
+    except Exception:
+        return coll
+    return coll
 
 
 def legacy_collection(db, company_id: str, name: str):
@@ -518,42 +702,83 @@ class StorageMoveBusy(RuntimeError):
 
 
 def any_write_lock() -> bool:
-    return bool(_write_locks)
+    now = _now()
+    if _write_locks:
+        return True
+    for locked, exp in _lock_cache.values():
+        if locked and now < exp:
+            return True
+    return False
 
 
-def company_write_locked(company_id: str) -> bool:
-    return str(company_id or "") in _write_locks
+def note_write_lock(company_id: str, locked: bool) -> None:
+    """Bu sürecin kilit önbelleği. Katalog yazısı ayrıca yapılır."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    _lock_cache[cid] = (bool(locked), _now() + lock_ttl())
+    _lock_cache.move_to_end(cid)
+    if locked:
+        _write_locks.add(cid)
+    else:
+        _write_locks.discard(cid)
+
+
+def _locked_now(db, company_id: str) -> bool:
+    cid = str(company_id or "").strip()
+    if not cid:
+        return False
+    row = _lock_cache.get(cid)
+    if row is not None and _now() < row[1]:
+        return bool(row[0])
+    doc = _read_company_doc(db, cid)
+    if doc is _UNREAD:
+        if row is not None:
+            return bool(row[0])
+        return False
+    mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
+    if _cached(cid) is _MISS:
+        _store(cid, mode, epoch, locked)
+    else:
+        _lock_cache[cid] = (locked, _now() + lock_ttl())
+        _lock_cache.move_to_end(cid)
+    return locked
+
+
+def company_write_locked(company_id: str, db=None) -> bool:
+    """Katalogdaki kilit. Taze önbellek sorgu atmaz."""
+    return _locked_now(db, str(company_id or ""))
 
 
 def lock_company_writes(company_id: str) -> None:
-    cid = str(company_id or "").strip()
-    if cid:
-        _write_locks.add(cid)
+    note_write_lock(company_id, True)
 
 
 def unlock_company_writes(company_id: str) -> None:
-    _write_locks.discard(str(company_id or ""))
+    note_write_lock(company_id, False)
 
 
-def assert_writable(company_id: str) -> None:
+def assert_writable(company_id: str, db=None) -> None:
     """Kilitli şirkete yazmayı reddeder. Taşımanın kendi yazısı geçer.
 
     Bayrak kapalıyken kilit tutulmaz; bu çağrı hemen döner.
+    Açıkken kilit katalogdan okunur. Sık yazış kısa TTL ile önbelleğe alınır.
     """
-    cid = str(company_id or "")
-    if not cid or cid not in _write_locks:
+    if not enabled():
         return
-    if _writer.get() == cid:
+    cid = str(company_id or "").strip()
+    if not cid or _writer.get() == cid:
         return
-    raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+    if _locked_now(db, cid):
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
 
 
-def assert_document_writable(query=None, doc=None) -> None:
+def assert_document_writable(query=None, doc=None, db=None) -> None:
     """Belge veya sorgudaki company_id kilitliyse yazmayı reddeder.
 
-    Kilit yoksa sorguya bakılmaz. Bayrak kapalıyken taşıma kilit tutmaz.
+    Bayrak kapalıyken taşıma kilit tutmaz. Açıkken katalog okunur.
     """
-    if not _write_locks:
+    if not enabled():
         return
     found = []
     if isinstance(doc, dict):
@@ -566,7 +791,7 @@ def assert_document_writable(query=None, doc=None) -> None:
     if isinstance(query, dict) and isinstance(query.get("company_id"), str):
         found.append(query["company_id"])
     for cid in found:
-        assert_writable(cid)
+        assert_writable(cid, db=db)
 
 
 @contextmanager
@@ -599,8 +824,14 @@ def end_move(company_id: str) -> None:
 
 
 def forget_mode(company_id: str) -> None:
-    """Kip değişince önbelleği bırakır. Sonraki istek kataloğu yeniden okur."""
-    _cache.pop(str(company_id or ""), None)
+    """Bu sürecin kip ve kilit önbelleğini bırakır.
+
+    Diğer süreçler TTL dolunca katalogdan yeniden okur. Taşıma, kilidi
+    açmadan önce en az bir TTL bekler.
+    """
+    cid = str(company_id or "")
+    _cache.pop(cid, None)
+    _lock_cache.pop(cid, None)
 
 
 async def collect_company_rows(db, collection: str, query=None, limit: int = 500):

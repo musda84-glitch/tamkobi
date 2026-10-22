@@ -1139,7 +1139,7 @@ class SharedV2Collection:
         """Deadlock ve kilit beklemesi işlemi geri alıp sınırlı tekrar dener."""
         import storage_router
 
-        storage_router.assert_writable(self.company_id)
+        storage_router.assert_writable(self.company_id, db=getattr(self, "_catalog_db", None))
         for attempt in range(_WRITE_ATTEMPTS):
             try:
                 return work()

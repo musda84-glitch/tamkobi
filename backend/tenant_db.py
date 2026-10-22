@@ -226,11 +226,19 @@ class ScopedCollection:
     def _filter(self, query):
         return merge_company_filter(query, self.scope)
 
+    def _catalog(self):
+        raw = self._raw
+        for attr in ("_catalog_db", "_db", "db"):
+            value = getattr(raw, attr, None)
+            if value is not None and not isinstance(value, (str, bytes, int, float)):
+                return value
+        return None
+
     def _reject_locked(self) -> None:
-        """Bayrak kapalıyken kilit yoktur. Açıkken taşıma yazmayı reddeder."""
+        """Bayrak kapalıyken kilit yoktur. Açıkken katalogdaki kilit okunur."""
         if not storage_router.enabled():
             return
-        storage_router.assert_writable(self.scope.company_id)
+        storage_router.assert_writable(self.scope.company_id, db=self._catalog())
 
     def find(self, query=None, projection=None):
         return self._raw.find(self._filter(query), projection)

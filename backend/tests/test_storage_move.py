@@ -57,14 +57,15 @@ def _base_dsn() -> str:
 @pytest.fixture(params=["sqlite", "mariadb"])
 def engine(request):
     if request.param == "mariadb" and not _base_dsn():
-        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+        pytest.fail("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok; MariaDB 11.8 strict atlanamaz")
     return request.param
 
 
 @pytest.fixture(autouse=True)
-def _reset():
+def _reset(monkeypatch):
     storage_router.reset()
     storage_shared_v2.reset_store()
+    monkeypatch.setattr(storage_move.time, "sleep", lambda *_args, **_kwargs: None)
     yield
     storage_router.reset()
     storage_shared_v2.reset_store()
@@ -385,7 +386,10 @@ def test_dry_run_writes_nothing(engine, source, target, tmp_path, monkeypatch):
         assert report.wrote is False
         assert report.from_mode == source
         assert report.to_mode == target
-        assert {row["name"] for row in report.collections} == {"invoices", "orders", "products"}
+        expected = {"invoices", "orders", "products"}
+        if source == "legacy":
+            expected.add("companies")
+        assert {row["name"] for row in report.collections} == expected
         for row in report.collections:
             assert row["count"] == 1
             assert row["bytes"] > 0
@@ -722,12 +726,24 @@ def test_cli_dry_run_and_missing_catalog(tmp_path, monkeypatch, capsys):
 
 
 def test_module_entrypoint_does_not_touch_env():
+    env = os.environ.copy()
+    for key in (
+        "MYSQL_URL",
+        "DATABASE_URL",
+        "MYSQL_HOST",
+        "MYSQL_PASSWORD",
+        "MYSQL_USER",
+        "STORAGE_MARIADB_DSN",
+        "STORAGE_SHARED_V2_TEST_DSN",
+    ):
+        env.pop(key, None)
     proc = subprocess.run(
         [sys.executable, "-m", "scripts.storage_move"],
         cwd=str(_BACKEND),
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert proc.returncode == 2
     assert "kataloğu yok" in proc.stderr
@@ -750,6 +766,146 @@ def test_rollback_refuses_when_source_is_gone(tmp_path, monkeypatch):
         assert await _mode(world) == "shared_v2"
         record = await world.db.storage_moves.find_one({"_id": report.move_id})
         assert record["status"] == "completed"
+
+    try:
+        asyncio.run(run())
+    finally:
+        _close_world(world)
+
+
+def test_apply_waits_lock_ttl_then_mode_ttl(tmp_path, monkeypatch):
+    slept = []
+    monkeypatch.setattr(storage_move.time, "sleep", lambda seconds: slept.append(seconds))
+    monkeypatch.setattr(storage_router, "LOCK_TTL_SECONDS", 0.25)
+    monkeypatch.setattr(storage_router, "TTL_SECONDS", 0.4)
+    monkeypatch.delenv("STORAGE_MOVE_LOCK_TTL", raising=False)
+    monkeypatch.delenv("STORAGE_MOVE_MODE_TTL", raising=False)
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        report = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert report.ok
+        company = await world.db.companies.find_one({"_id": world.company_id})
+        assert int(company.get("storage_epoch") or 0) >= 1
+        assert "bekle:kilit" in {step.get("name") for step in report.steps}
+        assert "bekle:kip" in {step.get("name") for step in report.steps}
+
+    try:
+        asyncio.run(run())
+        assert slept[0] == 0.25
+        assert 0.4 in slept
+        assert slept[-1] == 0.25
+    finally:
+        _close_world(world)
+
+
+def test_routed_membership_and_token_are_copied(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        await world.db.users.insert_one({
+            "_id": "user-move",
+            "email": "move@example.com",
+            "company_ids": [world.company_id, world.other_id],
+        })
+        await world.db.password_resets.insert_one({
+            "_id": "reset-move",
+            "company_id": world.company_id,
+            "token_hash": "hash-move",
+        })
+        await world.db.password_resets.insert_one({
+            "_id": "reset-other",
+            "company_id": world.other_id,
+            "token_hash": "hash-other",
+        })
+        report = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert report.ok
+        names = {row["name"] for row in report.collections}
+        assert "users" in names
+        assert "password_resets" in names
+        users = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "users")
+        found = await users.find_one({"_id": "user-move"})
+        assert found["email"] == "move@example.com"
+        resets = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "password_resets")
+        own = await resets.find_one({"_id": "reset-move"})
+        assert own["token_hash"] == "hash-move"
+        assert await resets.find_one({"_id": "reset-other"}) is None
+        still = await world.db.password_resets.find_one({"_id": "reset-other"})
+        assert still["company_id"] == world.other_id
+
+    try:
+        asyncio.run(run())
+    finally:
+        _close_world(world)
+
+
+def test_legacy_names_without_list_collection_names(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    class Hidden:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getitem__(self, name):
+            return self._inner[name]
+
+        @property
+        def companies(self):
+            return self._inner.companies
+
+        @property
+        def _cols(self):
+            return self._inner._cols
+
+    async def run():
+        await _seed(world, "legacy")
+        hidden = Hidden(world.db)
+        assert getattr(hidden, "list_collection_names", None) is None
+        report = await storage_move.plan_move(hidden, world.company_id, "shared_v2")
+        assert report.ok
+        assert "orders" in {row["name"] for row in report.collections}
+
+    try:
+        asyncio.run(run())
+    finally:
+        _close_world(world)
+
+
+def test_sql_collection_list_when_method_missing(monkeypatch):
+    seen = {}
+
+    def fake_sql(settings):
+        seen["db"] = settings.get("db")
+        return ["orders", "companies"]
+
+    monkeypatch.setattr(storage_move, "_sql_collections", fake_sql)
+
+    class Bare:
+        _settings = {"host": "127.0.0.1", "db": "tamkobi", "user": "u", "password": "gizli"}
+
+    names = asyncio.run(storage_move._list_names(Bare()))
+    assert names == ["orders", "companies"]
+    assert seen["db"] == "tamkobi"
+
+
+def test_t_row_unique_is_checked_directly(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+    world.db._indexes = {"orders": [(("order_number",), True)]}
+    world.db.orders._db = world.db
+
+    async def run():
+        await _seed(world, "legacy")
+        report = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert report.ok
+        pair = report.checksums["t_row_unique"]
+        assert pair["source"] == pair["target"]
+        assert report.counts["t_row_unique"]["source"] >= 1
+        rows = storage_move._fetch_unique(world.company_id, ["orders"])
+        assert rows
+        assert rows[0][0] == "orders"
+        assert rows[0][1] == "o1"
 
     try:
         asyncio.run(run())

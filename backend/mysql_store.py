@@ -78,9 +78,10 @@ _LOCK_OPS = frozenset({
 def _guard(name, op, **kw):
     """Kiracı koruması. Yazmayı bozmaz; yalnız TenantScopeViolation yukarı çıkar.
 
-    Yönlendirici açıkken ve şirket taşıma kilidindeyse yazma reddedilir.
+    Yönlendirici açıkken yazma, katalogdaki storage_write_lock alanına bakar.
     Bayrak kapalıyken bu kontrol çalışmaz.
     """
+    catalog = kw.pop("catalog", None)
     try:
         from tenant_scope import TenantScopeViolation, check
     except Exception:
@@ -99,11 +100,11 @@ def _guard(name, op, **kw):
         import storage_router
     except Exception:
         return
-    if not storage_router.enabled() or not storage_router.any_write_lock():
+    if not storage_router.enabled():
         return
     cid = _lock_company(op, kw)
     if cid:
-        storage_router.assert_writable(cid)
+        storage_router.assert_writable(cid, db=catalog)
 
 
 def _lock_company(op, kw) -> str:
@@ -1735,7 +1736,7 @@ class MySQLCollection:
         return MySQLCursor(self, query, projection)
 
     async def insert_one(self, doc: dict):
-        _guard(self.name, "insert_one", doc=doc)
+        _guard(self.name, "insert_one", doc=doc, catalog=self._db)
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
             doc["_id"] = str(uuid.uuid4())
@@ -1759,7 +1760,7 @@ class MySQLCollection:
         return InsertOneResult(doc["_id"])
 
     async def insert_many(self, docs: Iterable[dict], ordered: bool = True):
-        _guard(self.name, "insert_many", doc=docs)
+        _guard(self.name, "insert_many", doc=docs, catalog=self._db)
         ids = []
         for d in docs:
             r = await self.insert_one(d)
@@ -1767,7 +1768,7 @@ class MySQLCollection:
         return InsertManyResult(ids)
 
     async def update_one(self, query: dict, update: dict, upsert: bool = False):
-        _guard(self.name, "update_one", query=query, update=update, upsert=upsert)
+        _guard(self.name, "update_one", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
             if not upsert:
@@ -1791,7 +1792,7 @@ class MySQLCollection:
         `matched_count` kilit altında sorgu eşleşmesini yansıtır (eşzamanlı claim için).
         `query` içinde eşitlik `_id` zorunlu.
         """
-        _guard(self.name, "update_one_atomic", query=query, update=update)
+        _guard(self.name, "update_one_atomic", query=query, update=update, catalog=self._db)
         q = query or {}
         doc_id = q.get("_id")
         if doc_id is None or isinstance(doc_id, dict):
@@ -1845,7 +1846,7 @@ class MySQLCollection:
                 raise
 
     async def update_many(self, query: dict, update: dict, upsert: bool = False):
-        _guard(self.name, "update_many", query=query, update=update, upsert=upsert)
+        _guard(self.name, "update_many", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
             if upsert:
@@ -1870,7 +1871,7 @@ class MySQLCollection:
         return UpdateResult(len(docs), len(changed), None)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
-        _guard(self.name, "replace_one", query=query, doc=replacement)
+        _guard(self.name, "replace_one", query=query, doc=replacement, catalog=self._db)
         replacement = copy.deepcopy(replacement)
         docs = await self._load_filtered(query)
         if not docs:
@@ -1886,7 +1887,7 @@ class MySQLCollection:
         return UpdateResult(1, 1, None)
 
     async def find_one_and_update(self, query: dict, update: dict, upsert: bool = False, return_document=True, projection=None):
-        _guard(self.name, "find_one_and_update", query=query, update=update, upsert=upsert)
+        _guard(self.name, "find_one_and_update", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
             if not upsert:
@@ -1901,7 +1902,7 @@ class MySQLCollection:
         return project_doc(out, projection)
 
     async def delete_one(self, query: dict):
-        _guard(self.name, "delete_one", query=query)
+        _guard(self.name, "delete_one", query=query, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
             return DeleteResult(0)
@@ -1912,7 +1913,7 @@ class MySQLCollection:
         return DeleteResult(n)
 
     async def delete_many(self, query: dict):
-        _guard(self.name, "delete_many", query=query)
+        _guard(self.name, "delete_many", query=query, catalog=self._db)
         docs = await self._load_filtered(query)
         await self._record_tombstones(docs)
         n = await self._delete_ids([d["_id"] for d in docs if d.get("_id") is not None])
@@ -2309,7 +2310,7 @@ class SyncMySQLCollection:
         return SyncMySQLCursor(self, query, projection)
 
     def insert_one(self, doc: dict):
-        _guard(self.name, "insert_one", doc=doc)
+        _guard(self.name, "insert_one", doc=doc, catalog=self._db)
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
             doc["_id"] = str(uuid.uuid4())
@@ -2317,11 +2318,11 @@ class SyncMySQLCollection:
         return InsertOneResult(doc["_id"])
 
     def insert_many(self, docs, ordered=True):
-        _guard(self.name, "insert_many", doc=docs)
+        _guard(self.name, "insert_many", doc=docs, catalog=self._db)
         return InsertManyResult([self.insert_one(d).inserted_id for d in docs])
 
     def update_one(self, query, update, upsert=False):
-        _guard(self.name, "update_one", query=query, update=update, upsert=upsert)
+        _guard(self.name, "update_one", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
             if not upsert:
@@ -2338,7 +2339,7 @@ class SyncMySQLCollection:
         return UpdateResult(1, 1 if changed else 0, None)
 
     def update_many(self, query, update, upsert=False):
-        _guard(self.name, "update_many", query=query, update=update, upsert=upsert)
+        _guard(self.name, "update_many", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
             return self.update_one(query, update, upsert=upsert) if upsert else UpdateResult(0, 0, None)
@@ -2358,7 +2359,7 @@ class SyncMySQLCollection:
         return UpdateResult(len(docs), len(changed), None)
 
     def replace_one(self, query, replacement, upsert=False):
-        _guard(self.name, "replace_one", query=query, doc=replacement)
+        _guard(self.name, "replace_one", query=query, doc=replacement, catalog=self._db)
         replacement = copy.deepcopy(replacement)
         docs = self._load_filtered(query)
         if not docs:
@@ -2373,7 +2374,7 @@ class SyncMySQLCollection:
         return UpdateResult(1, 1, None)
 
     def delete_one(self, query):
-        _guard(self.name, "delete_one", query=query)
+        _guard(self.name, "delete_one", query=query, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
             return DeleteResult(0)
@@ -2386,7 +2387,7 @@ class SyncMySQLCollection:
         return DeleteResult(n)
 
     def delete_many(self, query):
-        _guard(self.name, "delete_many", query=query)
+        _guard(self.name, "delete_many", query=query, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
             return DeleteResult(0)

@@ -447,7 +447,7 @@ class DedicatedCollection(StorageCollection):
         return f"DedicatedCollection(company_id={self.company_id!r}, name={self.name!r})"
 
     def _reject_locked(self) -> None:
-        storage_router.assert_writable(self.company_id)
+        storage_router.assert_writable(self.company_id, db=getattr(self, "_catalog_db", None))
 
     def _guard(self, op: str, **kwargs) -> None:
         try:
