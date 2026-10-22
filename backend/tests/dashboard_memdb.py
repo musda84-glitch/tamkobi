@@ -94,6 +94,15 @@ class MemCursor:
         return _gen()
 
 
+def _reject_locked(query=None, doc=None) -> None:
+    """Taşıma kilidi. Kilit yoksa hemen döner; bayrak kapalıyken kilit tutulmaz."""
+    import storage_router
+
+    if not storage_router.any_write_lock():
+        return
+    storage_router.assert_document_writable(query, doc)
+
+
 class MemColl:
     def __init__(self, name, db):
         self.name = name
@@ -130,11 +139,13 @@ class MemColl:
 
     async def insert_one(self, doc):
         tenant_scope.check(self.name, "insert_one", doc=doc)
+        _reject_locked(doc=doc)
         self.docs.append(copy.deepcopy(doc))
         return SimpleNamespace(inserted_id=doc.get("_id"))
 
     async def insert_many(self, docs):
         tenant_scope.check(self.name, "insert_many", doc=docs)
+        _reject_locked(doc=docs)
         copied = [copy.deepcopy(doc) for doc in docs]
         self.docs.extend(copied)
         return SimpleNamespace(inserted_ids=[doc.get("_id") for doc in copied])
@@ -142,6 +153,7 @@ class MemColl:
     async def update_one_atomic(self, query, update):
         """update_one ile aynı sorgu. Eşleşmeyen koşulda modified 0; belge değişmez."""
         tenant_scope.check(self.name, "update_one_atomic", query=query, update=update)
+        _reject_locked(query)
         query = _split_field_ops(query or {})
         for i, doc in enumerate(self.docs):
             if not match_query(doc, query):
@@ -159,6 +171,7 @@ class MemColl:
 
     async def update_one(self, query, update, upsert=False):
         tenant_scope.check(self.name, "update_one", query=query, update=update, upsert=upsert)
+        _reject_locked(query)
         query = _split_field_ops(query or {})
         for i, doc in enumerate(self.docs):
             if match_query(doc, query):
@@ -172,6 +185,7 @@ class MemColl:
         Gövde bekletmez; aynı olay döngüsünde $inc kesilmez.
         """
         tenant_scope.check(self.name, "find_one_and_update", query=query, update=update, upsert=upsert)
+        _reject_locked(query)
         query = _split_field_ops(query or {})
         for i, doc in enumerate(self.docs):
             if not match_query(doc, query):
@@ -191,6 +205,7 @@ class MemColl:
     async def update_many(self, query, update, upsert=False):
         """mysql_store.update_many: eşleşenler matched, içeriği değişenler modified."""
         tenant_scope.check(self.name, "update_many", query=query, update=update, upsert=upsert)
+        _reject_locked(query)
         query = _split_field_ops(query or {})
         matched = 0
         modified = 0
@@ -206,6 +221,7 @@ class MemColl:
 
     async def delete_one(self, query):
         tenant_scope.check(self.name, "delete_one", query=query)
+        _reject_locked(query)
         query = _split_field_ops(query or {})
         for i, doc in enumerate(self.docs):
             if match_query(doc, query):
@@ -215,6 +231,7 @@ class MemColl:
 
     async def delete_many(self, query=None):
         tenant_scope.check(self.name, "delete_many", query=query)
+        _reject_locked(query)
         query = _split_field_ops(query or {})
         kept = []
         removed = 0

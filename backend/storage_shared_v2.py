@@ -136,6 +136,46 @@ def bind_sqlite(conn) -> SharedV2Store:
     return store
 
 
+def list_company_collections(company_id: str) -> list[str]:
+    """Firmanın shared_v2 koleksiyonları. Yazmaz. Şema yoksa hata verir."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise ValueError("company_id boş")
+    store = get_store()
+    conn = store.connection()
+    names = set(_distinct_collections(store, conn, cid))
+    import storage_tables
+
+    for name, spec in storage_tables.SPECS.items():
+        if _table_has_company(store, conn, spec.table, cid):
+            names.add(name)
+    return sorted(names)
+
+
+def _distinct_collections(store, conn, company_id: str) -> list[str]:
+    sql = "SELECT DISTINCT collection FROM docs_v2 WHERE company_id=?"
+    rows = _fetch(store, conn, sql, (company_id,))
+    return [str(row[0]) for row in rows if row and row[0]]
+
+
+def _table_has_company(store, conn, table: str, company_id: str) -> bool:
+    sql = f"SELECT 1 FROM {table} WHERE company_id=? LIMIT 1"
+    rows = _fetch(store, conn, sql, (company_id,))
+    return bool(rows)
+
+
+def _fetch(store, conn, sql: str, params):
+    adapted = sql.replace("?", "%s") if store.dialect == "mysql" else sql
+    try:
+        if store.dialect == "sqlite":
+            return list(conn.execute(adapted, tuple(params)).fetchall())
+        cursor = conn.cursor()
+        cursor.execute(adapted, tuple(params))
+        return list(cursor.fetchall())
+    except Exception:
+        raise RuntimeError("shared_v2 şeması hazır değil") from None
+
+
 def collection_for(company_id: str, name: str) -> "SharedV2Collection":
     cid = str(company_id or "").strip()
     coll = str(name or "").strip()
@@ -1097,6 +1137,9 @@ class SharedV2Collection:
 
     def _run_write(self, work):
         """Deadlock ve kilit beklemesi işlemi geri alıp sınırlı tekrar dener."""
+        import storage_router
+
+        storage_router.assert_writable(self.company_id)
         for attempt in range(_WRITE_ATTEMPTS):
             try:
                 return work()

@@ -226,6 +226,12 @@ class ScopedCollection:
     def _filter(self, query):
         return merge_company_filter(query, self.scope)
 
+    def _reject_locked(self) -> None:
+        """Bayrak kapalıyken kilit yoktur. Açıkken taşıma yazmayı reddeder."""
+        if not storage_router.enabled():
+            return
+        storage_router.assert_writable(self.scope.company_id)
+
     def find(self, query=None, projection=None):
         return self._raw.find(self._filter(query), projection)
 
@@ -252,9 +258,11 @@ class ScopedCollection:
         return self._raw.aggregate(scoped)
 
     async def insert_one(self, doc):
+        self._reject_locked()
         return await self._raw.insert_one(stamp_company(doc, self.scope))
 
     async def insert_many(self, docs, ordered: bool = True):
+        self._reject_locked()
         prepared = [stamp_company(doc, self.scope) for doc in list(docs or [])]
         fn = self._raw.insert_many
         if _accepts(fn, "ordered"):
@@ -262,6 +270,7 @@ class ScopedCollection:
         return await fn(prepared)
 
     async def update_one(self, query, update, upsert: bool = False):
+        self._reject_locked()
         return await self._raw.update_one(
             self._filter(query),
             guard_update(update, self.scope, upsert=upsert),
@@ -269,12 +278,14 @@ class ScopedCollection:
         )
 
     async def update_one_atomic(self, query, update):
+        self._reject_locked()
         return await self._raw.update_one_atomic(
             self._filter(query),
             guard_update(update, self.scope, upsert=False),
         )
 
     async def update_many(self, query, update, upsert: bool = False):
+        self._reject_locked()
         return await self._raw.update_many(
             self._filter(query),
             guard_update(update, self.scope, upsert=upsert),
@@ -282,6 +293,7 @@ class ScopedCollection:
         )
 
     async def replace_one(self, query, replacement, upsert: bool = False):
+        self._reject_locked()
         return await self._raw.replace_one(
             self._filter(query),
             stamp_company(replacement, self.scope),
@@ -289,6 +301,7 @@ class ScopedCollection:
         )
 
     async def find_one_and_update(self, query, update, upsert: bool = False, return_document=True, projection=None):
+        self._reject_locked()
         return await self._raw.find_one_and_update(
             self._filter(query),
             guard_update(update, self.scope, upsert=upsert),
@@ -298,9 +311,11 @@ class ScopedCollection:
         )
 
     async def delete_one(self, query):
+        self._reject_locked()
         return await self._raw.delete_one(self._filter(query))
 
     async def delete_many(self, query):
+        self._reject_locked()
         return await self._raw.delete_many(self._filter(query))
 
 

@@ -62,18 +62,71 @@ def _audit_sql(op: str, collection: str, doc_id=None, duration_ms: float = 0):
         pass
 
 
+_LOCK_OPS = frozenset({
+    "insert_one",
+    "insert_many",
+    "update_one",
+    "update_many",
+    "update_one_atomic",
+    "replace_one",
+    "delete_one",
+    "delete_many",
+    "find_one_and_update",
+})
+
+
 def _guard(name, op, **kw):
-    """Kiracı koruması. Yazmayı bozmaz; yalnız TenantScopeViolation yukarı çıkar."""
+    """Kiracı koruması. Yazmayı bozmaz; yalnız TenantScopeViolation yukarı çıkar.
+
+    Yönlendirici açıkken ve şirket taşıma kilidindeyse yazma reddedilir.
+    Bayrak kapalıyken bu kontrol çalışmaz.
+    """
     try:
         from tenant_scope import TenantScopeViolation, check
     except Exception:
+        check = None
+        TenantScopeViolation = ()  # type: ignore
+    if check is not None:
+        try:
+            check(name, op, **kw)
+        except TenantScopeViolation:
+            raise
+        except Exception:
+            pass
+    if op not in _LOCK_OPS:
         return
     try:
-        check(name, op, **kw)
-    except TenantScopeViolation:
-        raise
+        import storage_router
     except Exception:
         return
+    if not storage_router.enabled() or not storage_router.any_write_lock():
+        return
+    cid = _lock_company(op, kw)
+    if cid:
+        storage_router.assert_writable(cid)
+
+
+def _lock_company(op, kw) -> str:
+    doc = kw.get("doc")
+    query = kw.get("query")
+    if op == "insert_one" and isinstance(doc, dict):
+        return str(doc.get("company_id") or "")
+    if op == "insert_many" and isinstance(doc, (list, tuple)):
+        for item in doc:
+            if isinstance(item, dict) and item.get("company_id"):
+                return str(item.get("company_id"))
+        return ""
+    if op == "replace_one" and isinstance(doc, dict) and doc.get("company_id"):
+        return str(doc.get("company_id"))
+    if isinstance(query, dict) and isinstance(query.get("company_id"), str):
+        return query["company_id"]
+    update = kw.get("update")
+    if isinstance(update, dict):
+        for key in ("$set", "$setOnInsert"):
+            body = update.get(key)
+            if isinstance(body, dict) and body.get("company_id"):
+                return str(body.get("company_id"))
+    return ""
 
 
 class DuplicateKeyError(Exception):

@@ -27,8 +27,10 @@ import contextvars
 import logging
 import os
 import re
+import threading
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 from typing import Any, Optional
 
 LEGACY = "legacy"
@@ -37,7 +39,12 @@ DEDICATED = "dedicated"
 KNOWN_MODES = frozenset({LEGACY, SHARED_V2, DEDICATED})
 DSN_FIELD = "dedicated_dsn_ref"
 MODE_FIELD = "storage_mode"
+WRITE_LOCK_FIELD = "storage_write_lock"
 ENV_FLAG = "STORAGE_ROUTER_ENABLED"
+WRITE_LOCK_MESSAGE = (
+    "Şirket depolama taşıması sırasında salt okunur. "
+    "Yazma istekleri taşıma bitene kadar reddedilir."
+)
 TTL_SECONDS = 15.0
 CACHE_MAX = 1024
 
@@ -46,6 +53,13 @@ _MISS = object()
 UNSET = object()
 _cache: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
 read_count = 0
+_write_locks: set[str] = set()
+_move_owner: Optional[str] = None
+_move_guard = threading.Lock()
+_writer: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "tamkobi_storage_move_writer",
+    default="",
+)
 
 
 class StorageModeError(RuntimeError):
@@ -68,9 +82,11 @@ def enabled() -> bool:
 
 def reset() -> None:
     """Testler önbelleği ve sayacı sıfırlar. Ortam bayrağına dokunmaz."""
-    global read_count
+    global read_count, _move_owner
     _cache.clear()
     read_count = 0
+    _write_locks.clear()
+    _move_owner = None
     _BOUND.set(None)
     import storage_dedicated
 
@@ -488,6 +504,103 @@ async def iter_company_stores(db, *, company_id: str = ""):
             yield cid, CompanyStore(db, cid, mode)
         except Exception as exc:
             log_store_failure(cid, exc)
+
+
+class StorageWriteLocked(StorageModeError):
+    """Taşıma sırasında şirkete yazılamaz. İleti sır taşımaz."""
+
+    def __init__(self, message: str = "", *, company_id: str = ""):
+        super().__init__(message or WRITE_LOCK_MESSAGE, company_id=company_id, mode="")
+
+
+class StorageMoveBusy(RuntimeError):
+    """İkinci taşıma başlayamaz."""
+
+
+def any_write_lock() -> bool:
+    return bool(_write_locks)
+
+
+def company_write_locked(company_id: str) -> bool:
+    return str(company_id or "") in _write_locks
+
+
+def lock_company_writes(company_id: str) -> None:
+    cid = str(company_id or "").strip()
+    if cid:
+        _write_locks.add(cid)
+
+
+def unlock_company_writes(company_id: str) -> None:
+    _write_locks.discard(str(company_id or ""))
+
+
+def assert_writable(company_id: str) -> None:
+    """Kilitli şirkete yazmayı reddeder. Taşımanın kendi yazısı geçer.
+
+    Bayrak kapalıyken kilit tutulmaz; bu çağrı hemen döner.
+    """
+    cid = str(company_id or "")
+    if not cid or cid not in _write_locks:
+        return
+    if _writer.get() == cid:
+        return
+    raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+
+
+def assert_document_writable(query=None, doc=None) -> None:
+    """Belge veya sorgudaki company_id kilitliyse yazmayı reddeder.
+
+    Kilit yoksa sorguya bakılmaz. Bayrak kapalıyken taşıma kilit tutmaz.
+    """
+    if not _write_locks:
+        return
+    found = []
+    if isinstance(doc, dict):
+        if doc.get("company_id"):
+            found.append(str(doc.get("company_id")))
+    elif isinstance(doc, (list, tuple)):
+        for item in doc:
+            if isinstance(item, dict) and item.get("company_id"):
+                found.append(str(item.get("company_id")))
+    if isinstance(query, dict) and isinstance(query.get("company_id"), str):
+        found.append(query["company_id"])
+    for cid in found:
+        assert_writable(cid)
+
+
+@contextmanager
+def bypass_write_lock(company_id: str):
+    """Taşıma aracı kendi kopyasını yazarken kilidi deler. İstek bunu görmez."""
+    token = _writer.set(str(company_id or ""))
+    try:
+        yield
+    finally:
+        _writer.reset(token)
+
+
+def try_begin_move(company_id: str) -> None:
+    """Süreçte tek taşıma. İkincisi StorageMoveBusy atar."""
+    global _move_owner
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise ValueError("company_id boş")
+    with _move_guard:
+        if _move_owner is not None:
+            raise StorageMoveBusy("Başka bir depolama taşıması sürüyor. İkincisi başlatılamaz.")
+        _move_owner = cid
+
+
+def end_move(company_id: str) -> None:
+    global _move_owner
+    with _move_guard:
+        if _move_owner == str(company_id or ""):
+            _move_owner = None
+
+
+def forget_mode(company_id: str) -> None:
+    """Kip değişince önbelleği bırakır. Sonraki istek kataloğu yeniden okur."""
+    _cache.pop(str(company_id or ""), None)
 
 
 async def collect_company_rows(db, collection: str, query=None, limit: int = 500):
