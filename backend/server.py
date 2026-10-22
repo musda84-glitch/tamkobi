@@ -23390,6 +23390,13 @@ def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
             "done": is_done,
             "current": is_current,
             "operator_name": w.get("operator_name") or None,
+            "station": w.get("station") or None,
+            "started_at": w.get("started_at") or None,
+            "finished_at": w.get("finished_at") or None,
+            "material_name": w.get("material_name") or None,
+            "material_stock_deducted": bool(w.get("material_stock_deducted")),
+            "material_stock_qty": w.get("material_stock_qty") if w.get("material_stock_deducted") else None,
+            "finish_unit": w.get("finish_unit") or None,
         })
     return {
         "done": done,
@@ -23452,7 +23459,11 @@ async def list_production_orders(
         # company_id ile daralt — MySQL idx_docs_coll_company + order_id $in
         wos = await db.work_orders.find(
             {"company_id": cid, "order_id": {"$in": oids}},
-            {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
+            {
+                "order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1,
+                "station": 1, "started_at": 1, "finished_at": 1, "material_name": 1,
+                "material_stock_deducted": 1, "material_stock_qty": 1, "finish_unit": 1,
+            },
         ).to_list(2000)
         by: Dict[str, list] = {}
         for w in wos:
