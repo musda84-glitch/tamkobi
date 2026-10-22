@@ -61,7 +61,7 @@ const IMAGE_FILES = {
   "fatura-gorur": [1440, 900],
   "banka-eslestirme": [1440, 900],
   "cari-ekstre-paylas": [1440, 900],
-  tablet-sayim: [640, 900],
+  "tablet-sayim": [640, 900],
   "atolye-pin": [1440, 900],
   "fiyat-acik-kapali": [1184, 852],
   "personel-mobil-menu": [390, 844],
