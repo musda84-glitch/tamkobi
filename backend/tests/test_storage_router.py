@@ -298,14 +298,138 @@ def test_legacy_path_microbenchmark(monkeypatch):
         await storage_router.load_mode(db, CO_A)
 
     asyncio.run(warm())
+    pinned = tenant_db.TenantDB(db, scope)
     before = storage_router.read_count
-    routed()
+
+    def routed_on():
+        return pinned._collection("products")
+
+    routed_on()
     t2 = time.perf_counter()
     for _ in range(loops):
-        routed()
+        routed_on()
     warmed = time.perf_counter() - t2
     assert storage_router.read_count == before
     assert warmed <= off * 3 + 0.05, (warmed, off)
+
+
+class _AsyncCompanies:
+    """Gerçek sürücü: async find_one, docs listesi yok."""
+
+    def __init__(self):
+        self.rows = {}
+        self.reads = 0
+
+    async def find_one(self, query, projection=None):
+        self.reads += 1
+        doc = self.rows.get(str((query or {}).get("_id") or ""))
+        if not doc:
+            return None
+        if not projection:
+            return dict(doc)
+        out = {"_id": doc.get("_id")}
+        if doc.get("storage_mode") is not None:
+            out["storage_mode"] = doc.get("storage_mode")
+        return out
+
+
+class _RealishDB:
+    def __init__(self):
+        self.companies = _AsyncCompanies()
+        self._cols = {}
+
+    def __getitem__(self, name):
+        if name == "companies":
+            return self.companies
+        coll = self._cols.get(name)
+        if coll is None:
+            coll = {"name": name}
+            self._cols[name] = coll
+        return coll
+
+
+def test_expired_cache_outside_entry_does_not_sync_fail(monkeypatch):
+    """TTL dolunca gerçek sürücüde senkron okuma 'önbellek boş' demez.
+
+    Giriş noktası dışında kurulan TenantDB kipi kuruluşta sabitler.
+    """
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    clock = {"t": 5_000.0}
+    monkeypatch.setattr(storage_router, "_now", lambda: clock["t"])
+    text = (_BACKEND / "storage_router.py").read_text(encoding="utf-8")
+    assert "Depolama kipi önbelleği boş" not in text
+    db = _RealishDB()
+    db.companies.rows[CO_A] = {"_id": CO_A, "storage_mode": "legacy", "dedicated_dsn_ref": "gAAAA"}
+    db.companies.rows[CO_B] = {"_id": CO_B, "storage_mode": "shared_v2"}
+
+    async def warm():
+        assert await storage_router.load_mode(db, CO_A) == "legacy"
+        assert await storage_router.load_mode(db, CO_B) == "shared_v2"
+
+    asyncio.run(warm())
+    assert db.companies.reads == 2
+    live = tenant_db.TenantDB(db, _scope(CO_A))
+    assert live._collection("products")._raw is db["products"]
+
+    clock["t"] += storage_router.TTL_SECONDS + 1
+    db.companies.rows[CO_A]["storage_mode"] = "dedicated"
+    again = live._collection("orders")
+    assert again._raw is db["orders"]
+    assert db.companies.reads == 2
+
+    late = tenant_db.TenantDB(db, _scope(CO_A))
+    assert late._collection("invoices")._raw is db["invoices"]
+    assert db.companies.reads == 2
+    with pytest.raises(StorageModeError, match="henüz yok: shared_v2"):
+        tenant_db.TenantDB(db, _scope(CO_B))._collection("products")
+    assert db.companies.reads == 2
+
+    fresh = _RealishDB()
+    unseen = tenant_db.TenantDB(fresh, _scope("co_new"))
+    assert unseen._collection("products")._raw is fresh["products"]
+    assert fresh.companies.reads == 0
+
+
+def test_entry_point_reloads_when_cache_expired(monkeypatch):
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    clock = {"t": 8_000.0}
+    monkeypatch.setattr(storage_router, "_now", lambda: clock["t"])
+    db = _RealishDB()
+    db.companies.rows[CO_A] = {"_id": CO_A, "storage_mode": "legacy"}
+    tenant_db.init(db)
+
+    async def run():
+        async with tenant_db.for_company(CO_A, "gece") as handle:
+            assert handle._collection("products")._raw is db["products"]
+            assert db.companies.reads == 1
+        clock["t"] += storage_router.TTL_SECONDS + 1
+        db.companies.rows[CO_A]["storage_mode"] = "dedicated"
+        async with tenant_db.for_company(CO_A, "yenile") as handle:
+            with pytest.raises(StorageModeError, match="henüz yok: dedicated"):
+                handle._collection("products")
+        assert db.companies.reads == 2
+
+    asyncio.run(run())
+
+
+def test_cache_drops_oldest_past_max(monkeypatch):
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setattr(storage_router, "CACHE_MAX", 2)
+    db = MemDB()
+
+    async def run():
+        for cid in ("c1", "c2", "c3"):
+            await db.companies.insert_one({"_id": cid, "storage_mode": "legacy"})
+            assert await storage_router.load_mode(db, cid) == "legacy"
+        assert "c1" not in storage_router._cache
+        assert list(storage_router._cache) == ["c2", "c3"]
+        assert storage_router._cached("c2") == "legacy"
+        await db.companies.insert_one({"_id": "c4", "storage_mode": "legacy"})
+        assert await storage_router.load_mode(db, "c4") == "legacy"
+        assert "c3" not in storage_router._cache
+        assert list(storage_router._cache) == ["c2", "c4"]
+
+    asyncio.run(run())
 
 
 def test_existing_tenant_db_suite_same_with_flag_on(monkeypatch):

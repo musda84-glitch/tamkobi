@@ -365,18 +365,30 @@ class _ReadScoped:
 
 
 class TenantDB:
-    """Kapsama göre koleksiyon seçer. Platform ve token ham geçer."""
+    """Kapsama göre koleksiyon seçer. Platform ve token ham geçer.
 
-    def __init__(self, db, scope: TenantScope):
+    Bayrak açıksa depolama kipi kuruluşta sabitlenir. Koleksiyon erişimi
+    önbelleğe dönmez; TTL istek sürerken dolsa da kip değişmez.
+    """
+
+    def __init__(self, db, scope: TenantScope, storage_mode=storage_router.UNSET):
         self._db = db
         self.scope = scope
+        if storage_mode is not storage_router.UNSET:
+            self._storage_mode = storage_mode
+        elif storage_router.enabled():
+            self._storage_mode = storage_router.mode_for_handle(db, scope.company_id)
+        else:
+            self._storage_mode = None
 
     def _collection(self, name: str):
         # Bayrak kapalıyken (varsayılan) bugünkü yol: doğrudan self._db[name].
-        if storage_router.enabled():
-            raw = storage_router.legacy_collection(self._db, self.scope.company_id, name)
-        else:
+        if self._storage_mode is None:
             raw = self._db[name]
+        else:
+            raw = storage_router.collection_for_mode(
+                self._db, self._storage_mode, self.scope.company_id, name,
+            )
         kind = collection_kind(name)
         if kind in ("tenant", "unknown"):
             return ScopedCollection(raw, self.scope)
@@ -431,11 +443,12 @@ async def get_tenant_db(request: Request):
     user = await _load_user(request)
     requested = request.query_params.get("company_id") if request is not None else None
     scope = _scope_for_user(user, requested)
+    pinned = storage_router.UNSET
     if storage_router.enabled():
-        await storage_router.load_mode(_db, scope.company_id)
+        pinned = await storage_router.load_mode(_db, scope.company_id)
     token = bind(scope)
     try:
-        yield TenantDB(_db, scope)
+        yield TenantDB(_db, scope, storage_mode=pinned)
     finally:
         reset(token)
 
@@ -456,11 +469,12 @@ async def for_company(cid: str, reason: str):
         actor_id="",
         reason=why,
     )
+    pinned = storage_router.UNSET
     if storage_router.enabled():
-        await storage_router.load_mode(_db, text)
+        pinned = await storage_router.load_mode(_db, text)
     token = bind(scope)
     try:
-        yield TenantDB(_db, scope)
+        yield TenantDB(_db, scope, storage_mode=pinned)
     finally:
         reset(token)
 
@@ -480,11 +494,12 @@ async def from_b2b_contact(contact: Optional[dict]):
         reason="b2b",
         contact_id=contact_id,
     )
+    pinned = storage_router.UNSET
     if storage_router.enabled():
-        await storage_router.load_mode(_db, cid)
+        pinned = await storage_router.load_mode(_db, cid)
     token = bind(scope)
     try:
-        yield TenantDB(_db, scope)
+        yield TenantDB(_db, scope, storage_mode=pinned)
     finally:
         reset(token)
 

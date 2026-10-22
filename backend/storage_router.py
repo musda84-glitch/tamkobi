@@ -4,8 +4,14 @@ STORAGE_ROUTER_ENABLED kapalıyken (varsayılan) bu modül okunmaz: TenantDB
 bugünkü koleksiyonu döner. Bayrak açıkken firma ayarı kısa TTL ile
 önbelleğe alınır; her istekte companies sorgusu yapılmaz.
 
+Kip, TenantDB kurulurken bir kez sabitlenir. TTL istek ortasında dolsa
+da aynı örnek yeniden okumaz ve gerçek sürücüde senkron hataya düşmez.
+Önbellek boşsa giriş noktaları async yükler. Giriş noktası dışında
+senkron okuma yoksa bilinen eski kip kullanılır; o da yoksa legacy
+sayılır ve hata verilmez.
+
 Bu sürüm yalnız legacy arka ucunu tanır. shared_v2, dedicated ve
-bilinmeyen bir kip sessizce legacy'ye düşmez; açık hata verir.
+bilinmeyen bir kip, kip biliniyorsa sessizce legacy'ye düşmez.
 Alanı olmayan mevcut firmalar legacy sayılır.
 
 dedicated_dsn_ref şemada durur. Değer düz metin yazılmaz; mühür
@@ -15,6 +21,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import OrderedDict
 from typing import Any, Optional
 
 LEGACY = "legacy"
@@ -25,15 +32,17 @@ DSN_FIELD = "dedicated_dsn_ref"
 MODE_FIELD = "storage_mode"
 ENV_FLAG = "STORAGE_ROUTER_ENABLED"
 TTL_SECONDS = 15.0
+CACHE_MAX = 1024
 
 _ON = frozenset({"1", "true", "yes", "on"})
 _MISS = object()
-_cache: dict[str, tuple[str, float]] = {}
+UNSET = object()
+_cache: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
 read_count = 0
 
 
 class StorageModeError(RuntimeError):
-    """Kip legacy değil ya da önbellek dolmadan arka uç istendi."""
+    """Bilinen kip legacy değil."""
 
     def __init__(self, message: str, *, company_id: str = "", mode: str = ""):
         self.company_id = str(company_id or "")
@@ -117,11 +126,24 @@ def _cached(company_id: str):
     mode, exp = row
     if _now() >= exp:
         return _MISS
+    _cache.move_to_end(company_id)
     return mode
+
+
+def _stale(company_id: str):
+    """TTL dolmuş kayıt. Yoksa _MISS. Süreyi uzatmaz."""
+    row = _cache.get(company_id)
+    if not row:
+        return _MISS
+    return row[0]
 
 
 def _store(company_id: str, mode: str) -> str:
     _cache[company_id] = (mode, _now() + TTL_SECONDS)
+    _cache.move_to_end(company_id)
+    limit = CACHE_MAX if CACHE_MAX >= 1 else 1
+    while len(_cache) > limit:
+        _cache.popitem(last=False)
     return mode
 
 
@@ -140,14 +162,14 @@ def _mode_from_doc(doc: Optional[dict]) -> str:
     return normalize_mode(doc.get(MODE_FIELD))
 
 
-def _read_sync(db, company_id: str) -> str:
-    """Bellek içi docs listesi varsa senkron okur. MySQL havuzu burada bekletilmez."""
+def _read_sync(db, company_id: str):
+    """Bellek içi docs listesi varsa senkron okur. Gerçek sürücüde None.
+
+    MySQL havuzu burada bekletilmez ve boş önbellek hata üretmez.
+    """
     docs = getattr(_companies(db), "docs", None)
     if not isinstance(docs, list):
-        raise StorageModeError(
-            "Depolama kipi önbelleği boş. Firma ayarı bu çağrıda okunamaz.",
-            company_id=company_id,
-        )
+        return None
     _bump()
     found = None
     for doc in docs:
@@ -155,6 +177,27 @@ def _read_sync(db, company_id: str) -> str:
             found = doc
             break
     return _store(company_id, _mode_from_doc(found))
+
+
+def mode_for_handle(db, company_id: str) -> str:
+    """TenantDB kurulumunda sabitlenecek kip.
+
+    Taze önbellek, sonra bellek içi docs, sonra süresi dolmuş kayıt.
+    Hiçbiri yoksa legacy. Gerçek sürücüde sorgu atmaz, hata vermez.
+    """
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise ValueError("company_id boş")
+    hit = _cached(cid)
+    if hit is not _MISS:
+        return hit
+    synced = _read_sync(db, cid)
+    if synced is not None:
+        return synced
+    stale = _stale(cid)
+    if stale is not _MISS:
+        return stale
+    return LEGACY
 
 
 async def load_mode(db, company_id: str) -> str:
@@ -174,15 +217,14 @@ async def load_mode(db, company_id: str) -> str:
     return _store(cid, _mode_from_doc(doc))
 
 
-def legacy_collection(db, company_id: str, name: str):
-    """Legacy arka uç: aynı db[name]. Diğer kipler açık hata.
-
-    Bayrak kapalıyken TenantDB bu fonksiyonu çağırmaz.
-    """
-    cid = str(company_id or "").strip()
-    if not cid:
-        raise ValueError("company_id boş")
-    hit = _cached(cid)
-    mode = hit if hit is not _MISS else _read_sync(db, cid)
-    reject_unless_legacy(mode, cid)
+def collection_for_mode(db, mode: str, company_id: str, name: str):
+    """Sabitlenmiş kipe göre arka uç. Legacy aynı db[name]."""
+    reject_unless_legacy(mode, company_id)
     return db[name]
+
+
+def legacy_collection(db, company_id: str, name: str):
+    """Kipi bir kez çözer. Bayrak kapalıyken TenantDB bunu çağırmaz."""
+    cid = str(company_id or "").strip()
+    mode = mode_for_handle(db, cid)
+    return collection_for_mode(db, mode, cid, name)
