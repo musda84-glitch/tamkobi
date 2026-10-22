@@ -193,6 +193,8 @@ import isnet_portal
 import qnb_efinans
 import e_invoice
 import saas
+import company_api_keys
+import company_links
 import user_numbers
 import company_numbers
 import saas_billing
@@ -411,6 +413,12 @@ async def startup_event():
             await db.b2b_link_acceptances.create_index("token_hash")
             await db.b2b_sessions.create_index("identity_id")
             await company_audit.ensure_indexes(db)
+            try:
+                await company_api_keys.ensure_indexes(db)
+            except Exception:
+                logger.exception(
+                    "company_api_keys key_hash veya company_link_invites code_hash benzersiz indeksi oluşturulamadı"
+                )
             try:
                 await db.users.create_index("user_number", unique=True, sparse=True)
             except Exception:
@@ -27338,6 +27346,8 @@ tenant_db.init(db, get_current_user)
 pos_cashier.init(db, get_current_user, {"do_return": _pos_do_return, "do_cancel_sale": _pos_do_cancel_sale})
 desktop_release.init(get_current_user)
 saas.init(db, get_current_user)
+company_api_keys.init(db, get_current_user)
+company_links.init(db, get_current_user)
 import public_sites
 public_sites.init(db)
 import platform_notices
@@ -27620,6 +27630,8 @@ app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
+app.include_router(company_api_keys.router)
+app.include_router(company_links.router)
 app.include_router(platform_notices.router)
 app.include_router(help_center.router)
 app.include_router(onboarding.router)

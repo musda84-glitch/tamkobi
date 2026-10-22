@@ -638,6 +638,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/comm/whatsapp/webhook",
     "/api/mail/webhooks/ses",
     "/api/shopfloor/devices/pair",
+    "/api/shared/",
 )
 
 # Mali / gizli depolama alanları. Görsel alanlar (ürün, logo, teklif, proje, …) tokensız kalır.
