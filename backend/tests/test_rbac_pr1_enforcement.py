@@ -71,6 +71,17 @@ def _http(method, path, query="company_id=co_a", token="tok"):
     return request
 
 
+def _json_request(method, path, payload, query="company_id=co_a"):
+    raw = json.dumps(payload).encode()
+    request = _http(method, path, query)
+    request.scope["headers"].append((b"content-type", b"application/json"))
+    request.scope["headers"].append((b"content-length", str(len(raw)).encode()))
+    async def _receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+    request._receive = _receive
+    return request
+
+
 def _json(payload, status=200):
     resp = JSONResponse(payload, status_code=status)
 
@@ -576,17 +587,12 @@ def test_masked_product_update_keeps_stored_prices(monkeypatch):
         "purchase_price": 0,
         "variants": [{"id": "v1", "name": "Kırmızı", "sale_price": 0}],
     }
-    raw = json.dumps(payload).encode()
-    request = _http("PUT", "/api/products/prod_1")
-    request.scope["headers"].append((b"content-type", b"application/json"))
-
-    async def _receive():
-        return {"type": "http.request", "body": raw, "more_body": False}
-
-    request._receive = _receive
+    request = _json_request("PUT", "/api/products/prod_1", payload)
 
     async def _next(req):
-        body = await req.json()
+        raw = await req.body()
+        assert req.headers.get("content-length") == str(len(raw))
+        body = json.loads(raw)
         saved["body"] = body
         doc = json.loads(json.dumps(stored))
         doc.update({k: v for k, v in body.items() if k not in ("id", "_id", "company_id")})
@@ -605,6 +611,198 @@ def test_masked_product_update_keeps_stored_prices(monkeypatch):
     assert saved["body"]["variants"][0]["sale_price"] == 90
     assert saved["doc"]["sale_price"] == 120
     assert saved["doc"]["purchase_price"] == 40
+
+
+def test_nonzero_price_is_saved_on_product_update(monkeypatch):
+    stored = {"_id": "prod_1", "company_id": "co_a", "sale_price": 120, "purchase_price": 40}
+
+    class _Products:
+        async def find_one(self, query):
+            if query.get("_id") == "prod_1" and query.get("company_id") == "co_a":
+                return dict(stored)
+            return None
+
+    class _Logs:
+        async def insert_one(self, _doc):
+            return None
+
+    class _DB:
+        activity_logs = _Logs()
+        products = _Products()
+
+    async def _lookup(_user_doc, company_id=None):
+        return _role("sales", _perms(**{"/stock": "edit"}), features={"view_prices": False}, name="Satış")
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+    monkeypatch.setattr(rbac, "_db", _DB())
+    saved = {}
+
+    async def _next(req):
+        saved["body"] = await req.json()
+        return _json({"ok": True})
+
+    async def _run():
+        return await mw.dispatch(
+            _json_request("PUT", "/api/products/prod_1", {"name": "Yeni Raf", "sale_price": 250, "purchase_price": 0}),
+            _next,
+        )
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert saved["body"]["sale_price"] == 250
+    assert saved["body"]["purchase_price"] == 40
+    assert saved["body"]["name"] == "Yeni Raf"
+
+
+def test_preserve_masked_money_keeps_real_amounts_and_unkeyed_lines():
+    stored = {
+        "sale_price": 120,
+        "items": [
+            {"id": "l1", "product_id": "p1", "unit_price": 80, "name": "Eski"},
+            {"line_id": "l2", "unit_price": 40},
+        ],
+    }
+    incoming = {
+        "sale_price": "0",
+        "purchase_price": 0,
+        "items": [
+            {"product_id": "p1", "name": "Yeni", "unit_price": 15},
+            {"id": "l1", "unit_price": 0, "name": "Güncel"},
+            {"line_id": "l2", "unit_price": 0.0},
+            {"id": "l9", "unit_price": 33},
+        ],
+    }
+    out = rbac.preserve_masked_money(incoming, stored)
+    assert out["sale_price"] == 120
+    assert out["purchase_price"] == 0
+    assert "purchase_price" in out
+    assert out["items"][0]["unit_price"] == 15
+    assert out["items"][0]["name"] == "Yeni"
+    assert out["items"][1]["unit_price"] == 80
+    assert out["items"][1]["name"] == "Güncel"
+    assert out["items"][2]["unit_price"] == 40
+    assert out["items"][3]["unit_price"] == 33
+    assert rbac.preserve_masked_money({"amount": 500}, {"amount": 10})["amount"] == 500
+    assert rbac.preserve_masked_money({"sale_price": "0.0"}, {"sale_price": 75})["sale_price"] == 75
+
+
+def test_record_payment_and_installment_keep_submitted_amount(monkeypatch):
+    finds = {"n": 0}
+
+    class _Docs:
+        async def find_one(self, _query):
+            finds["n"] += 1
+            return {"_id": "doc", "company_id": "co_a", "amount": 1, "grand_total": 1}
+
+    class _Logs:
+        async def insert_one(self, _doc):
+            return None
+
+    class _DB:
+        activity_logs = _Logs()
+        invoices = _Docs()
+        installments = _Docs()
+
+    async def _lookup(_user_doc, company_id=None):
+        return _role(
+            "sales",
+            _perms(**{
+                "/invoices": "edit",
+                "/installments": "edit",
+                "/expenses": "edit",
+                "/cheques": "edit",
+                "/orders": "edit",
+                "/quotes": "edit",
+                "/contacts": "edit",
+            }),
+            features={"view_prices": False},
+            name="Satış",
+        )
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+    monkeypatch.setattr(rbac, "_db", _DB())
+    saved = {}
+
+    async def _next(req):
+        saved["body"] = await req.json()
+        saved["length"] = req.headers.get("content-length")
+        return _json({"ok": True})
+
+    cases = (
+        ("POST", "/api/invoices/inv_1/record-payment", {"amount": 500}),
+        ("POST", "/api/installments/inst_1/pay", {"amount": 250}),
+        ("POST", "/api/expenses/exp_1/pay", {"amount": 80}),
+        ("POST", "/api/cheques/ch_1/collect", {"amount": 40}),
+        ("POST", "/api/orders/ord_1/return", {"amount": 15}),
+        ("POST", "/api/quotes/q_1/payment-plan", {"amount": 90}),
+        ("POST", "/api/contacts/ct_1/vpos-collect", {"amount": 60}),
+    )
+    for method, path, payload in cases:
+        async def _run(method=method, path=path, payload=payload):
+            return await mw.dispatch(_json_request(method, path, payload), _next)
+
+        resp = asyncio.run(_run())
+        assert resp.status_code == 200, path
+        assert saved["body"]["amount"] == payload["amount"], path
+        assert saved["length"] == str(len(json.dumps(payload).encode())), path
+    assert finds["n"] == 0
+
+
+def test_new_line_without_id_keeps_price_on_order_update(monkeypatch):
+    stored = {
+        "_id": "ord_1",
+        "company_id": "co_a",
+        "items": [
+            {"id": "l1", "product_id": "p1", "unit_price": 80, "name": "Eski"},
+            {"id": "l2", "unit_price": 40},
+        ],
+    }
+
+    class _Orders:
+        async def find_one(self, query):
+            if query.get("_id") == "ord_1" and query.get("company_id") == "co_a":
+                return json.loads(json.dumps(stored))
+            return None
+
+    class _Logs:
+        async def insert_one(self, _doc):
+            return None
+
+    class _DB:
+        activity_logs = _Logs()
+        orders = _Orders()
+
+    async def _lookup(_user_doc, company_id=None):
+        return _role("sales", _perms(**{"/orders": "edit"}), features={"view_prices": False}, name="Satış")
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+    monkeypatch.setattr(rbac, "_db", _DB())
+    saved = {}
+    payload = {
+        "items": [
+            {"product_id": "p1", "name": "Yeni", "unit_price": 15},
+            {"id": "l1", "unit_price": 0, "name": "Güncel"},
+            {"id": "l2", "unit_price": 33},
+        ]
+    }
+
+    async def _next(req):
+        raw = await req.body()
+        assert req.headers.get("content-length") == str(len(raw))
+        saved["body"] = json.loads(raw)
+        return _json({"ok": True})
+
+    async def _run():
+        return await mw.dispatch(_json_request("PUT", "/api/orders/ord_1", payload), _next)
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    items = saved["body"]["items"]
+    assert items[0]["unit_price"] == 15
+    assert items[0]["name"] == "Yeni"
+    assert items[1]["unit_price"] == 80
+    assert items[1]["name"] == "Güncel"
+    assert items[2]["unit_price"] == 33
 
 
 def test_pdf_mask_loads_role_before_handler(monkeypatch):

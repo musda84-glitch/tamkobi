@@ -491,59 +491,97 @@ def mask_money(obj):
     return obj
 
 
-def _contains_money(obj) -> bool:
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if key in MONEY_KEYS and _money_scalar(value):
-                return True
-            if _contains_money(value):
-                return True
+def _is_masked_zero(value) -> bool:
+    """GET maskesinin yazdığı 0, "0" ve 0.0. Başka tutarlara dokunulmaz."""
+    if isinstance(value, bool):
         return False
-    if isinstance(obj, list):
-        return any(_contains_money(item) for item in obj)
+    if isinstance(value, (int, float)):
+        return value == 0
+    if isinstance(value, str):
+        return value.strip() in ("0", "0.0")
     return False
 
 
-def _money_item_key(obj: Any):
+def _contains_masked_zero(obj) -> bool:
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key in MONEY_KEYS and _money_scalar(value) and _is_masked_zero(value):
+                return True
+            if _contains_masked_zero(value):
+                return True
+        return False
+    if isinstance(obj, list):
+        return any(_contains_masked_zero(item) for item in obj)
+    return False
+
+
+def _line_identities(obj: Any):
+    """Kalemin kendi kimliği. Ürün kimliği ve sıra numarası eşleşme sayılmaz."""
     if not isinstance(obj, dict):
-        return None
-    for key in ("_id", "id", "product_id", "line_id"):
+        return []
+    found = []
+    for key in ("id", "line_id", "_id"):
         value = obj.get(key)
         if value not in (None, ""):
-            return (key, str(value))
-    return None
+            found.append((key, str(value)))
+    return found
+
+
+def _record_self_update(path: str, method: str) -> bool:
+    """Yalnız PUT/PATCH /api/<kaynak>/{id}. Ödeme, tahsilat ve oluşturma bu kapının dışında."""
+    if str(method or "").upper() not in ("PUT", "PATCH"):
+        return False
+    parts = [part for part in _portal_norm_path(path).split("/") if part]
+    if len(parts) != 3 or parts[0] != "api" or not parts[1] or not parts[2]:
+        return False
+    action_names = {
+        "record-payment", "pay", "collect", "return", "payment-plan", "vpos-collect",
+    }
+    if parts[1] in action_names or parts[2] in action_names:
+        return False
+    return True
 
 
 def preserve_masked_money(incoming, stored):
-    """Maskeli tutarı mevcut kaydın değeriyle değiştirir. Kayıtta yoksa alan yazılmaz."""
+    """Maske değeri 0 ise kayıtlı tutarı yazar. Diğer değerlere dokunmaz, alan silmez.
+
+    Kalem listesinde eşleşme yalnız kalemin id veya line_id değeriyle olur.
+    Kimliği olmayan kalem, sırası ne olursa olsun olduğu gibi kalır.
+    """
     if isinstance(incoming, list):
         stored_list = stored if isinstance(stored, list) else []
         by_key = {}
         for item in stored_list:
-            key = _money_item_key(item)
-            if key and key not in by_key:
-                by_key[key] = item
+            for ident in _line_identities(item):
+                by_key.setdefault(ident, item)
         merged = []
-        for index, item in enumerate(incoming):
+        for item in incoming:
             match = None
-            key = _money_item_key(item)
-            if key and key in by_key:
-                match = by_key[key]
-            elif index < len(stored_list):
-                match = stored_list[index]
-            merged.append(preserve_masked_money(item, match))
+            for ident in _line_identities(item):
+                if ident in by_key:
+                    match = by_key[ident]
+                    break
+            if match is None:
+                merged.append(item)
+            else:
+                merged.append(preserve_masked_money(item, match))
         return merged
     if not isinstance(incoming, dict):
         return incoming
     stored_dict = stored if isinstance(stored, dict) else {}
     out = {}
     for key, value in incoming.items():
-        if key in MONEY_KEYS and _money_scalar(value):
-            if key in stored_dict:
-                out[key] = stored_dict[key]
+        if (
+            key in MONEY_KEYS
+            and _money_scalar(value)
+            and _is_masked_zero(value)
+            and key in stored_dict
+        ):
+            out[key] = stored_dict[key]
             continue
         if isinstance(value, (dict, list)):
-            out[key] = preserve_masked_money(value, stored_dict.get(key))
+            nested = stored_dict.get(key) if isinstance(stored_dict, dict) else None
+            out[key] = preserve_masked_money(value, nested)
         else:
             out[key] = value
     return out
@@ -560,6 +598,20 @@ def _replace_request_body(request, body: bytes) -> None:
     request._body = body
     if hasattr(request, "_json"):
         delattr(request, "_json")
+    length = str(len(body)).encode("ascii")
+    updated = []
+    seen = False
+    for key, value in list(request.scope.get("headers") or []):
+        if key.lower() == b"content-length":
+            updated.append((b"content-length", length))
+            seen = True
+        else:
+            updated.append((key, value))
+    if not seen:
+        updated.append((b"content-length", length))
+    request.scope["headers"] = updated
+    if hasattr(request, "_headers"):
+        delattr(request, "_headers")
 
 
 async def _stored_money_doc(path: str, company_id: Optional[str]):
@@ -585,7 +637,9 @@ async def _stored_money_doc(path: str, company_id: Optional[str]):
 
 
 async def _preserve_masked_prices(request, company_id: Optional[str]) -> None:
-    """view_prices kapalı yazmada maskeli 0, kayıtlı tutarın üzerine yazılmasın."""
+    """Kaydın kendi PUT/PATCH güncellemesinde maskeli 0, kayıtlı tutarın üzerine yazılmasın."""
+    if not _record_self_update(request.url.path, request.method):
+        return
     ctype = str(request.headers.get("content-type") or "").lower()
     if "application/json" not in ctype and "+json" not in ctype:
         return
@@ -600,12 +654,14 @@ async def _preserve_masked_prices(request, company_id: Optional[str]) -> None:
         data = _json.loads(raw)
     except ValueError:
         return
-    if not _contains_money(data):
+    if not _contains_masked_zero(data):
         return
     stored = await _stored_money_doc(request.url.path, company_id)
     if not isinstance(stored, dict):
         return
     merged = preserve_masked_money(data, stored)
+    if merged == data:
+        return
     _replace_request_body(request, _json.dumps(merged, ensure_ascii=False).encode("utf-8"))
 
 
@@ -2052,7 +2108,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                     shown = "/mesai"
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {shown})."}, status_code=403)
         if (
-            request.method in ("POST", "PUT", "PATCH")
+            request.method in ("PUT", "PATCH")
             and user
             and not write_role_exempt(user)
             and role is not None
