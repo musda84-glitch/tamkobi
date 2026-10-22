@@ -483,6 +483,9 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   const qtyN = qtyEnabled ? parseScanQtyInput(qty) : 1;
   const serial = mode === "serial";
   const heading = serial ? "Seri okuma" : title;
+  const statusNode = statusText ? (
+    <div className="font-bold text-sm truncate" data-testid="camera-scanner-status">{statusText}</div>
+  ) : null;
 
   return (
     <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" data-testid="camera-scanner" data-mode={mode} role="dialog" aria-modal="true">
@@ -539,7 +542,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[92%] inline-flex items-center gap-2 rounded-full bg-emerald-500 text-white px-4 py-2 shadow-lg" data-testid="camera-scanner-toast" role="status">
               <Check className="w-5 h-5 shrink-0" />
               <div className="text-left min-w-0">
-                <div className="font-bold text-sm truncate" data-testid="camera-scanner-status">{statusText || hit.code}</div>
+                {statusNode || <div className="font-bold text-sm truncate">{hit.code}</div>}
                 <div className="font-mono text-[11px] text-emerald-50 truncate" data-testid="camera-scanner-last">{hit.code}</div>
                 <div className="text-[11px] text-emerald-50">Sepete eklendi (×{qtyN}) · sıradaki için tekrar dokunun</div>
               </div>
@@ -579,7 +582,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
             )}
           </div>
         )}
-        {statusText && serial ? <div className="text-emerald-300 font-bold mb-2" data-testid="camera-scanner-status">{statusText}</div> : null}
+        {!(hit && !serial) && statusNode ? <div className="text-emerald-300 mb-2">{statusNode}</div> : null}
         {qtyEnabled ? (
           <label className="flex items-center justify-center gap-2 text-white text-xs mb-3">
             <span className="font-bold">Adet çarpan</span>
