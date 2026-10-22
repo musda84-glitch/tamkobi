@@ -9191,7 +9191,9 @@ async def _store_product_image_bytes(
     company_id = str(product.get("company_id") or "").strip()
     if not company_id:
         raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
-    await saas.check_storage_limit(company_id, len(data))
+    thumb = image_opt.make_thumbnail(data, content_type, filename or "")
+    extra = len(data) + (len(thumb.data) if thumb and thumb.data else 0)
+    await saas.check_storage_limit(company_id, extra)
     try:
         import storage_manager
         await storage_manager.ensure_account_folders(company_id)
@@ -9222,7 +9224,6 @@ async def _store_product_image_bytes(
     })
     image_url = f"/api/files/{result['path']}"
     thumbnail_url = None
-    thumb = image_opt.make_thumbnail(data, content_type, filename or "")
     if thumb and thumb.data:
         try:
             try:
@@ -26896,6 +26897,7 @@ async def ai_invoice_extract(
         import re as _re
         match = await db.contacts.find_one({"company_id": company_id, "name": {"$regex": _re.escape(str(party["name"])[:25]), "$options": "i"}})
 
+    await saas.check_storage_limit(company_id, len(data))
     entity = "sales_invoice" if inv_type == "sales" else "purchase_invoice"
     store_ct = "application/xml" if is_xml else ("application/pdf" if is_pdf else "text/plain")
     ext = "xml" if is_xml else ("pdf" if is_pdf else "txt")

@@ -892,6 +892,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "area_key", "label", "entity", "path", "is_system", "is_active", "created_at"),
         "refs": ("companies._id",),
     },
+    "storage_increase_requests": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirketin depolama limiti artış talepleri. Onay, lisans storage_limit_mb alanını yazar.",
+        "keys": ("_id", "company_id", "status", "requested_limit_mb", "current_limit_mb", "message", "requested_by", "created_at"),
+        "refs": ("companies._id",),
+    },
     "trash": {
         "scope": SCOPE_TENANT,
         "description": "Yumuşak silinen belgenin kopyası ve geri yükleme bilgisi.",

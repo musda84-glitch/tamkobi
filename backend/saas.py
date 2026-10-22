@@ -664,7 +664,11 @@ async def check_storage_limit(company_id: str, extra_bytes: int = 0):
     used = (await quota_usage(company_id))["storage_bytes"]
     cap = limit_mb * 1024 * 1024
     if used + max(0, int(extra_bytes or 0)) > cap:
-        raise HTTPException(status_code=403, detail=f"Resim depolama kotası doldu ({round(used / (1024 * 1024), 1)}/{limit_mb} MB). Paketinizi yükseltin ({lic['plan_name']}).")
+        import storage_quota
+        raise HTTPException(
+            status_code=403,
+            detail=storage_quota.storage_limit_message(used, limit_mb),
+        )
 
 
 async def validate_licensed_company(parent_company_id: str, req: Dict[str, Any]) -> dict:
