@@ -7,7 +7,7 @@ function shot(id, file, width, height, alt, caption) {
 }
 
 const LEVELS = [
-  { key: "none", label: "Kapalı", text: "Modül menüde görünmez ve ekranları açılmaz." },
+  { key: "none", label: "Kapalı", text: "Modül menüde görünmez, ekranları açılmaz ve sunucu okuma isteklerini varsayılan olarak reddeder." },
   { key: "view", label: "Görür", text: "Liste ve detayları okur, PDF açar. Yeni kayıt, düzenleme ve silme yapamaz." },
   { key: "edit", label: "Ekler/Düzenler", text: "Yeni kayıt açar ve mevcut kaydı günceller. Silemez." },
   { key: "delete", label: "Siler", text: "Ekleme ve düzenlemenin yanında kayıt silebilir ve toplu silme yapabilir. Silinen kayıtlar Çöp Kutusu'na gider." },
@@ -32,10 +32,6 @@ export const ROLE_HELP_SECTIONS = [
       "Aynı fatura satırının Kapalı, Görür, Ekler/Düzenler ve Siler seviyelerinde nasıl göründüğü: butonlar seviyeye göre kaybolur.",
       "Aynı satırın dört seviyede nasıl göründüğü",
     ),
-    notes: [{
-      kind: "warn",
-      text: "Bugün \"Kapalı\" seviyesi okuma isteklerini sunucuda varsayılan olarak yalnızca kayda geçirir, engellemez (RBAC_GET_ENFORCE=shadow). Menü gizlenir, ama API okumaları açık kalabilir.",
-    }],
   },
   {
     id: "finans",
@@ -44,7 +40,7 @@ export const ROLE_HELP_SECTIONS = [
     paragraphs: ["Para ile ilgili tüm ekranlar bu gruptadır. Bu yetkileri yalnızca güvendiğiniz kişilere verin. Fatura ve banka işlemleri vergi kayıtlarınızı doğrudan etkiler."],
     items: [
       item("faturalar", "Faturalar & e-Belge", [
-        "Satış ve alış faturaları, e-Fatura ve e-Arşiv gönderimi, gelen e-belge kutusu ve irsaliyeler bu yetkiye bağlıdır. e-Fatura gönderimi kontör harcar ve GİB'e iletilir. Gönderilen belge silinerek geri alınamaz, yalnızca iptal veya itiraz süreciyle düzeltilir. Satış personeline genelde \"Ekler/Düzenler\" yeterlidir; silme yetkisini muhasebeye bırakın.",
+        "Satış ve alış faturaları, e-Fatura ve e-Arşiv gönderimi, gelen e-belge kutusu ve irsaliyeler bu yetkiye bağlıdır. e-Fatura gönderimi kontör harcar ve GİB'e iletilir. Gönderilen belge silinerek geri alınamaz, yalnızca iptal veya itiraz süreciyle düzeltilir. e-Fatura oluşturma, Faturalar yetkisinde Ekler/Düzenler ister. Satış personeline genelde \"Ekler/Düzenler\" yeterlidir; silme yetkisini muhasebeye bırakın.",
       ], {
         image: shot(
           "fatura-gorur",
@@ -54,10 +50,6 @@ export const ROLE_HELP_SECTIONS = [
           "Görür seviyesinde fatura listesi: Yeni Fatura butonu gizli, satırda yalnızca görüntüleme kalır.",
           "Görür seviyesinde Yeni Fatura butonu gizli",
         ),
-        notes: [{
-          kind: "warn",
-          text: "Eski \"/api/e-invoice/create\" ucu modül kontrolüne bağlı değil. Düzeltilene kadar kısıtlı roller de bu uçtan e-Fatura oluşturabilir.",
-        }],
       }),
       item("banka", "Banka, Kasa & POS", [
         "Banka hesapları, otomatik banka senkronu ve eşleştirme, kasa, virman ve POS tahsilatları. \"Görür\" seviyesindeki kişi bakiyeleri ve hareketleri görür ama işlem giremez. Firmanızda çift onay açıksa virman ve ortak hesabı işlemleri ikinci bir kişinin onayını bekler.",
@@ -75,13 +67,8 @@ export const ROLE_HELP_SECTIONS = [
         "Alınan ve verilen çek ve senetler: tahsil, ciro, karşılıksız işaretleme. Bu yetki rolde tanımlanmamışsa mobil uygulama Banka yetkisine bakar.",
       ]),
       item("masraf", "Masraflar", [
-        "Masraf fişi girişi, fiş fotoğrafından bilgi okuma ve masraf bütçeleri. Personele masraf ödemesi için Personel yetkisi de \"Ekler/Düzenler\" olmalıdır.",
-      ], {
-        notes: [{
-          kind: "warn",
-          text: "Masraf bütçesi kaydetme ucu (/api/expense-budgets) bugün bu yetkiyle denetlenmiyor.",
-        }],
-      }),
+        "Masraf fişi girişi, fiş fotoğrafından bilgi okuma ve masraf bütçeleri bu yetkiye bağlıdır. Personele masraf ödemesi için Personel yetkisi de \"Ekler/Düzenler\" olmalıdır.",
+      ]),
       item("kredi", "Krediler & Taksitler", [
         "Kredi ve kredi kartı takibi, taksitli satış ve ödeme planları.",
       ]),
@@ -112,13 +99,8 @@ export const ROLE_HELP_SECTIONS = [
         "Perakende satış ekranı, tartı ve termal fiş.",
       ]),
       item("b2b", "B2B Bayi Portalı", [
-        "Bayi portalı menüsünün görünürlüğü.",
-      ], {
-        notes: [{
-          kind: "warn",
-          text: "Bu yetki bugün yalnızca menüyü etkiler. Bayi şifreleri Cari yetkisiyle, portal ayarları Firma Ayarları yetkisiyle yönetilir.",
-        }],
-      }),
+        "Bayi portalı menüsü, portal ayarları ve bayi şifresi bu yetkiyle yönetilir. Eski rollerde cari seviyesi okuma anında devralınır.",
+      ]),
     ],
   },
   {
@@ -127,13 +109,8 @@ export const ROLE_HELP_SECTIONS = [
     title: "Stok & Depo",
     items: [
       item("urun", "Stok & Ürünler", [
-        "Ürün kartı, barkod, etiket ve fiyatlar. Ürün fiyatını değiştirmek için \"Ekler/Düzenler\" gerekir.",
-      ], {
-        notes: [{
-          kind: "warn",
-          text: "Kanal fiyat kuralları (/api/pricing/rules) ve etiket şablonları (/api/label-templates) bugün bu yetkiyle denetlenmiyor.",
-        }],
-      }),
+        "Ürün kartı, barkod, etiket, fiyatlar, kanal fiyat kuralları ve etiket şablonları bu yetkiye bağlıdır. Ürün fiyatını ve etiket şablonunu değiştirmek için \"Ekler/Düzenler\" gerekir.",
+      ]),
       item("depo", "Depo, Sayım & Sevkiyat", [
         "Çoklu depo ve transfer, tablet stok sayımı, sipariş toplama (sevk). Personel portalındaki çalışanlar için ayrıca Gelişmiş › Personel portalı açılmalıdır.",
       ], {
@@ -172,7 +149,7 @@ export const ROLE_HELP_SECTIONS = [
         ),
         notes: [{
           kind: "important",
-          text: "Bu modülde \"Görür\" seviyesi de iş emri işletmeye izin verir (operatörün çalışabilmesi için). İş emri silmek için \"Siler\" gerekir.",
+          text: "Başlat, duraklat ve bitir Ekler/Düzenler ister. PIN, liste ve kısmi adet Görür ile açılır. İş emri silmek için Siler gerekir.",
         }],
       }),
     ],
@@ -209,7 +186,7 @@ export const ROLE_HELP_SECTIONS = [
       ], {
         notes: [{
           kind: "warn",
-          text: "İşNet entegrasyonu kaydetme uçları bugün Ayarlar yetkisiyle denetlenmiyor.",
+          text: "İşNet kayıt ve test uçları Firma Ayarları seviyesine bakmaz; yalnız yönetici rolü kaydeder.",
         }],
       }),
     ],
@@ -230,10 +207,6 @@ export const ROLE_HELP_SECTIONS = [
           "Aynı sipariş listesi fiyatlar açıkken tutarlı, kapalıyken tutarlar gizli.",
           "Fiyatlar açık ve kapalıyken aynı sipariş listesi",
         ),
-        notes: [{
-          kind: "warn",
-          text: "Maskeleme bugün yalnızca okuma (GET) yanıtlarında yapılıyor. PDF ve Excel çıktılarında ve kayıt oluşturma yanıtlarında tutarlar görünebilir.",
-        }],
       }),
       item("portal", "Personel portalı ve mobil saha", [
         "ik.tamkobi.com'daki çalışan ekranında ve mobilde hangi saha işlerinin açılacağını seçer: Atölye, Sipariş toplama, Stok sayımı, Saha siparişi, Araçlarım, Siparişler (yazdır, eksik bildir, üretime al, kargola, etiket). Varsayılan olarak hepsi kapalıdır; kapalı olan işlemde sunucu 403 döner.",
