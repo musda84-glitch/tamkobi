@@ -491,3 +491,58 @@ def test_punch_pin_is_stored_hashed_and_checked_on_the_server():
     assert stored["punch_pin_hash"].startswith("$2")
     assert bad["allow"] is False and bad["detail"] == "PIN hatalı."
     assert good["allow"] is True
+
+
+def test_checkout_reminder_requires_today_checkin_and_user():
+    """Giriş kaydı olmayan yönetici ve user_id'si olmayan kart hatırlatma almaz.
+
+    Giriş yapmış, çıkış yapmamış personel bir kez alır. claim_once ikinci turu keser.
+    """
+    assert sec.checkout_reminder_target({"user_id": "u1"}, {"check_in": "09:00"}) is True
+    assert sec.checkout_reminder_target({"user_id": "u-boss"}, {}) is False
+    assert sec.checkout_reminder_target({"user_id": ""}, {"check_in": "09:00"}) is False
+    assert sec.checkout_reminder_target(
+        {"user_id": "u1"}, {"check_in": "09:00", "check_out": "18:00"},
+    ) is False
+
+    async def go():
+        db = MemoryDB()
+        await db.companies.insert_one(_company({"notify_checkout_reminder": True}))
+        await db.employees.insert_one(_emp("boss", user_id="u-boss", full_name="Yönetici"))
+        await db.employees.insert_one(_emp("ghost", user_id="", full_name="Kartsız"))
+        await db.employees.insert_one(_emp("e1", full_name="Ali"))
+        await db.employees.insert_one(_emp("out", full_name="Vardiya bitti"))
+        day = "2026-10-12"
+        await db.attendance.insert_one({
+            "_id": "att-ghost", "employee_id": "ghost", "company_id": "co",
+            "date": day, "check_in": "09:00", "status": "present",
+        })
+        await db.attendance.insert_one({
+            "_id": "att-e1", "employee_id": "e1", "company_id": "co",
+            "date": day, "check_in": "09:00", "status": "present",
+        })
+        await db.attendance.insert_one({
+            "_id": "att-out", "employee_id": "out", "company_id": "co",
+            "date": day, "check_in": "09:00", "check_out": "17:30", "status": "present",
+        })
+        sent = []
+
+        async def send(employee, kind, title, message, link):
+            sent.append({
+                "employee_id": employee["_id"],
+                "user_id": employee.get("user_id"),
+                "kind": kind,
+                "title": title,
+            })
+
+        end = datetime(2026, 10, 12, 15, 0, tzinfo=timezone.utc)
+        await sec.run_reminders(db, _merge, send, now_utc=end, window=0)
+        await sec.run_reminders(db, _merge, send, now_utc=end, window=0)
+        return sent
+
+    assert _run(go()) == [{
+        "employee_id": "e1",
+        "user_id": "u-e1",
+        "kind": "checkout",
+        "title": "Çıkış hatırlatması",
+    }]
