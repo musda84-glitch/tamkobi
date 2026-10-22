@@ -1,7 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
-import { Camera, X, Loader2, FlipHorizontal, Zap } from "lucide-react";
-import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { Camera, X, Loader2, FlipHorizontal, Zap, Check } from "lucide-react";
+import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+
+/** Basılı tutma eşiği, tek okuma penceresi ve aynı kodun tekrar sayılmama süresi. */
+export const SHUTTER_HOLD_MS = 400;
+export const SHUTTER_SEARCH_MS = 1500;
+export const SHUTTER_DEDUPE_MS = 1500;
 
 /** Yaygın 1D barkod + QR / Data Matrix / PDF417 / Aztec */
 export const SCAN_FORMATS = [
@@ -39,6 +44,14 @@ export const normalizeScanText = (raw) => {
 const supportsNativeDetector = () =>
   typeof window !== "undefined" && typeof window.BarcodeDetector === "function";
 
+/** iOS Safari / Android Chrome: titreşim yoksa veya hata verirse okuma sürer. */
+const buzz = () => {
+  try {
+    const vibrate = typeof navigator !== "undefined" ? navigator.vibrate : undefined;
+    if (typeof vibrate === "function") vibrate(60);
+  } catch { /* sessiz */ }
+};
+
 const beep = () => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -69,11 +82,14 @@ const pickBackCamera = (devices) => {
 };
 
 /**
- * Kamera ile barkod/QR okuyucu.
+ * Kamera ile barkod/QR okuyucu — deklanşör.
  * Önce native BarcodeDetector (tam kare), yoksa html5-qrcode (yüksek çözünürlük + geniş alan).
- * continuous=true → okuduktan sonra kapanmaz; aynı kod 1,5 sn içinde tekrar sayılmaz.
+ * Decode döngüsü sürekli çalışır; sonuç yalnızca tek okuma penceresinde (ilk kod) veya
+ * seri okuma basılıyken (dedupe ile) onScan'a gider. Kamera okumadan sonra açık kalır.
+ * continuous geriye uyumluluk için kabul edilir; davranışı değiştirmez.
  */
-export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Barkod / QR Okut", qtyEnabled = false, qty, onQtyChange, statusText }) => {
+export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Barkod okut", qtyEnabled = false, qty, onQtyChange, statusText }) => {
+  void continuous;
   const hostIdRef = useRef(`cam-scan-${Math.random().toString(36).slice(2)}`);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -81,17 +97,38 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   const rafRef = useRef(0);
   const lastRef = useRef({ code: "", at: 0 });
   const aliveRef = useRef(true);
-  const continuousRef = useRef(continuous);
-  continuousRef.current = continuous;
+  const onScanRef = useRef(onScan);
+  onScanRef.current = onScan;
+  const modeRef = useRef("idle");
+  const pressingRef = useRef(false);
+  const holdTimerRef = useRef(0);
+  const searchTimerRef = useRef(0);
+  const flashTimerRef = useRef(0);
 
   const [status, setStatus] = useState("starting");
   const [error, setError] = useState("");
   const [engine, setEngine] = useState("");
   const [cams, setCams] = useState([]);
   const [camIdx, setCamIdx] = useState(-1);
-  const [last, setLast] = useState(null);
   const [count, setCount] = useState(0);
+  const [recent, setRecent] = useState([]);
   const [torch, setTorch] = useState(false);
+  const [mode, setMode] = useState("idle");
+  const [notFound, setNotFound] = useState(false);
+  const [hit, setHit] = useState(null);
+  const [flash, setFlash] = useState(false);
+
+  const clearTimer = (ref) => {
+    if (ref.current) {
+      clearTimeout(ref.current);
+      ref.current = 0;
+    }
+  };
+
+  const setModeBoth = (next) => {
+    modeRef.current = next;
+    setMode(next);
+  };
 
   const stopAll = useCallback(async () => {
     if (rafRef.current) {
@@ -121,16 +158,142 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   const emitScan = useCallback((raw) => {
     const text = normalizeScanText(raw);
     if (!text || !aliveRef.current) return;
+    const current = modeRef.current;
+    if (current !== "single" && current !== "serial") return;
     const now = Date.now();
-    if (lastRef.current.code === text && now - lastRef.current.at < 1500) return;
+    if (lastRef.current.code === text && now - lastRef.current.at < SHUTTER_DEDUPE_MS) return;
     lastRef.current = { code: text, at: now };
     beep();
-    try { navigator.vibrate?.(60); } catch { /* ignore */ }
-    setLast(text);
-    setCount((c) => c + 1);
-    onScan?.(text);
-    if (!continuousRef.current) setTimeout(() => { close(); }, 120);
-  }, [onScan, close]);
+    buzz();
+    setFlash(true);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => {
+      flashTimerRef.current = 0;
+      setFlash(false);
+    }, 180);
+    if (current === "single") {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = 0;
+      }
+      modeRef.current = "idle";
+      setMode("idle");
+      setNotFound(false);
+      setHit({ code: text });
+    } else {
+      setCount((c) => c + 1);
+      setRecent((prev) => [text, ...prev].slice(0, 6));
+    }
+    onScanRef.current?.(text);
+  }, []);
+
+  const enterSerial = () => {
+    clearTimer(searchTimerRef);
+    setNotFound(false);
+    setHit(null);
+    setCount(0);
+    setRecent([]);
+    setModeBoth("serial");
+  };
+
+  const enterSingle = () => {
+    clearTimer(searchTimerRef);
+    setNotFound(false);
+    setHit(null);
+    setModeBoth("single");
+    searchTimerRef.current = setTimeout(() => {
+      searchTimerRef.current = 0;
+      if (modeRef.current !== "single") return;
+      modeRef.current = "idle";
+      setMode("idle");
+      setNotFound(true);
+    }, SHUTTER_SEARCH_MS);
+  };
+
+  const onShutterDown = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (pressingRef.current) return;
+    pressingRef.current = true;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    e.preventDefault();
+    clearTimer(holdTimerRef);
+    if (modeRef.current === "single") {
+      clearTimer(searchTimerRef);
+      setModeBoth("idle");
+    }
+    setNotFound(false);
+    holdTimerRef.current = setTimeout(() => {
+      holdTimerRef.current = 0;
+      if (!pressingRef.current) return;
+      enterSerial();
+    }, SHUTTER_HOLD_MS);
+  };
+
+  const releasePointer = (e) => {
+    try {
+      if (e?.pointerId != null && e.currentTarget?.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const finishGesture = (e, asTap) => {
+    const was = pressingRef.current;
+    pressingRef.current = false;
+    clearTimer(holdTimerRef);
+    releasePointer(e);
+    if (!was) return;
+    if (modeRef.current === "serial") {
+      setModeBoth("idle");
+      return;
+    }
+    if (asTap) enterSingle();
+  };
+
+  const onShutterContextMenu = (e) => {
+    e.preventDefault();
+  };
+
+  const shutterStyle = {
+    touchAction: "none",
+    userSelect: "none",
+    WebkitUserSelect: "none",
+    WebkitTouchCallout: "none",
+  };
+  const shutterBox = {
+    ...shutterStyle,
+    width: 76,
+    height: 76,
+    minWidth: 72,
+    minHeight: 72,
+  };
+  const shutterRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const el = shutterRef.current;
+    if (!el) return undefined;
+    // iOS Safari ve Android Chrome vendor önekini ham style metninden uygular.
+    el.setAttribute(
+      "style",
+      "touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; width: 76px; height: 76px; min-width: 72px; min-height: 72px;",
+    );
+    const block = (event) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    const opts = { capture: true, passive: false };
+    el.addEventListener("touchstart", block, opts);
+    el.addEventListener("touchmove", block, opts);
+    el.addEventListener("pointermove", block, opts);
+    el.addEventListener("selectstart", block, opts);
+    el.addEventListener("contextmenu", block, opts);
+    return () => {
+      el.removeEventListener("touchstart", block, opts);
+      el.removeEventListener("touchmove", block, opts);
+      el.removeEventListener("pointermove", block, opts);
+      el.removeEventListener("selectstart", block, opts);
+      el.removeEventListener("contextmenu", block, opts);
+    };
+  });
 
   const startNative = useCallback(async (deviceId) => {
     if (!supportsNativeDetector() || !videoRef.current) return false;
@@ -326,6 +489,9 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
       cancelled = true;
       aliveRef.current = false;
       clearTimeout(t);
+      clearTimer(holdTimerRef);
+      clearTimer(searchTimerRef);
+      clearTimer(flashTimerRef);
       stopAll();
     };
   }, [camIdx]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -356,14 +522,21 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     setCamIdx((i) => (Math.max(0, i) + 1) % cams.length);
   };
 
+  const qtyN = qtyEnabled ? parseScanQtyInput(qty) : 1;
+  const serial = mode === "serial";
+  const heading = serial ? "Seri okuma" : title;
+  const statusNode = statusText ? (
+    <div className="font-bold text-sm truncate" data-testid="camera-scanner-status">{statusText}</div>
+  ) : null;
+
   return (
-    <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" data-testid="camera-scanner" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" data-testid="camera-scanner" data-mode={mode} role="dialog" aria-modal="true">
       <div className="flex items-center justify-between px-4 py-3 text-white shrink-0">
         <div className="font-bold flex items-center gap-2 min-w-0">
-          <Camera className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="truncate">{title}</span>
-          {continuous && count > 0 && (
-            <span className="text-xs bg-emerald-600 rounded-full px-2 py-0.5 shrink-0">{count} okundu</span>
+          <Camera className={`w-5 h-5 shrink-0 ${serial ? "text-rose-400" : "text-emerald-400"}`} />
+          <span className="truncate">{heading}</span>
+          {serial && (
+            <span className="text-[11px] font-black tracking-wide bg-rose-600 text-white rounded-full px-2 py-0.5 shrink-0" data-testid="camera-scanner-serial-badge">● SERİ</span>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -401,7 +574,26 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
 
           {engine === "native" && status === "scanning" && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
-              <div className="w-[88%] max-w-md border-2 border-emerald-400/80 rounded-xl shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" style={{ height: "38%" }} />
+              <div className={`w-[88%] max-w-md border-2 rounded-xl shadow-[0_0_0_9999px_rgba(0,0,0,0.35)] ${serial ? "border-rose-400/80" : "border-emerald-400/80"}`} style={{ height: "38%" }} />
+            </div>
+          )}
+
+          {flash && <div className="pointer-events-none absolute inset-0 rounded-2xl bg-emerald-400/35" data-testid="camera-scanner-flash" />}
+
+          {hit && !serial && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 max-w-[92%] inline-flex items-center gap-2 rounded-full bg-emerald-500 text-white px-4 py-2 shadow-lg" data-testid="camera-scanner-toast" role="status">
+              <Check className="w-5 h-5 shrink-0" />
+              <div className="text-left min-w-0">
+                {statusNode || <div className="font-bold text-sm truncate">{hit.code}</div>}
+                <div className="font-mono text-[11px] text-emerald-50 truncate" data-testid="camera-scanner-last">{hit.code}</div>
+                <div className="text-[11px] text-emerald-50">Sepete eklendi (×{qtyN}) · sıradaki için tekrar dokunun</div>
+              </div>
+            </div>
+          )}
+
+          {notFound && !hit && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 rounded-full bg-rose-600 text-white px-4 py-2 text-sm font-bold shadow-lg" data-testid="camera-scanner-notfound" role="status">
+              Kod bulunamadı
             </div>
           )}
 
@@ -419,17 +611,22 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
         </div>
       </div>
 
-      <div className="px-4 pb-6 pt-2 text-center text-slate-300 text-xs space-y-1 shrink-0">
-        {last ? (
-          <div className="text-emerald-300 font-mono text-base font-bold break-all" data-testid="camera-scanner-last">{last}</div>
-        ) : (
-          <div>
-            Barkodu veya QR kodu çerçeveye hizalayın ve sabit tutun.
-            EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR, Data Matrix, PDF417 desteklenir.
+      <div className="px-4 pb-6 pt-2 text-center text-slate-300 text-xs shrink-0 flex flex-col items-center" style={shutterStyle}>
+        {serial && (
+          <div className="w-full max-w-sm mb-3 text-left">
+            <div className="text-rose-300 font-bold text-sm text-center" data-testid="camera-scanner-count">{count} okuma</div>
+            {recent.length > 0 && (
+              <ul className="mt-1 max-h-24 overflow-y-auto space-y-0.5" data-testid="camera-scanner-recent">
+                {recent.map((code, i) => (
+                  <li key={`${code}-${i}`} className="font-mono text-[11px] text-slate-300 truncate">{code}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
+        {!(hit && !serial) && statusNode ? <div className="text-emerald-300 mb-2">{statusNode}</div> : null}
         {qtyEnabled ? (
-          <label className="flex items-center justify-center gap-2 text-white pt-1">
+          <label className="flex items-center justify-center gap-2 text-white text-xs mb-3">
             <span className="font-bold">Adet çarpan</span>
             <input
               value={scanQtyShown(qty)}
@@ -437,15 +634,45 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
               onFocus={() => onQtyChange?.(scanQtyOnFocus())}
               onBlur={() => onQtyChange?.(scanQtyOnBlur(qty))}
               inputMode="numeric"
-              className="w-16 rounded-lg px-2 py-1 text-slate-900 font-black text-center"
+              className="w-14 rounded-lg px-2 py-1 text-slate-900 font-black text-center text-sm"
               data-testid="camera-scanner-qty"
             />
           </label>
         ) : null}
-        {statusText ? <div className="text-emerald-300 font-bold" data-testid="camera-scanner-status">{statusText}</div> : null}
-        {continuous && <div>Sürekli okuma açık — her okuma otomatik işlenir. Bitince <b>X</b> ile kapatın.</div>}
+        <button
+          ref={shutterRef}
+          type="button"
+          data-testid="camera-scanner-shutter"
+          data-mode={mode}
+          aria-label="Deklanşör. Dokun: tek okut. Basılı tut: seri okut."
+          onPointerDown={onShutterDown}
+          onPointerUp={(e) => finishGesture(e, true)}
+          onPointerLeave={(e) => {
+            if (e.pointerType && e.pointerType !== "mouse") return;
+            finishGesture(e, false);
+          }}
+          onPointerCancel={(e) => finishGesture(e, false)}
+          onContextMenu={onShutterContextMenu}
+          draggable={false}
+          style={shutterBox}
+          className={`relative select-none outline-none touch-none ${serial ? "text-rose-500" : "text-white"}`}
+        >
+          <span className="pointer-events-none relative block w-full h-full">
+            <span className={`absolute inset-0 rounded-full border-[5px] ${serial ? "border-rose-500 animate-pulse" : "border-white"}`} />
+            {serial && (
+              <span
+                className="absolute -inset-1 rounded-full border-4 border-transparent border-t-rose-400 border-r-rose-500 animate-spin"
+                style={{ animationDuration: "0.9s" }}
+              />
+            )}
+            <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-all ${serial ? "w-8 h-8 rounded-lg bg-rose-500" : "w-14 h-14 rounded-full bg-white"}`} />
+          </span>
+        </button>
+        <div className="mt-3 text-xs text-slate-300" data-testid="camera-scanner-hint">
+          {serial ? "Seri okuma sürüyor · bırakınca durur" : "Dokun: tek okut · Basılı tut: seri okut"}
+        </div>
         {engine && status === "scanning" && (
-          <div className="text-slate-500" data-testid="camera-scanner-engine">
+          <div className="text-slate-500 mt-2" data-testid="camera-scanner-engine">
             {engine === "native" ? "Yerel tarayıcı okuyucu" : "Gelişmiş yazılım okuyucu"}
           </div>
         )}

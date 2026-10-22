@@ -26,7 +26,7 @@ export function StockCountSessionScreen() {
   const [session, setSession] = useState<CountSession | null>(null);
   const [code, setCode] = useState("");
   const [scanQty, setScanQty] = useState("1");
-  const [scan, setScan] = useState<null | "once" | "serial">(null);
+  const [scan, setScan] = useState(false);
   const [last, setLast] = useState<CountItem | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,14 +175,7 @@ export function StockCountSessionScreen() {
               <PrimaryButton title={`Okut (+${qtyLabel})`} onPress={() => submitScan(code)} loading={busy} color={colors.indigo} testID="sayim-add-btn" />
             </View>
           </Row>
-          <Row>
-            <View style={{ flex: 1 }}>
-              <PrimaryButton title="Seri okut" onPress={() => setScan("serial")} color={colors.indigo} testID="sayim-scan-serial-btn" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <PrimaryButton title="Kamera" onPress={() => setScan("once")} color={colors.secondary} testID="sayim-scan-btn" />
-            </View>
-          </Row>
+          <PrimaryButton title="Barkod okut" onPress={() => setScan(true)} color={colors.indigo} testID="sayim-scan-btn" />
         </Card>
       ) : null}
 
@@ -251,12 +244,11 @@ export function StockCountSessionScreen() {
       ) : null}
 
       <BarcodeScannerModal
-        visible={!!scan}
-        continuous={scan === "serial"}
+        visible={scan}
         qtyEnabled
         qty={scanQty}
         onQtyChange={setScanQty}
-        onClose={() => setScan(null)}
+        onClose={() => setScan(false)}
         onScan={submitScan}
       />
     </Screen>

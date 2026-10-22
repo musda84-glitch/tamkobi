@@ -585,13 +585,12 @@ export default function B2BPortalPage() {
                 </label>
                 <ScanButton
                   size="sm"
-                  continuous
                   qtyEnabled
                   qty={scanQty}
                   onQtyChange={setScanQty}
                   statusText={scanStatus}
                   label="Okut"
-                  title="Seri barkod okut — adet çarpan"
+                  title="Barkod okut"
                   className="!px-3 !rounded-xl shrink-0"
                   onScan={addFromScan}
                 />

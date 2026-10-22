@@ -26,7 +26,7 @@ export default function StockCountKioskPage() {
   const [last, setLast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [kiosk, setKiosk] = useState(true);
-  const [cam, setCam] = useState(null);
+  const [cam, setCam] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState({ name: "", warehouse_id: "" });
   const [loadError, setLoadError] = useState("");
@@ -221,14 +221,9 @@ export default function StockCountKioskPage() {
                 </label>
                 <button type="submit" className="flex-1 py-4 bg-violet-600 text-white rounded-2xl font-bold text-base" data-testid="kiosk-scan-btn">Okut (+{qty})</button>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setCam("serial")} className="py-4 bg-indigo-600 text-white rounded-2xl font-bold text-base inline-flex items-center justify-center gap-2" data-testid="kiosk-serial-btn">
-                  <Camera className="w-5 h-5" /> Seri okut
-                </button>
-                <button type="button" onClick={() => setCam("once")} className="py-4 bg-slate-900 text-white rounded-2xl font-bold text-base inline-flex items-center justify-center gap-2" data-testid="kiosk-camera-btn">
-                  <Camera className="w-5 h-5" /> Kamera
-                </button>
-              </div>
+              <button type="button" onClick={() => setCam(true)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-base inline-flex items-center justify-center gap-2" data-testid="kiosk-camera-btn">
+                <Camera className="w-5 h-5" /> Barkod okut
+              </button>
             </form>
           )}
 
@@ -280,13 +275,12 @@ export default function StockCountKioskPage() {
 
   const scanner = cam && (
     <CameraScanner
-      continuous={cam === "serial"}
       qtyEnabled
       qty={scanQty}
       onQtyChange={setScanQty}
-      title={cam === "serial" ? "Sayım — seri okuma" : "Sayım — kamera"}
+      title="Sayım — barkod okut"
       onScan={scanCode}
-      onClose={() => { setCam(null); setTimeout(() => inputRef.current?.focus(), 80); }}
+      onClose={() => { setCam(false); setTimeout(() => inputRef.current?.focus(), 80); }}
     />
   );
 

@@ -1,6 +1,5 @@
 import React, { createElement, useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
-import { colors } from "../theme";
 import { normalizeScanText } from "../utils/b2bCatalog";
 
 type DetectorCtor = new (opts?: { formats?: string[] }) => { detect: (source: CanvasImageSource) => Promise<Array<{ rawValue?: string }>> };
@@ -27,20 +26,39 @@ function detector(): DetectorCtor | null {
   return typeof Ctor === "function" ? Ctor : null;
 }
 
+function applyTorch(stream: MediaStream | null, torch: boolean) {
+  const track = stream?.getVideoTracks?.()?.[0];
+  if (!track || typeof track.applyConstraints !== "function" || typeof track.getCapabilities !== "function") return;
+  const caps = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
+  if (!caps.torch) return;
+  track.applyConstraints({ advanced: [{ torch }] } as unknown as MediaTrackConstraints).catch(() => undefined);
+}
+
 /** Expo CameraView web'de barkod olayı üretmez; tarayıcı BarcodeDetector + getUserMedia kullanır. */
 export function WebBarcodeCamera({
   active,
   onScan,
   continuous = false,
+  torch = false,
 }: {
   active: boolean;
   onScan: (code: string) => void;
+  /** Geriye uyumluluk. Akış artık deklanşör kapısından geçer; bu prop çözmeyi durdurmaz. */
   continuous?: boolean;
+  torch?: boolean;
 }) {
+  void continuous;
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const torchRef = useRef(torch);
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
+  torchRef.current = torch;
   const [hint, setHint] = useState("Kamera açılıyor…");
+
+  useEffect(() => {
+    applyTorch(streamRef.current, torch);
+  }, [torch]);
 
   useEffect(() => {
     if (!active || typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
@@ -48,15 +66,24 @@ export function WebBarcodeCamera({
       return;
     }
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || typeof host.replaceChildren !== "function") {
+      setHint("Bu ortamda kamera yok. Barkodu elle yazın.");
+      return;
+    }
     const video = document.createElement("video");
     video.setAttribute("playsinline", "true");
     video.setAttribute("autoplay", "true");
     video.muted = true;
     video.style.width = "100%";
-    video.style.height = "260px";
+    video.style.height = "100%";
     video.style.objectFit = "cover";
     video.style.background = "#000";
+    video.style.userSelect = "none";
+    if (typeof video.style.setProperty === "function") {
+      video.style.setProperty("-webkit-user-select", "none");
+      video.style.setProperty("-webkit-touch-callout", "none");
+    }
+    video.addEventListener("contextmenu", (event) => event.preventDefault());
     host.replaceChildren(video);
 
     let stream: MediaStream | null = null;
@@ -70,12 +97,7 @@ export function WebBarcodeCamera({
         if (video.readyState >= 2) {
           const codes = await det.detect(video);
           const value = normalizeScanText(codes[0]?.rawValue);
-          if (value) {
-            onScanRef.current(value);
-            if (!continuous) return;
-            timer = window.setTimeout(() => tick(det), 900);
-            return;
-          }
+          if (value) onScanRef.current(value);
         }
       } catch {
         /* kare atlanır */
@@ -89,13 +111,15 @@ export function WebBarcodeCamera({
           video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
+        streamRef.current = stream;
         video.srcObject = stream;
         await video.play();
+        applyTorch(stream, torchRef.current);
         if (!Ctor) {
           setHint("Bu tarayıcı canlı barkod okumuyor. Chrome / Edge kullanın veya kodu yazın.");
           return;
         }
-        setHint("Barkodu çerçeveye yaklaştırın");
+        setHint("");
         tick(new Ctor({ formats: FORMATS }));
       } catch (err) {
         setHint(err instanceof Error && /denied|permission/i.test(err.message)
@@ -108,20 +132,34 @@ export function WebBarcodeCamera({
       stopped = true;
       window.clearTimeout(timer);
       stream?.getTracks().forEach((t) => t.stop());
+      if (streamRef.current === stream) streamRef.current = null;
       video.srcObject = null;
       host.replaceChildren();
     };
-  }, [active, continuous]);
+  }, [active]);
 
   return (
-    <View style={{ gap: 8 }}>
+    <View style={{ flex: 1, minHeight: 240 }}>
       {createElement("div", {
         ref: (el: HTMLDivElement | null) => {
           hostRef.current = el;
         },
-        style: { width: "100%", minHeight: 260, borderRadius: 12, overflow: "hidden", background: "#000" },
+        style: {
+          width: "100%",
+          height: "100%",
+          minHeight: 240,
+          borderRadius: 16,
+          overflow: "hidden",
+          background: "#000",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
+        },
+        onContextMenu: (event: Event) => event.preventDefault(),
       })}
-      <Text style={{ color: "#CBD5E1", fontSize: 13 }}>{hint}</Text>
+      {hint ? (
+        <Text style={{ position: "absolute", left: 12, right: 12, bottom: 12, color: "#CBD5E1", fontSize: 13 }}>{hint}</Text>
+      ) : null}
     </View>
   );
 }

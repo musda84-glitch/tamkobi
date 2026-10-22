@@ -100,6 +100,13 @@ EVENT_LABELS = {
 DIGEST_MODES = ("instant", "hourly", "daily", "batch")
 # B2B müşteri postası: alıcı satırdaki to listesi, firma tercihleri değil. SMTP flush'ta.
 _B2B_DIRECT_EVENTS = frozenset({"b2b_link_notice", "b2b_verify_email", "b2b_password_reset"})
+# Şirket bağlantısı: alıcı satırdaki to listesi. Firma tercihleri ve SMTP bu istekte yok.
+_COMPANY_LINK_DIRECT_EVENTS = frozenset({
+    "company_link_request",
+    "company_link_approved",
+    "company_link_rejected",
+    "company_link_revoked",
+})
 EMAIL_FROM_MODES = ("platform", "company")
 DEFAULT_CHANNEL = {"inapp": True, "email": True, "sms": False, "digest": "instant"}
 _NEW_EVENT_CHANNEL = {"inapp": True, "email": False, "sms": False, "digest": "instant"}
@@ -2933,7 +2940,7 @@ async def flush_notify_outbox(*, force: bool = False) -> dict:
             flushed += await _deliver_order_batch(cid, claimed, claim_id)
         elif ev == "morning_summary":
             flushed += await _deliver_morning_summary(cid, claimed, claim_id)
-        elif ev in _B2B_DIRECT_EVENTS:
+        elif ev in _B2B_DIRECT_EVENTS or ev in _COMPANY_LINK_DIRECT_EVENTS:
             flushed += await _deliver_direct_customer_mail(cid, claimed, claim_id)
         else:
             flushed += await _deliver_generic(cid, ev, claimed, claim_id)

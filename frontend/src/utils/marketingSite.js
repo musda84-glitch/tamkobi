@@ -9,6 +9,14 @@ export const TAMKOBI_HOSTS = ["tamkobi.com", "www.tamkobi.com"];
 
 export const TAI_PAGE_PATHS = ["/hakkimizda", "/hizmetler", "/referanslar", "/iletisim"];
 
+/** tamkobi.com pazarlama rotaları. app, b2b ve ik host'larında açılmaz. */
+export const TAMKOBI_MARKETING_PATHS = ["/", "/web", "/fiyatlar", "/kayit", "/moduller", "/urunler"];
+
+export function isTamkobiMarketingPath(pathname) {
+  const p = String(pathname || "/").split("?")[0].split("#")[0] || "/";
+  return TAMKOBI_MARKETING_PATHS.some((path) => (path === "/" ? p === "/" : p === path || p.startsWith(`${path}/`)));
+}
+
 const PAGE_BY_PATH = {
   "/": "home",
   "/hakkimizda": "about",

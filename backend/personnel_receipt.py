@@ -90,6 +90,12 @@ def _money(n: Any) -> str:
         v = float(n or 0)
     except (TypeError, ValueError):
         v = 0.0
+    try:
+        import rbac
+        if rbac.price_mask_active():
+            v = 0.0
+    except Exception:
+        pass
     sign = "-" if v < 0 else ""
     whole, frac = f"{abs(v):,.2f}".split(".")
     return f"{sign}{whole.replace(',', '.')} ,{frac} ₺".replace(" ,", ",")

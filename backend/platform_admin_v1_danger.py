@@ -1,6 +1,6 @@
 """Yönetim paneli kimliğe bürünme ve tehlikeli işlem API: /api/platform/admin-v1/*.
 
-İki adımlı silme, veri sıfırlama, şifre ve 2FA sıfırlama prepare/confirm uçlarındadır.
+İki adımlı silme, veri sıfırlama, şifre, 2FA sıfırlama ve log döndürme prepare/confirm uçlarındadır.
 """
 from __future__ import annotations
 
@@ -271,6 +271,10 @@ _KEY_TEXT_ERROR = "Onay için anahtar adını birebir yazın."
 _MAINTENANCE_TEXT_ERROR = "Onay için bakım başlığını birebir yazın."
 _MAINTENANCE_PHRASE = "BAKIMI AÇ"
 _GIFT_PHRASE = "KONTÖR YÜKLE"
+_LOG_PHRASE = "LOGLARI DÖNDÜR"
+_LOG_LABEL = "sistem logları"
+_LOG_HINT = "log hedefini birebir yazın"
+_LOG_TEXT_ERROR = "Onay için log hedefini birebir yazın."
 
 _ACTIONS = (
     "company.reset_data",
@@ -294,6 +298,7 @@ _ACTIONS = (
     "settings.require_superadmin_2fa",
     "maintenance.enable",
     "gib.gift",
+    "logs.rotate",
 )
 _PREPARE_COMMON = ("target_id", "reason", "operator_email")
 _PREPARE_EXTRA = {
@@ -321,8 +326,9 @@ _PREPARE_EXTRA = {
         "audience", "company_ids", "support_email", "support_phone",
     ),
     "gib.gift": ("credits", "note"),
+    "logs.rotate": (),
 }
-_PHRASE_ACTIONS = ("company.reset_data", "user.erase", "maintenance.enable", "gib.gift")
+_PHRASE_ACTIONS = ("company.reset_data", "user.erase", "maintenance.enable", "gib.gift", "logs.rotate")
 _CONFIRM_COMMON = ("confirmation_token", "confirm_text", "operator_otp")
 
 
@@ -355,6 +361,8 @@ def _target_type(action: str) -> str:
         return "api_key"
     if action == "maintenance.enable":
         return "maintenance"
+    if action == "logs.rotate":
+        return "system"
     if action.startswith("settings."):
         return "settings"
     return "company"
@@ -369,6 +377,8 @@ def _phrase_for(action: str) -> Optional[str]:
         return _MAINTENANCE_PHRASE
     if action == "gib.gift":
         return _GIFT_PHRASE
+    if action == "logs.rotate":
+        return _LOG_PHRASE
     return None
 
 
@@ -383,6 +393,8 @@ def _hint_for(action: str) -> str:
         return _KEY_HINT
     if action == "maintenance.enable":
         return _MAINTENANCE_HINT
+    if action == "logs.rotate":
+        return _LOG_HINT
     if action.startswith("settings."):
         return "yeni değeri birebir yazın"
     return _USER_HINT
@@ -399,6 +411,8 @@ def _text_error(action: str) -> str:
         return _KEY_TEXT_ERROR
     if action == "maintenance.enable":
         return _MAINTENANCE_TEXT_ERROR
+    if action == "logs.rotate":
+        return _LOG_TEXT_ERROR
     if action.startswith("settings."):
         return "Onay için yeni değeri birebir yazın."
     return _USER_TEXT_ERROR
@@ -469,6 +483,8 @@ def _preview_summary(action: str, preview: Dict[str, Any]) -> Dict[str, Any]:
         return {"title": preview.get("title")}
     if action == "gib.gift":
         return {"credits": preview.get("credits")}
+    if action == "logs.rotate":
+        return {"retention_days": preview.get("retention_days"), "max_bytes": preview.get("max_bytes")}
     if action == "user.delete":
         return {"email": preview.get("email")}
     return {"email": preview.get("email")}
@@ -503,6 +519,12 @@ def _result_summary(action: str, result: Dict[str, Any]) -> Dict[str, Any]:
         return {"enabled": result.get("enabled")}
     if action == "gib.gift":
         return {"balance": result.get("balance"), "credits": result.get("credits")}
+    if action == "logs.rotate":
+        return {
+            "rotated": len(result.get("rotated") or []),
+            "deleted": len(result.get("deleted") or []),
+            "purged_rows": result.get("purged_rows"),
+        }
     if action == "user.delete":
         return {"status": result.get("status")}
     return {"email": result.get("email")}
@@ -1037,6 +1059,20 @@ async def _validate_gift(company_id: str, params: Dict[str, Any]) -> dict:
     }
 
 
+async def _validate_logs_rotate(target_id: str) -> dict:
+    if target_id != "platform":
+        raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+    return {
+        "label": _LOG_LABEL,
+        "fp": _fp({"id": "platform", "action": "logs.rotate"}),
+        "preview": {
+            "max_bytes": applog.LOG_MAX_BYTES,
+            "retention_days": applog.LOG_RETENTION_DAYS,
+        },
+        "scopes": None,
+    }
+
+
 async def _validate_action(action: str, target_id: str, operator_email: str, params: Dict[str, Any]) -> dict:
     if action == "company.reset_data":
         return await _validate_reset(target_id, params.get("scopes"))
@@ -1078,6 +1114,8 @@ async def _validate_action(action: str, target_id: str, operator_email: str, par
         return await _validate_maintenance(params)
     if action == "gib.gift":
         return await _validate_gift(target_id, params)
+    if action == "logs.rotate":
+        return await _validate_logs_rotate(target_id)
     return await _validate_2fa(target_id, operator_email)
 
 
@@ -1087,7 +1125,7 @@ def _text_matches(action: str, label: str, text: Any) -> bool:
     if action.startswith("company.") or action in (
         "plan.delete", "product.delete", "key.revoke", "key.admin_create", "key.admin_scopes",
         "key.product_create", "key.product_scopes",
-        "maintenance.enable", "gib.gift",
+        "maintenance.enable", "gib.gift", "logs.rotate",
     ) or action.startswith("settings."):
         return text.strip() == (label or "").strip()
     return text.strip().lower() == (label or "").strip().lower()
@@ -1317,11 +1355,19 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
         operator = await saas._db.users.find_one({"email": actor.get("email")}) or {}
         admin = {"email": actor.get("email"), "_id": operator.get("_id") or actor.get("_id")}
         return await platform_notices.system_put_maintenance(body, admin)
+    if action == "logs.rotate":
+        return applog.rotate_files()
     if action == "gib.gift":
         import gib_credits
+        import idempotency
         credits = int(params.get("credits") or 0)
         note = str(params.get("note") or "Platform yüklemesi")[:200]
-        bal = await gib_credits.gift(target_id, credits, note)
+        bal = await gib_credits.gift(
+            target_id,
+            credits,
+            note,
+            request_id=idempotency.header_key(request),
+        )
         return {"company_id": target_id, "credits": credits, "balance": bal}
     if action == "product.delete":
         doc = await store._get_product_doc(target_id)
@@ -1521,6 +1567,8 @@ async def admin_v1_danger_prepare(action: str, request: Request):
                 params["company_ids"] = payload["company_ids"]
             if tid != "platform":
                 raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+        if action == "logs.rotate" and tid != "platform":
+            raise HTTPException(status_code=400, detail="target_id platform olmalı.")
         snap = await _validate_action(action, tid, operator, params)
         held.update(reason=reason, operator=operator, target_id=tid, params=params, snap=snap, payload=payload)
         return ["operator_email", "reason", "target_id"]

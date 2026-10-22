@@ -182,6 +182,30 @@ COLLECTIONS = {
         "keys": ("_id", "key_id", "count", "updated_at"),
         "refs": (),
     },
+    "company_api_keys": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket başına tek API anahtarı. Düz anahtar saklanmaz; yalnız SHA-256 özeti, önek ve son 4 karakter. Kapsam varsayılan none.",
+        "keys": ("_id", "company_id", "key_prefix", "key_last4", "key_hash", "scopes", "status", "created_at", "created_by", "last_used_at", "last_used_by", "revoked_at", "rotated_at"),
+        "refs": ("companies._id",),
+    },
+    "company_links": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirketler arası veri paylaşımı. company_id verinin sahibi (to_company).",
+        "keys": ("_id", "company_id", "from_company", "to_company", "scopes", "status", "created_at", "updated_at", "created_by", "approved_at", "revoked_at"),
+        "refs": ("companies._id",),
+    },
+    "company_link_invites": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket bağlantı daveti. Düz kod saklanmaz; yalnız SHA-256 özeti. Tek kullanımlık ve süreli.",
+        "keys": ("_id", "company_id", "code_hash", "status", "created_at", "created_by", "expires_at", "used_at", "used_by_company", "revoked_at"),
+        "refs": ("companies._id",),
+    },
+    "company_api_rate": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Şirket API anahtarı ve bağlantı isteği için dakika sayacı.",
+        "keys": ("_id", "count", "updated_at"),
+        "refs": (),
+    },
     "platform_usage": {
         "scope": SCOPE_PLATFORM,
         "description": "Platform v1 kullanım metrikleri.",
@@ -257,7 +281,7 @@ COLLECTIONS = {
     "gib_wallets": {
         "scope": SCOPE_PLATFORM,
         "description": "GİB e-belge kontör bakiyesi.",
-        "keys": ("_id", "balance"),
+        "keys": ("_id", "balance", "transfer_debit_id", "transfer_credit_id"),
         "refs": ("companies._id as wallet _id",),
     },
     "gib_credit_ledger": {

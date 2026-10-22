@@ -3,7 +3,9 @@ import {
   showsPackageVitrin,
   isSitePreviewSearch,
   publishedCards,
+  TAMKOBI_MARKETING_PATHS,
 } from "./marketingSite";
+import { pathAllowedOnHost, preferredHostForPath } from "./hosts";
 
 test("host selects the marketing site and leaves tamkobi.com unchanged", () => {
   expect(marketingSlug("tamkobi.com")).toBe("tamkobi");
@@ -26,6 +28,17 @@ test("preview query works on ynt and localhost only", () => {
 test("package vitrin stays on tamkobi", () => {
   expect(showsPackageVitrin("tamkobi")).toBe(true);
   expect(showsPackageVitrin("tai")).toBe(false);
+});
+
+test("module and product pages stay on the tamkobi marketing host", () => {
+  expect(TAMKOBI_MARKETING_PATHS).toEqual(expect.arrayContaining(["/moduller", "/urunler"]));
+  for (const path of ["/moduller", "/urunler"]) {
+    expect(pathAllowedOnHost(path, "site")).toBe(true);
+    expect(pathAllowedOnHost(path, "app")).toBe(false);
+    expect(pathAllowedOnHost(path, "b2b")).toBe(false);
+    expect(pathAllowedOnHost(path, "ik")).toBe(false);
+    expect(preferredHostForPath(path)).toBe("site");
+  }
 });
 
 test("published cards keep order and drop hidden ones", () => {
