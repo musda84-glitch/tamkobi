@@ -257,7 +257,7 @@ COLLECTIONS = {
     "gib_wallets": {
         "scope": SCOPE_PLATFORM,
         "description": "GİB e-belge kontör bakiyesi.",
-        "keys": ("_id", "balance"),
+        "keys": ("_id", "balance", "transfer_debit_id", "transfer_credit_id"),
         "refs": ("companies._id as wallet _id",),
     },
     "gib_credit_ledger": {
