@@ -17,16 +17,46 @@ jest.mock("html5-qrcode", () => {
   const scanners = [];
   globalThis.__qrScanners = scanners;
   class Html5Qrcode {
-    constructor() {
+    constructor(elId) {
+      this.elId = elId;
       this.isScanning = false;
       scanners.push(this);
     }
-    async start(_camera, _config, onOk) {
+    async start(camera, config, onOk) {
+      if (globalThis.__qrStartError) throw globalThis.__qrStartError;
+      const hold = globalThis.__qrHoldStart;
+      if (hold) {
+        hold.calls = (hold.calls || 0) + 1;
+        this.camera = camera;
+        this.config = config;
+        if (hold.failUntil && hold.calls <= hold.failUntil) {
+          throw new Error("OverconstrainedError");
+        }
+        this.lateStream = hold.stream;
+        await new Promise((resolve, reject) => {
+          hold.release = () => (hold.reject ? reject(new Error("closed")) : resolve());
+        });
+        this.isScanning = true;
+        this.onOk = onOk;
+        return;
+      }
       this.isScanning = true;
+      this.camera = camera;
+      this.config = config;
       this.onOk = onOk;
     }
-    async stop() { this.isScanning = false; }
+    async stop() {
+      this.isScanning = false;
+      this.lateStream?.getTracks?.().forEach((track) => track.stop());
+    }
     clear() {}
+    getRunningTrackCapabilities() {
+      return globalThis.__qrCaps || {};
+    }
+    applyVideoConstraints(constraints) {
+      this.applied = constraints;
+      return Promise.resolve();
+    }
     static getCameras() {
       return Promise.resolve([{ id: "back-cam", label: "Back Camera" }]);
     }
@@ -71,6 +101,9 @@ beforeEach(() => {
   root = createRoot(host);
   globalThis.__qrScanners.length = 0;
   delete window.BarcodeDetector;
+  delete globalThis.__qrStartError;
+  delete globalThis.__qrCaps;
+  delete globalThis.__qrHoldStart;
   navigator.vibrate = jest.fn();
 });
 
@@ -339,6 +372,120 @@ test("mobil deklanşör en az 72px, kaydırma ve seçim engelli, titreşim güve
   decode("V4");
   expect(onScan).toHaveBeenCalledWith("V4");
   expect(host.querySelector('[data-testid="camera-scanner"]')).not.toBeNull();
+});
+
+test("html5 başlatma 1920 ideal kullanır, min koymaz", async () => {
+  await renderScanner();
+  const scanner = [...globalThis.__qrScanners].reverse().find((s) => s.config);
+  expect(scanner).toBeTruthy();
+  expect(scanner.camera).toEqual({ deviceId: { exact: "back-cam" } });
+  expect(scanner.config.fps).toBeGreaterThanOrEqual(15);
+  expect(scanner.config.fps).toBeLessThanOrEqual(20);
+  expect(scanner.config.aspectRatio).toBeCloseTo(1.777);
+  const video = scanner.config.videoConstraints;
+  expect(video.width.ideal).toBe(1920);
+  expect(video.height.ideal).toBe(1080);
+  expect(video.width.min).toBeUndefined();
+  expect(video.height.min).toBeUndefined();
+  expect(video.deviceId).toEqual({ exact: "back-cam" });
+  expect(video.facingMode).toBeUndefined();
+  expect(JSON.stringify(video)).not.toContain("min");
+});
+
+test("flaş caps.torch yoksa devre dışıdır", async () => {
+  await renderScanner();
+  const torch = host.querySelector('[data-testid="camera-scanner-torch"]');
+  expect(torch).not.toBeNull();
+  expect(torch.disabled).toBe(true);
+});
+
+test("elle giriş Enter ile normalize edilmiş kodu onScan'a verir", async () => {
+  const { onScan } = await renderScanner();
+  const input = host.querySelector('[data-testid="camera-scanner-manual-input"]');
+  expect(input).not.toBeNull();
+  const props = reactProps(input);
+  await act(async () => {
+    props.onChange({ target: { value: "  ]C18690123456789  " } });
+  });
+  await act(async () => {
+    props.onKeyDown({ key: "Enter", preventDefault() {} });
+  });
+  expect(onScan).toHaveBeenCalledTimes(1);
+  expect(onScan).toHaveBeenCalledWith("8690123456789");
+});
+
+test("izin hatasında elle giriş görünür", async () => {
+  globalThis.__qrStartError = new Error("NotAllowedError: Permission denied");
+  await renderScanner();
+  for (let i = 0; i < 8; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await advance(50);
+  }
+  const error = host.querySelector('[data-testid="camera-scanner-error"]');
+  expect(error).not.toBeNull();
+  expect(error.textContent.toLowerCase()).toMatch(/izni/);
+  expect(host.querySelector('[data-testid="camera-scanner-manual-input"]')).not.toBeNull();
+  expect(host.textContent).toContain("Kodu elle gir");
+});
+
+test("html5 yeniden denemede kapanıştan sonra gelen akış durur", async () => {
+  const track = { stop: jest.fn() };
+  globalThis.__qrHoldStart = {
+    failUntil: 1,
+    stream: { getTracks: () => [track], getVideoTracks: () => [track] },
+    calls: 0,
+    release: null,
+  };
+  await renderScanner();
+  for (let i = 0; i < 8 && !globalThis.__qrHoldStart.release; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await advance(50);
+  }
+  expect(typeof globalThis.__qrHoldStart.release).toBe("function");
+  expect(globalThis.__qrHoldStart.calls).toBe(2);
+  await act(async () => {
+    host.querySelector('[data-testid="camera-scanner-close"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    globalThis.__qrHoldStart.release();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(track.stop).toHaveBeenCalled();
+  expect(globalThis.__qrHoldStart.calls).toBe(2);
+});
+
+test("kapanmışken html5 yeniden deneme yeni kamera açmaz", async () => {
+  const track = { stop: jest.fn() };
+  globalThis.__qrHoldStart = {
+    failUntil: 1,
+    reject: true,
+    stream: { getTracks: () => [track], getVideoTracks: () => [track] },
+    calls: 0,
+    release: null,
+  };
+  await renderScanner();
+  for (let i = 0; i < 8 && !globalThis.__qrHoldStart.release; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await advance(50);
+  }
+  expect(globalThis.__qrHoldStart.calls).toBe(2);
+  await act(async () => {
+    host.querySelector('[data-testid="camera-scanner-close"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  await act(async () => {
+    globalThis.__qrHoldStart.release();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(track.stop).toHaveBeenCalled();
+  expect(globalThis.__qrHoldStart.calls).toBe(2);
 });
 
 test("adet çarpan yalnızca qtyEnabled iken görünür; continuous metni kalkar", async () => {
