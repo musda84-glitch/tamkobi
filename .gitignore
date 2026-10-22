@@ -47,6 +47,8 @@ dump.rdb
 # System files
 .DS_Store
 *.pem
+# Public İşNet intermediate. Private keys stay ignored.
+!backend/certs/globalsign-gcc-r46-ov-tls-ca-2025.pem
 
 # Python
 __pycache__/
