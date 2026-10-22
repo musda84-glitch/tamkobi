@@ -314,8 +314,9 @@ async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super
 
 
 # ---------------- Reminders ----------------
-async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[str, Any]:
-    admins = await _db.users.find({"company_ids": company["_id"], "role": "admin", "is_super_admin": {"$ne": True}}, {"email": 1, "phone": 1, "name": 1}).to_list(20)
+async def _send_reminder(company: dict, lic: dict, kind: str, st: dict, source=None) -> Dict[str, Any]:
+    src = source if source is not None else _db
+    admins = await src.users.find({"company_ids": company["_id"], "role": "admin", "is_super_admin": {"$ne": True}}, {"email": 1, "phone": 1, "name": 1}).to_list(20)
     end = (lic.get("trial_ends_at") if lic["status"] == "trial" else lic.get("expires_at")) or ""
     brand = st.get("brand_name", "TamKobi")
     if kind == "expired":
@@ -333,7 +334,7 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
     body += f" Tek tıkla yenilemek için: {link}"
     res = {"notification": True, "email": [], "whatsapp": [], "renew_link": bool(link)}
     import notify as _notify
-    await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": company["_id"], "type": "license", "title": title, "message": body, "ref_type": "license", "ref_id": company["_id"], "is_read": False, "created_at": _now()})
+    await _notify.insert_notification(src, {"_id": str(uuid.uuid4()), "company_id": company["_id"], "type": "license", "title": title, "message": body, "ref_type": "license", "ref_id": company["_id"], "is_read": False, "created_at": _now()})
     emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
     if st.get("email_enabled") and emails:
         try:
@@ -362,6 +363,8 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
 
 
 async def run_reminders() -> Dict[str, Any]:
+    import storage_router
+
     st = await settings()
     sent = []
     async for c in _db.companies.find({}):
@@ -379,9 +382,22 @@ async def run_reminders() -> Dict[str, Any]:
         key = f"{c['_id']}|{kind}|{end[:10]}"
         if await _db.license_reminders.find_one({"_id": key}):
             continue
-        res = await _send_reminder(c, lic, kind, st)
-        await _db.license_reminders.insert_one({"_id": key, "company_id": c["_id"], "company_name": c.get("name"), "kind": kind, "plan_name": lic["plan_name"], "period_end": end, "result": res, "created_at": _now()})
-        sent.append({"company": c.get("name"), "kind": kind, **res})
+        token = None
+        src = _db
+        if storage_router.enabled():
+            try:
+                store = await storage_router.open_company_store(_db, c["_id"])
+                token = storage_router.use_store(store)
+                src = store
+            except Exception as exc:
+                storage_router.log_store_failure(c.get("_id"), exc)
+                continue
+        try:
+            res = await _send_reminder(c, lic, kind, st, source=src)
+            await _db.license_reminders.insert_one({"_id": key, "company_id": c["_id"], "company_name": c.get("name"), "kind": kind, "plan_name": lic["plan_name"], "period_end": end, "result": res, "created_at": _now()})
+            sent.append({"company": c.get("name"), "kind": kind, **res})
+        finally:
+            storage_router.reset_bound(token)
     return {"sent": sent, "count": len(sent), "checked_at": _now()}
 
 

@@ -208,8 +208,15 @@ def _counts(invs: List[dict]) -> Dict[str, int]:
     }
 
 
+def _job_db():
+    """Bağlı şirket deposu. Bayrak kapalıyken veya bağ yokken katalog db."""
+    import storage_router
+
+    return storage_router.active_db(_db)
+
+
 async def last_backup(company_id: str) -> Optional[dict]:
-    rows = await _db.edoc_backups.find({"company_id": company_id}).sort("created_at", -1).to_list(1)
+    rows = await _job_db().edoc_backups.find({"company_id": company_id}).sort("created_at", -1).to_list(1)
     if not rows:
         return None
     d = dict(rows[0])
@@ -506,6 +513,8 @@ async def edocs_last_backup(company_id: Optional[str] = None, user: dict = Depen
 
 
 async def run_reminders() -> Dict[str, Any]:
+    import storage_router
+
     sent = []
     now = datetime.now(timezone.utc)
     cooldown = (now - timedelta(days=REMIND_COOLDOWN_DAYS)).isoformat()
@@ -513,20 +522,32 @@ async def run_reminders() -> Dict[str, Any]:
         cid = c.get("_id") or c.get("id")
         if not cid:
             continue
-        sample = await _db.invoices.find_one({"company_id": cid, "invoice_type": "sales", "e_type": {"$in": list(ubl_export.EDOC_TYPES)}})
-        if not sample:
-            continue
-        backup = await last_backup(cid)
-        if not reminder_due(backup, now):
-            continue
-        recent = await _db.edoc_backup_reminders.find_one({"company_id": cid, "created_at": {"$gte": cooldown}})
-        if recent:
-            continue
-        res = await _send_reminder(c, backup)
-        rec = {"_id": str(uuid.uuid4()), "company_id": cid, "company_name": c.get("name"), "kind": "edoc_backup",
-               "last_backup_at": (backup or {}).get("created_at"), "result": res, "created_at": _now()}
-        await _db.edoc_backup_reminders.insert_one(rec)
-        sent.append({"company": c.get("name"), "company_id": cid, **res})
+        token = None
+        if storage_router.enabled():
+            try:
+                store = await storage_router.open_company_store(_db, cid)
+                token = storage_router.use_store(store)
+            except Exception as exc:
+                storage_router.log_store_failure(cid, exc)
+                continue
+        try:
+            src = _job_db()
+            sample = await src.invoices.find_one({"company_id": cid, "invoice_type": "sales", "e_type": {"$in": list(ubl_export.EDOC_TYPES)}})
+            if not sample:
+                continue
+            backup = await last_backup(cid)
+            if not reminder_due(backup, now):
+                continue
+            recent = await src.edoc_backup_reminders.find_one({"company_id": cid, "created_at": {"$gte": cooldown}})
+            if recent:
+                continue
+            res = await _send_reminder(c, backup)
+            rec = {"_id": str(uuid.uuid4()), "company_id": cid, "company_name": c.get("name"), "kind": "edoc_backup",
+                   "last_backup_at": (backup or {}).get("created_at"), "result": res, "created_at": _now()}
+            await src.edoc_backup_reminders.insert_one(rec)
+            sent.append({"company": c.get("name"), "company_id": cid, **res})
+        finally:
+            storage_router.reset_bound(token)
     return {"sent": sent, "count": len(sent), "checked_at": _now()}
 
 
@@ -544,14 +565,15 @@ async def _send_reminder(company: dict, backup: Optional[dict]) -> Dict[str, Any
                 f"tarih aralığıyla indirip yedeklemeniz önerilir.")
     res: Dict[str, Any] = {"notification": True, "email": []}
     import notify as _notify
-    await _notify.insert_notification(_db, {
+    src = _job_db()
+    await _notify.insert_notification(src, {
         "_id": str(uuid.uuid4()), "company_id": cid, "type": "edoc_backup", "title": title, "message": body,
         "link": "/accountant", "ref_type": "edoc_backup", "is_read": False, "created_at": _now(),
     })
     mail_fn = _deps.get("mail_account")
     smtp_fn = _deps.get("smtp_send")
     if mail_fn and smtp_fn:
-        admins = await _db.users.find({"company_ids": cid, "role": "admin", "is_super_admin": {"$ne": True}}, {"email": 1}).to_list(20)
+        admins = await src.users.find({"company_ids": cid, "role": "admin", "is_super_admin": {"$ne": True}}, {"email": 1}).to_list(20)
         emails = [a["email"] for a in admins if a.get("email")] or ([company["email"]] if company.get("email") else [])
         if emails:
             try:

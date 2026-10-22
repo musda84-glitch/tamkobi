@@ -388,7 +388,35 @@ async def accrue_allowances(
     }
 
 
+async def _accrue_due_routed(db, as_of: Optional[str] = None, generate_payroll_fn=None) -> Dict[str, Any]:
+    """Bayrak açık: personel her şirketin kendi deposundan okunur."""
+    import storage_router
+
+    seen = set()
+    posted = 0
+    companies = 0
+    async for cid, store in storage_router.iter_company_stores(db):
+        if cid in seen:
+            continue
+        seen.add(cid)
+        try:
+            cursor = store.employees.find({"company_id": cid})
+            employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
+            if not employees:
+                continue
+            companies += 1
+            r = await accrue_allowances(store, cid, as_of=as_of, generate_payroll_fn=generate_payroll_fn)
+            posted += int(r.get("posted_count") or 0)
+        except Exception as exc:
+            storage_router.log_store_failure(cid, exc)
+    return {"posted_count": posted, "companies": companies}
+
+
 async def accrue_due_for_all_companies(db, as_of: Optional[str] = None, generate_payroll_fn=None) -> Dict[str, Any]:
+    import storage_router
+
+    if storage_router.enabled():
+        return await _accrue_due_routed(db, as_of=as_of, generate_payroll_fn=generate_payroll_fn)
     # tenant-ok değil: zamanlayıcı tüm şirketleri tarar; her satırın company_id'si ile şirket bazlı işleme devreder.
     cursor = db.employees.find({})
     employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
@@ -420,6 +448,24 @@ async def scheduler_loop(db, generate_payroll_fn=None):
             log.warning("employee allowance scheduler: %s", exc)
         try:
             import expenses as exp_mod
+            import storage_router
+
+            if storage_router.enabled():
+                posted_rec = 0
+                async for cid, store in storage_router.iter_company_stores(db):
+                    try:
+                        cursor = store.employees.find({"company_id": cid})
+                        employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
+                        if not employees:
+                            continue
+                        rec = await exp_mod.run_recurring_for_company(cid, db=store)
+                        posted_rec += len(rec.get("created") or [])
+                    except Exception as exc:
+                        storage_router.log_store_failure(cid, exc)
+                if posted_rec:
+                    log.info("recurring expenses scheduler posted %s", posted_rec)
+                await asyncio.sleep(3600)
+                continue
             # tenant-ok değil: zamanlayıcı tüm şirketleri tarar; her satırın company_id'si ile şirket bazlı işleme devreder.
             cursor = db.employees.find({})
             employees = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)

@@ -2232,29 +2232,39 @@ async def fetch_integrator_xml(invoice_id: str, *, company_id: str) -> Optional[
         return None
 
 
-async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
-    checked = updated = 0
-    # Önce GİB tamamlanmamış (Ziplenmiş/1200) faturalar — 1300'ler limit'i doldurmasın
-    cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent", "pending"]}}).sort("issued_at", -1).limit(
-        max(limit * 3, 150)
+def _outbound_refresh_bucket(inv) -> str:
+    """pending | rest | skip. 1300 tamamlanan bu turda atlanır."""
+    gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
+    done = str(inv.get("gib_status_code") or "") == "1300" or "basariyla tamamland" in gs_low
+    pending = isnet.is_outbound_gib_pending(
+        gib_status=str(inv.get("gib_status") or ""),
+        gib_status_code=str(inv.get("gib_status_code") or ""),
+        detail_status=str(inv.get("gib_detail_status") or ""),
+        process_status=str(inv.get("gib_process_status") or ""),
     )
-    pending_first: list = []
-    rest: list = []
-    async for inv in cursor:
-        gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
-        done = str(inv.get("gib_status_code") or "") == "1300" or "basariyla tamamland" in gs_low
-        pending = isnet.is_outbound_gib_pending(
-            gib_status=str(inv.get("gib_status") or ""),
-            gib_status_code=str(inv.get("gib_status_code") or ""),
-            detail_status=str(inv.get("gib_detail_status") or ""),
-            process_status=str(inv.get("gib_process_status") or ""),
-        )
-        if inv.get("einvoice_state") in ("queued", "pending") or (pending and not done):
+    if inv.get("einvoice_state") in ("queued", "pending") or (pending and not done):
+        return "pending"
+    if not done:
+        return "rest"
+    return "skip"
+
+
+def _split_outbound_rows(rows):
+    pending_first = []
+    rest = []
+    for inv in rows:
+        bucket = _outbound_refresh_bucket(inv)
+        if bucket == "pending":
             pending_first.append(inv)
-        elif not done:
+        elif bucket == "rest":
             rest.append(inv)
-        # 1300 tamamlanmış → bu turda atla (yeniden poll gereksiz)
-    for inv in (pending_first + rest)[:limit]:
+    return pending_first, rest
+
+
+async def _apply_outbound_batch(src, invoices) -> Dict[str, Any]:
+    """Seçilen faturaları verilen depoda günceller. Şirket kataloğu ana db'de kalır."""
+    checked = updated = 0
+    for inv in invoices:
         checked += 1
         if inv.get("einvoice_state") == "queued":
             queued_at = inv.get("queued_at") or ""
@@ -2264,7 +2274,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             except Exception:
                 age = 99999
             if age > 900 and not inv.get("gib_tracking_id"):
-                await _db.invoices.update_one(
+                await src.invoices.update_one(
                     {"_id": inv["_id"], "company_id": inv.get("company_id")},
                     {"$set": {"einvoice_state": "error", "gib_status": "Gönderim zaman aşımı", "gib_error": "queued_timeout", "error_at": _now()}},
                 )
@@ -2274,7 +2284,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
         ettn = (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
         if not ettn:
             continue
-        settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+        settings = await src.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
         provider = (inv.get("integrator") or settings.get("provider") or "").strip()
 
         if provider == "qnb_efinans":
@@ -2296,7 +2306,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             if seller and not inv.get("gib_document_url"):
                 url = n11faturam.document_url(seller, ettn, inv.get("e_type") or "e_archive")
                 if url:
-                    await _db.invoices.update_one(
+                    await src.invoices.update_one(
                         {"_id": inv["_id"], "company_id": inv.get("company_id")},
                         {"$set": {"gib_document_url": url}},
                     )
@@ -2406,13 +2416,53 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 patch["gib_process_status"] = info.get("process_status")
 
         if patch:
-            await _db.invoices.update_one(
+            await src.invoices.update_one(
                 {"_id": inv["_id"], "company_id": inv.get("company_id")},
                 {"$set": patch},
             )
             updated += 1
 
     return {"checked": checked, "updated": updated}
+
+
+async def _refresh_outbound_routed(limit: int) -> Dict[str, Any]:
+    """Bayrak açık: her şirketin deposundaki giden faturalar. Bir depo düşünce diğerleri sürer."""
+    import storage_router
+
+    checked = updated = 0
+    cap = max(limit * 3, 150)
+    async for cid, store in storage_router.iter_company_stores(_db):
+        try:
+            cursor = store.invoices.find({
+                "company_id": cid,
+                "einvoice_state": {"$in": ["queued", "sent", "pending"]},
+            }).sort("issued_at", -1).limit(cap)
+            rows = []
+            async for inv in cursor:
+                rows.append(inv)
+            pending_first, rest = _split_outbound_rows(rows)
+            part = await _apply_outbound_batch(store, (pending_first + rest)[:limit])
+            checked += int(part.get("checked") or 0)
+            updated += int(part.get("updated") or 0)
+        except Exception as exc:
+            storage_router.log_store_failure(cid, exc)
+    return {"checked": checked, "updated": updated}
+
+
+async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
+    import storage_router
+
+    if storage_router.enabled():
+        return await _refresh_outbound_routed(limit)
+    # Önce GİB tamamlanmamış (Ziplenmiş/1200) faturalar — 1300'ler limit'i doldurmasın
+    cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent", "pending"]}}).sort("issued_at", -1).limit(
+        max(limit * 3, 150)
+    )
+    rows = []
+    async for inv in cursor:
+        rows.append(inv)
+    pending_first, rest = _split_outbound_rows(rows)
+    return await _apply_outbound_batch(_db, (pending_first + rest)[:limit])
 
 
 async def outbound_status_loop(interval_s: int = 90):

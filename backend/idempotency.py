@@ -256,8 +256,36 @@ async def abandon(db, company_id: str, key: str) -> None:
         logger.exception("Idempotency anahtarı silinemedi: %s", key)
 
 
+async def _purge_expired_routed(db) -> int:
+    """Bayrak açık: süresi dolmuş anahtar her şirketin kendi deposunda silinir."""
+    import storage_router
+
+    cutoff = (_now() - timedelta(hours=TTL_HOURS)).isoformat()
+    deleted = 0
+    async for cid, store in storage_router.iter_company_stores(db):
+        try:
+            stale = await store.idempotency_keys.find(
+                {"company_id": cid, "created_at": {"$lt": cutoff}},
+            ).to_list(5000)
+            for doc in stale:
+                try:
+                    await store.idempotency_keys.delete_one({"_id": doc["_id"], "company_id": cid})
+                    deleted += 1
+                except Exception:
+                    logger.exception("idempotency purge silinemedi: %s", doc.get("_id"))
+        except Exception as exc:
+            storage_router.log_store_failure(cid, exc)
+    if deleted:
+        logger.info("idempotency purge: %s anahtar silindi", deleted)
+    return deleted
+
+
 async def purge_expired(db) -> int:
     """24 saatten eski idempotency anahtarlarını sil. Silinen sayısı."""
+    import storage_router
+
+    if storage_router.enabled():
+        return await _purge_expired_routed(db)
     cutoff = (_now() - timedelta(hours=TTL_HOURS)).isoformat()
     deleted = 0
     # created_at ISO string karşılaştırması lexicographic olarak güvenli (UTC)

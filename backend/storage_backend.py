@@ -73,6 +73,13 @@ class StorageCursor:
             return [project_doc(doc, self._projection) for doc in docs]
         return docs
 
+    def __aiter__(self):
+        async def _gen():
+            for doc in await self.to_list(None):
+                yield doc
+
+        return _gen()
+
 
 class ListCursor:
     """aggregate() dönüşü. Satırlar hazırdır; yalnız uzunluk kesilir."""
