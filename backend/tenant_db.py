@@ -438,14 +438,21 @@ def _scope_for_user(user: dict, requested: Optional[str]) -> TenantScope:
     )
 
 
+async def _pinned_storage(company_id: str):
+    """Bayrak açıksa kipi yükler. Dedicated ise mühürlü referansı hatırlar."""
+    if not storage_router.enabled():
+        return storage_router.UNSET
+    mode = await storage_router.load_mode(_db, company_id)
+    await storage_router.prepare_dedicated(_db, company_id, mode)
+    return mode
+
+
 async def get_tenant_db(request: Request):
     """İstek dependency'si. Kapsamı yanıt sonunda bırakır. Rotalar henüz kullanmaz."""
     user = await _load_user(request)
     requested = request.query_params.get("company_id") if request is not None else None
     scope = _scope_for_user(user, requested)
-    pinned = storage_router.UNSET
-    if storage_router.enabled():
-        pinned = await storage_router.load_mode(_db, scope.company_id)
+    pinned = await _pinned_storage(scope.company_id)
     token = bind(scope)
     try:
         yield TenantDB(_db, scope, storage_mode=pinned)
@@ -469,9 +476,7 @@ async def for_company(cid: str, reason: str):
         actor_id="",
         reason=why,
     )
-    pinned = storage_router.UNSET
-    if storage_router.enabled():
-        pinned = await storage_router.load_mode(_db, text)
+    pinned = await _pinned_storage(text)
     token = bind(scope)
     try:
         yield TenantDB(_db, scope, storage_mode=pinned)
@@ -494,9 +499,7 @@ async def from_b2b_contact(contact: Optional[dict]):
         reason="b2b",
         contact_id=contact_id,
     )
-    pinned = storage_router.UNSET
-    if storage_router.enabled():
-        pinned = await storage_router.load_mode(_db, cid)
+    pinned = await _pinned_storage(cid)
     token = bind(scope)
     try:
         yield TenantDB(_db, scope, storage_mode=pinned)

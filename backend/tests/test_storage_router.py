@@ -1,8 +1,9 @@
 """StorageRouter. Canlı veritabanına bağlanmaz.
 
 Bayrak kapalıyken TenantDB bugünkü koleksiyonu döner. Bayrak açıkken
-legacy aynı arka uçtur. shared_v2 docs_v2 koleksiyonuna gider; dedicated
-ve bilinmeyen kip açık hata verir. shared_v2 çözümü bağlantı açmaz.
+legacy aynı arka uçtur. shared_v2 docs_v2 koleksiyonuna gider ve bağlantı açmaz.
+dedicated ayrı veritabanına gider; DSN yoksa açık hata verir, legacy'ye düşmez.
+Bilinmeyen kip açık hata verir.
 """
 from __future__ import annotations
 
@@ -187,7 +188,7 @@ def test_router_selects_legacy_backend_per_company(monkeypatch):
         assert shared._raw.company_id == CO_C
         assert shared._raw.name == "products"
         assert storage_shared_v2.get_store().conn is None
-        with pytest.raises(StorageModeError, match="henüz yok: dedicated"):
+        with pytest.raises(StorageModeError, match="DSN referansı yok"):
             storage_router.legacy_collection(db, "co_d", "products")
         with pytest.raises(StorageModeError, match="Bilinmeyen depolama kipi: glacier"):
             storage_router.legacy_collection(db, "co_e", "invoices")
@@ -419,9 +420,9 @@ def test_entry_point_reloads_when_cache_expired(monkeypatch):
         clock["t"] += storage_router.TTL_SECONDS + 1
         db.companies.rows[CO_A]["storage_mode"] = "dedicated"
         async with tenant_db.for_company(CO_A, "yenile") as handle:
-            with pytest.raises(StorageModeError, match="henüz yok: dedicated"):
+            with pytest.raises(StorageModeError, match="DSN referansı yok"):
                 handle._collection("products")
-        assert db.companies.reads == 2
+        assert db.companies.reads == 3
 
     asyncio.run(run())
 

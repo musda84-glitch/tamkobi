@@ -777,17 +777,26 @@ def test_mariadb_migration_twice_and_concurrent_unique():
         with admin.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS docs_v2_unique")
             cur.execute("DROP TABLE IF EXISTS docs_v2")
+            cur.execute("DROP TABLE IF EXISTS storage_records")
             cur.execute("DROP TABLE IF EXISTS schema_version")
             cur.execute("DROP TABLE IF EXISTS storage_marker")
             cur.execute("DROP TABLE IF EXISTS storage_meta")
     finally:
         admin.close()
 
+    from storage_migrations.loader import load_migrations
+
     opened = connect(dsn, write=True)
     try:
+        opened.execute(
+            "SET SESSION sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        )
+        pack = load_migrations()
         first = apply(opened, confirm=True, dry_run=False)
-        assert first.advanced == 3
-        assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+        assert first.advanced == len(pack)
+        assert {row.version for row in first.rows} == {item.version for item in pack}
+        assert [row.state for row in first.rows] == ["uygulandı"] * len(pack)
+        assert "storage_records" in opened.tables()
         second = apply(opened, confirm=True, dry_run=False)
         assert second.advanced == 0
         indexes = opened.fetchall(
@@ -806,7 +815,9 @@ def test_mariadb_migration_twice_and_concurrent_unique():
         )
         opened.commit()
         third = apply(opened, confirm=True, dry_run=False)
-        assert third.rows[2].state == "uygulandı"
+        version_3 = next(row for row in third.rows if row.version == 3)
+        assert version_3.state == "uygulandı"
+        assert version_3.step == int(total)
         unique_idx = opened.fetchall(
             "SELECT COUNT(*) FROM information_schema.statistics "
             "WHERE table_schema = DATABASE() AND table_name = 'docs_v2_unique' "

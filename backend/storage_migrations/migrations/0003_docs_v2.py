@@ -1,5 +1,7 @@
 """docs_v2 şeması.
 
+storage_records tablosuna bakmaz. 0004 ile sıra bağımsızdır.
+
 SQLite json_extract kullanır. MySQL/MariaDB generated kolon
 LEFT(JSON_UNQUOTE(JSON_EXTRACT(...)), n) olur ve VARCHAR(n) olarak indekslenir.
 Kesme olmazsa strict modda uzun metin 1406 verir. TEXT generated kolon

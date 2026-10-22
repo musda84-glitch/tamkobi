@@ -22,7 +22,7 @@ os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
 from storage_migrations.cli import main  # noqa: E402
 from storage_migrations.engine import apply  # noqa: E402
 from storage_migrations.errors import ChecksumError, LegacyTargetError, MigrationError  # noqa: E402
-from storage_migrations.loader import Migration, load_migrations  # noqa: E402
+from storage_migrations.loader import Migration, load_migrations, steps_for  # noqa: E402
 from storage_migrations.session import Session, connect  # noqa: E402
 from storage_migrations.targets import list_targets  # noqa: E402
 import storage_router  # noqa: E402
@@ -71,24 +71,49 @@ def _count(session, table):
     return session.fetchall(f"SELECT COUNT(*) FROM {table}")[0][0]
 
 
-def test_pack_versions_are_contiguous():
+def _by_version(pack=None):
+    items = pack if pack is not None else load_migrations()
+    return {item.version: item for item in items}
+
+
+def _view(rows, version):
+    return next(row for row in rows if row.version == version)
+
+
+def test_pack_versions_are_addressed_by_number():
     pack = load_migrations()
-    assert [item.version for item in pack] == [1, 2, 3]
-    assert pack[0].name == "storage_meta"
-    assert pack[1].name == "marker_steps"
-    assert pack[2].name == "docs_v2"
-    assert len(pack[0].steps) == 2
-    assert len(pack[1].steps) == 2
-    assert pack[2].mysql_steps
-    assert pack[0].mysql_steps == ()
+    by_version = _by_version(pack)
+    assert list(by_version) == sorted(by_version)
+    assert min(by_version) == 1
+    assert by_version[1].name == "storage_meta"
+    assert by_version[2].name == "marker_steps"
+    assert by_version[3].name == "docs_v2"
+    assert by_version[4].name == "storage_records"
+    assert len(by_version[1].steps) == 2
+    assert len(by_version[2].steps) == 2
+    assert by_version[3].mysql_steps
+    assert by_version[1].mysql_steps == ()
+    records = by_version[4].steps
+    table = next(step for step in records if step.lower().startswith("create table"))
+    unique = next(step for step in records if step.lower().startswith("create unique index"))
+    index = next(step for step in records if step.lower().startswith("create index "))
+    lowered = "\n".join(step.lower() for step in records)
+    assert "docs" not in lowered
+    assert "longtext" in table.lower()
+    assert "json_unquote(json_extract(" in table.lower()
+    assert "varchar(128)" in table.lower()
+    assert "varchar(191)" in table.lower()
+    assert "varchar(64)" in table.lower()
+    assert unique.lower().startswith("create unique index")
+    assert index.lower().startswith("create index")
 
 
 def test_empty_target_then_second_apply_writes_nothing():
     session = _memory()
     first = apply(session, confirm=True, dry_run=False)
     assert first.wrote is True
-    assert first.advanced == 3
-    assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+    assert first.advanced == len(load_migrations())
+    assert [row.state for row in first.rows] == ["uygulandı"] * len(first.rows)
     assert _count(session, "storage_meta") == 1
     assert _count(session, "storage_marker") == 1
     session.writes = 0
@@ -115,9 +140,13 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
         if "storage_marker" in sql and sql.lstrip().upper().startswith("CREATE")
     ]
     assert len(creates) == 1
+    applied_before = session.fetchall(
+        "SELECT version FROM schema_version WHERE state = ?",
+        ("applied",),
+    )
     done = apply(session, confirm=True, dry_run=False)
-    assert done.advanced == 2
-    assert [row.state for row in done.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+    assert done.advanced == len(load_migrations()) - len(applied_before)
+    assert [row.state for row in done.rows] == ["uygulandı"] * len(done.rows)
     assert _count(session, "storage_marker") == 1
     creates = [
         sql for sql in session.calls
@@ -133,8 +162,8 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
 def test_finished_index_step_is_not_created_again():
     session = _memory()
     apply(session, confirm=True, dry_run=False)
-    pack = load_migrations()
-    last = len(pack[2].steps)
+    docs = _by_version()[3]
+    last = len(steps_for(docs, session.dialect))
     name = "idx_v2_unique_doc"
     found = session.fetchall(
         "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
@@ -143,13 +172,14 @@ def test_finished_index_step_is_not_created_again():
     assert found
     session.execute(
         "UPDATE schema_version SET state = ?, step_no = ? WHERE version = ?",
-        ("applying", last - 1, 3),
+        ("applying", last - 1, docs.version),
     )
     session.commit()
     session.calls.clear()
     done = apply(session, confirm=True, dry_run=False)
-    assert done.rows[2].state == "uygulandı"
-    assert done.rows[2].step == last
+    row = _view(done.rows, docs.version)
+    assert row.state == "uygulandı"
+    assert row.step == last
     created = [sql for sql in session.calls if sql.lstrip().upper().startswith("CREATE")]
     assert created == []
     found = session.fetchall(
@@ -157,6 +187,260 @@ def test_finished_index_step_is_not_created_again():
         (name,),
     )
     assert len(found) == 1
+
+
+def test_create_index_rerun_skips_existing_index():
+    session = _memory()
+    first = apply(session, confirm=True, dry_run=False)
+    assert first.advanced == len(load_migrations())
+    indexes = {
+        row[0]
+        for row in session.fetchall("SELECT name FROM sqlite_master WHERE type = 'index'")
+    }
+    assert "idx_storage_records_company" in indexes
+    assert "uq_storage_records_doc" in indexes
+    records = _by_version()[4]
+    total = len(steps_for(records, session.dialect))
+    session.execute(
+        "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+        ("applying", 1, "", records.version),
+    )
+    session.commit()
+    applied = session.fetchall(
+        "SELECT version FROM schema_version WHERE state = ?",
+        ("applied",),
+    )
+    resumed = apply(session, confirm=True, dry_run=False)
+    assert resumed.advanced == len(load_migrations()) - len(applied)
+    row = session.fetchall(
+        "SELECT state, step_no FROM schema_version WHERE version = ?",
+        (records.version,),
+    )[0]
+    assert row[0] == "applied"
+    assert int(row[1]) == total
+    count = session.fetchall(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+        ("idx_storage_records_company",),
+    )[0][0]
+    assert count == 1
+    session.execute(
+        "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+        ("products", "p1", '{"company_id":"co_a","name":"kalem"}'),
+    )
+    company = session.fetchall(
+        "SELECT company_id FROM storage_records WHERE doc_id = ?",
+        ("p1",),
+    )[0][0]
+    assert company == "co_a"
+    with pytest.raises(sqlite3.IntegrityError):
+        session.execute(
+            "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+            ("products", "p1", '{"company_id":"co_b","name":"ikinci"}'),
+        )
+
+
+def test_0003_and_0004_do_not_depend_on_each_other():
+    """0003 docs_v2 ve 0004 storage_records birbirinin tablosuna bakmaz.
+
+    Biri olmadan diğeri uygulanır. Sıra fark etmez; eksik olan sonra gelir.
+    """
+    pack = load_migrations()
+    by_version = _by_version(pack)
+    earlier = tuple(item for item in pack if item.version < 3)
+    v3 = by_version[3]
+    v4 = by_version[4]
+    text3 = "\n".join(v3.steps + v3.mysql_steps).lower()
+    text4 = "\n".join(steps_for(v4, "sqlite") + steps_for(v4, "mysql")).lower()
+    assert "storage_records" not in text3
+    assert "docs_v2" not in text4
+
+    only_v3 = _memory()
+    apply(only_v3, earlier + (v3,), confirm=True, dry_run=False)
+    assert "docs_v2" in only_v3.tables()
+    assert "storage_records" not in only_v3.tables()
+    added_v4 = apply(only_v3, confirm=True, dry_run=False)
+    assert added_v4.advanced == len(pack) - (len(earlier) + 1)
+    assert _view(added_v4.rows, 4).state == "uygulandı"
+    assert "storage_records" in only_v3.tables()
+
+    only_v4 = _memory()
+    apply(only_v4, earlier + (v4,), confirm=True, dry_run=False)
+    assert "storage_records" in only_v4.tables()
+    assert "docs_v2" not in only_v4.tables()
+    added_v3 = apply(only_v4, confirm=True, dry_run=False)
+    assert added_v3.advanced == len(pack) - (len(earlier) + 1)
+    assert _view(added_v3.rows, 3).state == "uygulandı"
+    assert "docs_v2" in only_v4.tables()
+
+
+def test_later_0003_applies_after_0004():
+    session = _memory()
+    pack = load_migrations()
+    early = tuple(item for item in pack if item.version != 3)
+    first = apply(session, early, confirm=True, dry_run=False)
+    assert first.advanced == len(early)
+    assert 3 not in {row.version for row in first.rows}
+    assert _view(first.rows, 4).state == "uygulandı"
+    present = {int(row[0]) for row in session.fetchall("SELECT version FROM schema_version")}
+    assert 4 in present
+    assert 3 not in present
+    second = apply(session, confirm=True, dry_run=False)
+    assert second.advanced == len(pack) - len(early)
+    assert {row.version for row in second.rows} == {item.version for item in pack}
+    assert [row.state for row in second.rows] == ["uygulandı"] * len(second.rows)
+    arrived = _view(second.rows, 3)
+    assert arrived.name == "docs_v2"
+    assert arrived.step == arrived.total
+    assert _view(second.rows, 4).state == "uygulandı"
+    names = session.tables()
+    assert "docs_v2" in names
+    assert "storage_records" in names
+    stored = session.fetchall(
+        "SELECT version, name, state FROM schema_version ORDER BY version"
+    )
+    assert [(int(row[0]), str(row[1]), str(row[2])) for row in stored] == [
+        (item.version, item.name, "applied") for item in pack
+    ]
+    third = apply(session, confirm=True, dry_run=False)
+    assert third.advanced == 0
+
+
+def test_mariadb_migration_applies_twice():
+    dsn = os.environ.get("STORAGE_MARIADB_DSN", "").strip()
+    if not dsn:
+        pytest.skip("STORAGE_MARIADB_DSN yok")
+    session = connect(dsn, write=True)
+    try:
+        session.execute(
+            "SET SESSION sql_mode = "
+            "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        )
+        _drop_storage(session)
+        pack = load_migrations()
+        first = apply(session, confirm=True, dry_run=False)
+        assert first.advanced == len(pack)
+        assert {row.version for row in first.rows} == {item.version for item in pack}
+        assert [row.state for row in first.rows] == ["uygulandı"] * len(first.rows)
+        second = apply(session, confirm=True, dry_run=False)
+        assert second.advanced == 0
+        _assert_mariadb_schema(session)
+        records = _by_version(pack)[4]
+        total = len(steps_for(records, session.dialect))
+        session.execute(
+            "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+            ("applying", 1, "", records.version),
+        )
+        session.commit()
+        applied = session.fetchall(
+            "SELECT version FROM schema_version WHERE state = ?",
+            ("applied",),
+        )
+        resumed = apply(session, confirm=True, dry_run=False)
+        assert resumed.advanced == len(pack) - len(applied)
+        done = session.fetchall(
+            "SELECT state, step_no FROM schema_version WHERE version = ?",
+            (records.version,),
+        )[0]
+        assert done[0] == "applied"
+        assert int(done[1]) == total
+        session.execute(
+            "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+            ("products", "p1", '{"company_id":"co_a","name":"kalem"}'),
+        )
+        session.commit()
+        company = session.fetchall(
+            "SELECT company_id FROM storage_records WHERE doc_id = ?",
+            ("p1",),
+        )[0][0]
+        assert company == "co_a"
+        with pytest.raises(Exception) as caught:
+            session.execute(
+                "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
+                ("products", "p1", '{"company_id":"co_b","name":"ikinci"}'),
+            )
+        assert "integrity" in type(caught.value).__name__.lower() or "duplicate" in str(caught.value).lower()
+        session.rollback()
+        _drop_storage(session)
+        early = tuple(item for item in pack if item.version != 3)
+        primed = apply(session, early, confirm=True, dry_run=False)
+        assert primed.advanced == len(early)
+        assert 3 not in {int(row[0]) for row in session.fetchall("SELECT version FROM schema_version")}
+        arrived = apply(session, confirm=True, dry_run=False)
+        assert arrived.advanced == len(pack) - len(early)
+        stored = session.fetchall(
+            "SELECT version, name, state FROM schema_version ORDER BY version"
+        )
+        assert [(int(row[0]), str(row[1]), str(row[2])) for row in stored] == [
+            (item.version, item.name, "applied") for item in pack
+        ]
+        again = apply(session, confirm=True, dry_run=False)
+        assert again.advanced == 0
+        _assert_mariadb_schema(session)
+    finally:
+        try:
+            session.rollback()
+            _drop_storage(session)
+        finally:
+            session.close()
+
+
+def _assert_mariadb_schema(session):
+    columns = {
+        str(row[0]).lower(): row
+        for row in session.fetchall(
+            "SELECT column_name, data_type, generation_expression "
+            "FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
+        )
+    }
+    assert columns["collection"][1].lower() == "varchar"
+    assert columns["doc_id"][1].lower() == "varchar"
+    assert columns["company_id"][1].lower() == "varchar"
+    assert columns["doc"][1].lower() == "longtext"
+    generated = str(columns["company_id"][2]).lower()
+    assert "json_unquote" in generated
+    assert "json_extract" in generated
+    stats = session.fetchall(
+        "SELECT index_name, non_unique, column_name "
+        "FROM information_schema.statistics "
+        "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
+    )
+    unique = [row for row in stats if str(row[0]).lower() == "uq_storage_records_doc"]
+    assert unique
+    assert all(int(row[1]) == 0 for row in unique)
+    assert {str(row[2]).lower() for row in unique} == {"collection", "doc_id"}
+    indexed = session.fetchall(
+        "SELECT c.data_type FROM information_schema.statistics s "
+        "JOIN information_schema.columns c "
+        "ON c.table_schema = s.table_schema AND c.table_name = s.table_name "
+        "AND c.column_name = s.column_name "
+        "WHERE s.table_schema = DATABASE() AND s.table_name = 'storage_records'"
+    )
+    for (kind,) in indexed:
+        assert str(kind).lower() == "varchar"
+    doc_type = session.fetchall(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = 'docs_v2' AND column_name = 'doc'"
+    )[0][0]
+    assert str(doc_type).lower() in ("json", "longtext")
+    status = session.fetchall(
+        "SELECT column_type FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = 'docs_v2' AND column_name = 'g_status'"
+    )
+    assert status and "varchar" in str(status[0][0]).lower()
+
+
+def _drop_storage(session):
+    for table in (
+        "docs_v2_unique",
+        "docs_v2",
+        "storage_records",
+        "storage_marker",
+        "storage_meta",
+        "schema_version",
+    ):
+        session.execute(f"DROP TABLE IF EXISTS {table}")
+    session.commit()
 
 
 def test_dry_run_and_missing_confirm_do_not_write():
@@ -371,6 +655,26 @@ def test_dedicated_sealed_dsn_applies_and_stays_masked(tmp_path, monkeypatch, ca
         comm_service._fernet = previous_fernet
 
 
+def test_plaintext_dedicated_dsn_is_rejected(monkeypatch, capsys):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("bağlantı açılmamalı")
+
+    monkeypatch.setattr("storage_migrations.session._connect_sqlite", boom)
+    monkeypatch.setattr("storage_migrations.session._connect_mysql", boom)
+    catalog = Catalog([
+        {
+            "_id": "co1",
+            storage_router.MODE_FIELD: storage_router.DEDICATED,
+            storage_router.DSN_FIELD: f"mysql://user:{SECRET}@db.internal/firm",
+        },
+    ])
+    code = main(["apply", "--target", "dedicated:co1", "--confirm"], catalog=catalog)
+    captured = capsys.readouterr()
+    assert code == 2
+    assert SECRET not in captured.out + captured.err
+    assert "db.internal" not in captured.out + captured.err
+
+
 def test_checksum_change_is_refused():
     session = _memory()
     apply(session, confirm=True, dry_run=False)
@@ -383,6 +687,157 @@ def test_checksum_change_is_refused():
     with pytest.raises(ChecksumError):
         apply(session, mutated, confirm=True, dry_run=False)
     assert _count(session, "storage_meta") == before
+
+
+def test_loopback_hosts_share_live_identity(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("bağlantı açılmamalı")
+
+    monkeypatch.setattr("storage_migrations.session._connect_mysql", boom)
+
+    def host(name):
+        if name == "::1":
+            return "[::1]"
+        return name
+
+    pairs = (
+        ("localhost", "127.0.0.1"),
+        ("127.0.0.1", "::1"),
+        ("::1", "localhost"),
+        ("localhost", "localhost"),
+    )
+    for live_host, target_host in pairs:
+        monkeypatch.setenv("MYSQL_URL", f"mysql://app:{SECRET}@{host(live_host)}:3306/tamkobi")
+        with pytest.raises(LegacyTargetError, match="Canlı") as caught:
+            connect(f"mysql://other:{SECRET}@{host(target_host)}:3306/tamkobi", write=False)
+        assert SECRET not in str(caught.value)
+        assert "127.0.0.1" not in str(caught.value)
+        assert "localhost" not in str(caught.value)
+
+    monkeypatch.delenv("MYSQL_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("MYSQL_HOST", "::1")
+    monkeypatch.setenv("MYSQL_PORT", "3306")
+    monkeypatch.setenv("MYSQL_DATABASE", "tamkobi")
+    with pytest.raises(LegacyTargetError, match="Canlı"):
+        connect(f"mysql://other:{SECRET}@127.0.0.1:3306/tamkobi", write=False)
+
+    monkeypatch.setenv("MYSQL_URL", f"mysql://app:{SECRET}@localhost:3306/tamkobi")
+    with pytest.raises(AssertionError):
+        connect(f"mysql://other:{SECRET}@127.0.0.1:3307/tamkobi", write=False)
+    with pytest.raises(AssertionError):
+        connect(f"mysql://other:{SECRET}@127.0.0.1:3306/otherdb", write=False)
+
+
+def test_cli_catalog_rejects_mysql_and_missing_file(tmp_path, monkeypatch):
+    from storage_migrations.catalog import load_cli_catalog
+    from storage_migrations.errors import CatalogError
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("bağlantı açılmamalı")
+
+    monkeypatch.setattr("storage_migrations.session._connect_mysql", boom)
+    monkeypatch.setenv("STORAGE_COMPANY_CATALOG", f"mysql://app:{SECRET}@10.9.9.9:3306/tamkobi")
+    with pytest.raises(CatalogError, match="canlı") as caught:
+        load_cli_catalog()
+    assert SECRET not in str(caught.value)
+    missing = tmp_path / "yok.db"
+    monkeypatch.setenv("STORAGE_COMPANY_CATALOG", f"sqlite:///{missing}")
+    with pytest.raises(CatalogError, match="yok"):
+        load_cli_catalog()
+    assert not missing.exists()
+
+
+def test_module_resolves_dedicated_company_only(tmp_path, monkeypatch):
+    import subprocess
+
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode()
+    previous_env = os.environ.get("CREDENTIAL_ENCRYPTION_KEY")
+    monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", key)
+    import comm_service
+
+    previous_fernet = comm_service._fernet
+    comm_service.reset_fernet_for_tests()
+    try:
+        folder = tmp_path / SECRET
+        folder.mkdir()
+        dedicated = folder / "co.db"
+        dsn = f"sqlite:///{dedicated}"
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        assert SECRET not in sealed
+        catalog_path = tmp_path / "catalog.db"
+        conn = sqlite3.connect(catalog_path)
+        conn.execute(
+            "CREATE TABLE company_catalog (company_id TEXT, storage_mode TEXT, dedicated_dsn_ref TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO company_catalog (company_id, storage_mode, dedicated_dsn_ref) VALUES (?, ?, ?)",
+            ("co1", "dedicated", sealed),
+        )
+        conn.execute(
+            "INSERT INTO company_catalog (company_id, storage_mode, dedicated_dsn_ref) VALUES (?, ?, ?)",
+            ("eski", "legacy", sealed),
+        )
+        conn.commit()
+        conn.close()
+        env = os.environ.copy()
+        env["CREDENTIAL_ENCRYPTION_KEY"] = key
+        env["STORAGE_COMPANY_CATALOG"] = f"sqlite:///{catalog_path}"
+        env["DATA_DIR"] = str(tmp_path)
+        env.pop("MYSQL_URL", None)
+        env.pop("DATABASE_URL", None)
+        env.pop("MYSQL_HOST", None)
+        legacy = subprocess.run(
+            [sys.executable, "-m", "storage_migrations", "apply", "--target", "dedicated:eski", "--confirm"],
+            cwd=str(_BACKEND),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        blob = legacy.stdout + legacy.stderr
+        assert legacy.returncode == 2
+        assert "Legacy" in blob
+        assert SECRET not in blob
+        assert not dedicated.exists()
+        listed = subprocess.run(
+            [sys.executable, "-m", "storage_migrations", "status"],
+            cwd=str(_BACKEND),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert listed.returncode == 0
+        assert "dedicated:co1" in listed.stdout
+        assert "eski" not in listed.stdout
+        assert SECRET not in listed.stdout + listed.stderr
+        applied = subprocess.run(
+            [sys.executable, "-m", "storage_migrations", "apply", "--target", "dedicated:co1", "--confirm"],
+            cwd=str(_BACKEND),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        blob = applied.stdout + applied.stderr
+        assert applied.returncode == 0, blob
+        assert SECRET not in blob
+        assert "sqlite://***" in applied.stdout
+        assert dedicated.exists()
+        conn = sqlite3.connect(dedicated)
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        conn.close()
+        assert "storage_records" in names
+        assert "docs" not in names
+    finally:
+        if previous_env is None:
+            monkeypatch.delenv("CREDENTIAL_ENCRYPTION_KEY", raising=False)
+        else:
+            monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", previous_env)
+        comm_service._fernet = previous_fernet
 
 
 def _capture_log():
