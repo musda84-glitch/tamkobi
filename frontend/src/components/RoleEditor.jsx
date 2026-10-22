@@ -18,14 +18,18 @@ const ON = {
 
 function Segment({ value, disabled, onChange, testPrefix, compact }) {
   return (
-    <div className={`inline-flex max-w-full flex-wrap bg-slate-100 rounded-[9px] p-0.5 ${compact ? "" : "shrink-0"}`} role="group" data-testid={testPrefix}>
+    <div
+      className={`inline-flex max-w-full flex-wrap bg-slate-100 rounded-lg p-0.5 min-[701px]:max-w-none min-[701px]:flex-nowrap min-[701px]:whitespace-nowrap min-[701px]:shrink-0 ${compact ? "" : "shrink-0"}`}
+      role="group"
+      data-testid={testPrefix}
+    >
       {LEVELS.map(([key, label]) => (
         <button
           key={key}
           type="button"
           disabled={disabled}
           onClick={() => onChange(key)}
-          className={`px-2 py-1 rounded-md text-[11px] font-semibold disabled:cursor-default ${value === key ? ON[key] : "text-slate-500 hover:text-slate-700"}`}
+          className={`whitespace-nowrap px-1 py-0.5 rounded-md text-[11px] leading-4 font-semibold tracking-tight disabled:cursor-default ${value === key ? ON[key] : "text-slate-500 hover:text-slate-700"}`}
           data-testid={testPrefix ? `${testPrefix}-${key}` : undefined}
         >
           {label}
@@ -39,17 +43,17 @@ function Summary({ perms, features, userCount, mobile }) {
   const { can, cannot } = roleSummary(perms, features);
   return (
     <div className={mobile ? "" : "space-y-1"} data-testid={mobile ? "role-summary-mobile" : "role-summary"}>
-      <h3 className="m-0 mb-2 text-sm font-bold text-slate-900">Bu rol neler yapabilir?</h3>
-      <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 mt-2">Yapabilir</div>
-      <ul className="mt-1 mb-2 list-disc pl-4 text-slate-700 leading-relaxed marker:text-emerald-600">
+      <h3 className="m-0 mb-1.5 text-[13px] font-bold leading-5 text-slate-900">Bu rol neler yapabilir?</h3>
+      <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mt-1.5">Yapabilir</div>
+      <ul className="mt-1 mb-1.5 list-disc pl-4 text-[12px] leading-snug text-slate-700 marker:text-emerald-600">
         {can.length ? can.map((line) => <li key={line}>{line}</li>) : <li>Açık yetki yok</li>}
       </ul>
-      <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">Yapamaz</div>
-      <ul className="mt-1 mb-2 list-disc pl-4 text-slate-700 leading-relaxed marker:text-red-600">
+      <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Yapamaz</div>
+      <ul className="mt-1 mb-1.5 list-disc pl-4 text-[12px] leading-snug text-slate-700 marker:text-red-600">
         {cannot.map((line) => <li key={line}>{line}</li>)}
       </ul>
       {!mobile && userCount > 0 && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded-[10px] p-2 text-[11px]" data-testid="role-user-warn">
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded-[10px] p-2 text-[11px] leading-snug" data-testid="role-user-warn">
           Bu rolde {userCount} kullanıcı var. Değişiklikler &quot;Kaydet&quot; ile uygulanır.
         </div>
       )}
@@ -159,22 +163,22 @@ export function RoleEditor({ companyId, rolesData, reload }) {
   const q = query.trim().toLocaleLowerCase("tr");
 
   return (
-    <div className={`grid grid-cols-1 min-[701px]:grid-cols-[220px_minmax(0,1fr)] min-[1100px]:grid-cols-[220px_minmax(0,1fr)_280px] gap-4 ${editorOverflowGuard()}`} data-testid="role-editor">
-      <div className="hidden min-[701px]:block bg-white border border-slate-200 rounded-[14px] p-3.5" data-testid="role-list">
-        <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">Roller</div>
+    <div className={`grid grid-cols-1 items-start gap-2.5 text-[13px] leading-5 min-[701px]:grid-cols-[200px_minmax(0,1fr)] min-[1280px]:grid-cols-[200px_minmax(0,1fr)_260px] min-[701px]:overflow-x-visible ${editorOverflowGuard()}`} data-testid="role-editor">
+      <div className="hidden min-[701px]:block w-full min-w-0 bg-white border border-slate-200 rounded-[14px] p-2.5" data-testid="role-list">
+        <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Roller</div>
         {roles.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setSel(item.id)}
-            className={`w-full text-left px-2.5 py-2 rounded-[9px] mt-0.5 flex justify-between gap-2 ${item.id === role?.id ? "bg-emerald-50 text-emerald-700 font-bold" : "hover:bg-slate-50"}`}
+            className={`w-full text-left text-[13px] leading-5 px-2 py-1.5 rounded-[9px] mt-0.5 flex justify-between gap-2 ${item.id === role?.id ? "bg-emerald-50 text-emerald-700 font-bold" : "hover:bg-slate-50"}`}
             data-testid={`role-btn-${item.code}`}
           >
             <span className="truncate">{item.name}{!item.is_system && <span className="ml-1 text-[9px] font-normal opacity-60">özel</span>}</span>
             <small className="text-slate-400 font-normal">{item.user_count || 0}</small>
           </button>
         ))}
-        <button type="button" onClick={() => setShowNew((open) => !open)} className="mt-2.5 w-full border border-slate-300 rounded-[10px] px-3 py-2 font-semibold bg-white" data-testid="new-role-toggle">+ Yeni rol</button>
+        <button type="button" onClick={() => setShowNew((open) => !open)} className="mt-2 w-full border border-slate-300 rounded-[10px] px-2.5 py-1.5 text-[13px] leading-5 font-semibold bg-white" data-testid="new-role-toggle">+ Yeni rol</button>
         {showNew && (
           <form onSubmit={addRole} className="space-y-1.5 pt-2" data-testid="new-role-form">
             <input value={newRole} onChange={(event) => setNewRole(event.target.value)} placeholder="Rol adı" className="w-full border rounded-lg p-2" required data-testid="new-role-input" />
@@ -183,7 +187,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
         )}
       </div>
 
-      <div className={`bg-white border border-slate-200 rounded-[14px] p-3.5 min-w-0 ${editorOverflowGuard()}`} data-testid="role-matrix">
+      <div className={`bg-white border border-slate-200 rounded-[14px] px-2 py-2.5 min-w-0 min-[1280px]:col-start-2 min-[1280px]:row-start-1 ${editorOverflowGuard()}`} data-testid="role-matrix">
         <div className="min-[701px]:hidden mb-3">
           <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500" htmlFor="role-switch-mobile">Rol</label>
           <select id="role-switch-mobile" value={role?.id || ""} onChange={(event) => setSel(event.target.value)} className="mt-1 w-full max-w-full border border-slate-300 rounded-[10px] p-2 bg-white" data-testid="role-switch-mobile">
@@ -192,12 +196,12 @@ export function RoleEditor({ companyId, rolesData, reload }) {
         </div>
         <div className="flex flex-wrap items-start justify-between gap-2.5 min-w-0">
           <div className="min-w-0">
-            <h2 className="m-0 text-[17px] font-bold text-slate-900 break-words" data-testid="role-editor-title">{role?.name || "Rol"}</h2>
-            <div className="text-xs text-slate-500 mt-0.5">{role?.user_count || 0} kullanıcı</div>
+            <h2 className="m-0 text-[15px] font-bold leading-5 text-slate-900 break-words" data-testid="role-editor-title">{role?.name || "Rol"}</h2>
+            <div className="text-[12px] leading-4 text-slate-500 mt-0.5">{role?.user_count || 0} kullanıcı</div>
           </div>
           <div className="flex gap-1.5 shrink-0">
-            <button type="button" onClick={revert} className="border border-slate-300 rounded-[10px] px-3 py-2 font-semibold bg-white" data-testid="role-cancel">Vazgeç</button>
-            <button type="button" onClick={save} disabled={locked} className="rounded-[10px] px-3 py-2 font-semibold bg-emerald-600 text-white border border-emerald-600 disabled:opacity-50" data-testid="role-save">Kaydet</button>
+            <button type="button" onClick={revert} className="border border-slate-300 rounded-lg px-2.5 py-1 text-[13px] leading-5 font-semibold bg-white" data-testid="role-cancel">Vazgeç</button>
+            <button type="button" onClick={save} disabled={locked} className="rounded-lg px-2.5 py-1 text-[13px] leading-5 font-semibold bg-emerald-600 text-white border border-emerald-600 disabled:opacity-50" data-testid="role-save">Kaydet</button>
           </div>
         </div>
         {!role?.is_system && (
@@ -213,7 +217,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
               type="button"
               disabled={locked}
               onClick={() => applyTemplate(tpl.code)}
-              className={`border border-slate-200 rounded-full px-2.5 py-1 text-[11px] font-medium ${draft?.template === tpl.code ? "bg-slate-900 text-white border-slate-900" : "text-slate-600 bg-white"}`}
+              className={`border border-slate-200 rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium ${draft?.template === tpl.code ? "bg-slate-900 text-white border-slate-900" : "text-slate-600 bg-white"}`}
               data-testid={`role-template-${tpl.code}`}
             >
               {tpl.label}
@@ -226,15 +230,15 @@ export function RoleEditor({ companyId, rolesData, reload }) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={'Yetki ara… (ör. "fiyat", "kargo", "sil")'}
-            className="flex-1 min-w-0 border border-slate-300 rounded-[10px] px-3 py-2 text-slate-700 bg-white"
+            className="flex-1 min-w-0 border border-slate-300 rounded-[10px] px-2.5 py-1 text-[13px] leading-5 text-slate-700 bg-white"
             data-testid="role-search"
           />
-          <button type="button" onClick={() => setOpenOnly((on) => !on)} className={`hidden min-[701px]:inline-flex border rounded-[10px] px-3 py-2 font-semibold whitespace-nowrap ${openOnly ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"}`} data-testid="role-open-only">
+          <button type="button" onClick={() => setOpenOnly((on) => !on)} className={`hidden min-[701px]:inline-flex items-center border rounded-[10px] px-2.5 py-1 text-[13px] leading-5 font-semibold whitespace-nowrap ${openOnly ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"}`} data-testid="role-open-only">
             Yalnız açık olanlar
           </button>
         </div>
 
-        <div className="min-[1100px]:hidden mb-2.5 bg-slate-50 border border-slate-200 rounded-[14px] p-3" data-testid="role-summary-mobile-wrap">
+        <div className="min-[1024px]:hidden mb-2 bg-slate-50 border border-slate-200 rounded-[14px] p-2.5" data-testid="role-summary-mobile-wrap">
           <Summary perms={perms} features={features} userCount={role?.user_count || 0} mobile />
         </div>
 
@@ -242,23 +246,27 @@ export function RoleEditor({ companyId, rolesData, reload }) {
           const rows = visibleRows(group, { query, openOnly, perms, unwired });
           if (!rows.length) return null;
           return (
-            <div key={group.id} className="border border-slate-200 rounded-xl mb-2.5 overflow-hidden" data-testid={`role-group-${group.id}`}>
-              <div className="bg-slate-50 px-3 py-2 flex items-center gap-2.5 font-extrabold min-w-0">
-                <span className="flex-1 min-w-0">{group.icon} {group.label}</span>
-                <span className="hidden min-[701px]:flex items-center gap-1.5 font-medium text-slate-400 text-[11px]">
-                  Grubun tümü:
-                  <Segment compact disabled={locked} value="" onChange={(level) => setGroup(rows, level)} testPrefix={`perm-group-${group.id}`} />
+            <div key={group.id} className="border border-slate-200 rounded-xl mb-2 overflow-hidden" data-testid={`role-group-${group.id}`}>
+              <div className="bg-slate-50 px-2 py-1.5 flex flex-nowrap items-center justify-between gap-1.5 min-w-0 overflow-x-auto" data-testid={`role-group-head-${group.id}`}>
+                <span className="whitespace-nowrap shrink-0 text-[13px] leading-5 font-extrabold text-slate-900" data-testid={`role-group-label-${group.id}`}>{group.icon} {group.label}</span>
+                <span className="ml-auto inline-flex shrink-0 flex-nowrap items-center justify-end gap-1.5">
+                  <span className="hidden min-[701px]:inline-flex flex-nowrap items-center gap-1 whitespace-nowrap shrink-0 font-medium text-slate-400 text-[11px] leading-4" data-testid={`role-group-all-${group.id}`}>
+                    <span className="whitespace-nowrap">Grubun tümü:</span>
+                    <Segment compact disabled={locked} value="" onChange={(level) => setGroup(rows, level)} testPrefix={`perm-group-${group.id}`} />
+                  </span>
+                  <button type="button" className="whitespace-nowrap shrink-0 text-blue-600 text-[11px] leading-4 font-semibold" onClick={() => setHelpKey(rows[0].key)} data-testid={`role-help-group-${group.id}`}>? Açıklama</button>
                 </span>
-                <button type="button" className="text-blue-600 text-[11px] font-semibold shrink-0" onClick={() => setHelpKey(rows[0].key)} data-testid={`role-help-group-${group.id}`}>? Açıklama</button>
               </div>
               {rows.map((row) => {
                 const state = rowLevel(perms, row.keys);
                 return (
-                  <div key={row.key} className="flex flex-col min-[701px]:flex-row min-[701px]:items-center min-[701px]:justify-between gap-2 px-3 py-2 border-t border-slate-100 min-w-0" data-testid={`perm-row-${row.key}`}>
-                    <div className="min-w-0">
-                      <button type="button" className="font-bold text-left" onClick={() => setHelpKey(row.key)}>{row.title}</button>
-                      {state.mixed && <span className="ml-1 text-[10px] font-bold text-amber-700" data-testid={`perm-mixed-${row.key}`}>karışık</span>}
-                      <small className="block text-slate-500 text-[11px] mt-0.5">{row.help}</small>
+                  <div key={row.key} className="flex flex-col min-[701px]:flex-row min-[701px]:items-center min-[701px]:justify-between gap-1.5 px-2.5 py-1.5 border-t border-slate-100 min-w-0" data-testid={`perm-row-${row.key}`}>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <button type="button" className="min-w-0 truncate whitespace-nowrap text-left text-[13px] leading-5 font-semibold text-slate-900" onClick={() => setHelpKey(row.key)}>{row.title}</button>
+                        {state.mixed && <span className="shrink-0 rounded bg-amber-50 px-1 py-px text-[10px] font-bold leading-none text-amber-700" data-testid={`perm-mixed-${row.key}`}>karışık</span>}
+                      </div>
+                      <small className="block truncate whitespace-nowrap text-slate-500 text-[11px] leading-4">{row.help}</small>
                     </div>
                     <Segment value={state.level} disabled={locked} onChange={(level) => setRow(row.keys, level)} testPrefix={`perm-${row.key}`} />
                   </div>
@@ -308,7 +316,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
         )}
       </div>
 
-      <div className="hidden min-[1100px]:block bg-white border border-slate-200 rounded-[14px] p-3.5" data-testid="role-summary-side">
+      <div className="hidden min-[1024px]:block min-[1024px]:max-[1279px]:col-start-2 min-[1024px]:max-[1279px]:row-start-2 min-[1280px]:col-start-3 min-[1280px]:row-start-1 min-[1280px]:sticky min-[1280px]:top-20 min-[1280px]:z-10 min-[1280px]:max-h-[calc(100vh-5.5rem)] min-[1280px]:self-start min-[1280px]:overflow-y-auto w-full bg-white border border-slate-200 rounded-[14px] p-3" data-testid="role-summary-side">
         <Summary perms={perms} features={features} userCount={role?.user_count || 0} />
       </div>
 

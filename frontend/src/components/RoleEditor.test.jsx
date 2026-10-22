@@ -141,6 +141,55 @@ test("bağsız satır gizlenir ve 390px düzeni taşma sınıflarını taşır",
   expect(host.querySelector("[data-testid='role-open-only']").className).toMatch(/hidden/);
 });
 
+test("1280px düzeninde segment tek satırda kalır ve grup başlığı çakışmaz", async () => {
+  await renderEditor(rolesData({
+    roles: [{
+      ...SALES,
+      permissions: { ...SALES.permissions, "/invoices": "view", "/edoc-inbox": "edit" },
+    }],
+  }));
+  const editor = host.querySelector("[data-testid='role-editor']");
+  expect(editor.className).toMatch(/min-\[1280px\]:grid-cols-\[200px_minmax\(0,1fr\)_260px\]/);
+  expect(editor.className).toMatch(/min-\[701px\]:grid-cols-\[200px_minmax\(0,1fr\)\]/);
+
+  const segment = host.querySelector("[data-testid='perm-/invoices']");
+  expect(segment.className).toMatch(/whitespace-nowrap/);
+  expect(segment.className).toMatch(/flex-nowrap/);
+  segment.querySelectorAll("button").forEach((button) => {
+    expect(button.className).toMatch(/whitespace-nowrap/);
+    expect(button.textContent).not.toMatch(/\n/);
+  });
+
+  const label = host.querySelector("[data-testid='role-group-label-finans']");
+  const all = host.querySelector("[data-testid='role-group-all-finans']");
+  const help = host.querySelector("[data-testid='role-help-group-finans']");
+  expect(label.textContent).toContain("Finans");
+  expect(all.textContent).toContain("Grubun tümü:");
+  expect(help.textContent).toContain("Açıklama");
+  expect(all.contains(label)).toBe(false);
+  expect(label.contains(all)).toBe(false);
+  expect(all.contains(help)).toBe(false);
+  expect(label.className).toMatch(/whitespace-nowrap/);
+  expect(all.className).toMatch(/whitespace-nowrap/);
+  expect(help.className).toMatch(/whitespace-nowrap/);
+  expect(label.compareDocumentPosition(all) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  const row = host.querySelector("[data-testid='perm-row-/invoices']");
+  expect(row.className).toMatch(/min-\[701px\]:flex-row/);
+  expect(row.querySelector("button").className).toMatch(/whitespace-nowrap/);
+  expect(row.querySelector("small").className).toMatch(/whitespace-nowrap/);
+  const mixed = host.querySelector("[data-testid='perm-mixed-/invoices']");
+  expect(mixed.className).toMatch(/shrink-0/);
+  expect(mixed.className).toMatch(/text-\[10px\]/);
+  expect(mixed.parentElement.className).toMatch(/items-center/);
+
+  const side = host.querySelector("[data-testid='role-summary-side']");
+  expect(side.className).toMatch(/min-\[1280px\]:sticky/);
+  expect(side.className).toMatch(/min-\[1280px\]:col-start-3/);
+  expect(side.className).toMatch(/min-\[1024px\]:max-\[1279px\]:col-start-2/);
+  expect(side.className).toMatch(/min-\[1024px\]:max-\[1279px\]:row-start-2/);
+});
+
 test("yardım çekmecesi görür seviyesinde yeni fatura kesilemeyeceğini söyler", async () => {
   await renderEditor();
   await act(async () => {

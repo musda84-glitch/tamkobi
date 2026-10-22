@@ -361,9 +361,9 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
   };
   return (
     <div className="space-y-4">
-      <div className="bg-white border border-indigo-200 rounded-xl p-3 text-xs" data-testid="company-policies">
-        <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><UserCheck className="w-3.5 h-3.5 text-indigo-600" /> Firma politikaları</div>
-        <label className="flex items-start gap-2 bg-indigo-50/50 border border-indigo-100 rounded-lg px-2.5 py-2 cursor-pointer" data-testid="policy-row-cash-dual-approval">
+      <div className="bg-white border border-indigo-200 rounded-lg px-2.5 py-2 text-[11px] leading-snug" data-testid="company-policies">
+        <div className="font-bold text-slate-900 mb-1 flex items-center gap-1.5"><UserCheck className="w-3.5 h-3.5 text-indigo-600" /> Firma politikaları</div>
+        <label className="flex items-start gap-2 bg-indigo-50/50 border border-indigo-100 rounded-lg px-2 py-1.5 cursor-pointer" data-testid="policy-row-cash-dual-approval">
           <input type="checkbox" checked={!!rolesData.policies?.cash_dual_approval} onChange={(e) => savePolicy("cash_dual_approval", e.target.checked)} className="mt-0.5 accent-indigo-600" data-testid="policy-cash-dual-approval" />
           <span>
             <span className="font-semibold text-slate-800">Entegre olmayan kasa/banka işlemlerinde diğer yöneticiden onay iste</span>
