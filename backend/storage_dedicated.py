@@ -62,10 +62,18 @@ _COMPANY_ID_MAX = 64
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
 _registry_lock = threading.Lock()
+_generation_seq = 0
 
 
 def _lock():
     return _registry_lock
+
+
+def _next_generation() -> int:
+    """Havuz kuşağı. id(session) GC sonrası tekrarlanabildiği için artan sayaç."""
+    global _generation_seq
+    _generation_seq += 1
+    return _generation_seq
 
 
 def _now() -> float:
@@ -99,7 +107,7 @@ class _Pool:
         self.in_use = 0
         self.last_used = _now()
         self.closed = False
-        self.generation = id(session)
+        self.generation = _next_generation()
         self.op_lock = threading.RLock()
 
     def __repr__(self) -> str:

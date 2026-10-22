@@ -253,6 +253,72 @@ class SharedV2Collection:
         self.company_id = company_id
         self.name = name
 
+    def _data_table(self) -> str:
+        return "docs_v2"
+
+    def _unique_table(self) -> str:
+        return "docs_v2_unique"
+
+    def _scope(self):
+        """Firma ve koleksiyon sınırı. Parametre sırası company_id, collection."""
+        return "company_id=? AND collection=?", [self.company_id, self.name]
+
+    def _column(self, field):
+        return _COLUMN_OF.get(field)
+
+    def _bad_column(self, field) -> bool:
+        """Üretilmiş kolonun yanında skaler olmayan değeri işaretleyen kolon var."""
+        return self._column(field) is not None
+
+    def _insert_row(self, body) -> None:
+        self._run(
+            f"INSERT INTO {self._data_table()} (company_id, collection, id, doc) VALUES (?,?,?,?)",
+            (self.company_id, self.name, str(body["_id"]), dumps(body)),
+        )
+
+    def _update_row(self, body, doc_id) -> None:
+        scope, params = self._scope()
+        self._run(
+            f"UPDATE {self._data_table()} SET doc=? WHERE {scope} AND id=?",
+            (dumps(body), *params, str(doc_id)),
+        )
+
+    def _select_by_id(self, doc_id):
+        scope, params = self._scope()
+        return (
+            f"SELECT doc FROM {self._data_table()} WHERE {scope} AND id=?",
+            [*params, str(doc_id)],
+        )
+
+    def _delete_id(self, doc_id) -> None:
+        scope, params = self._scope()
+        self._run(
+            f"DELETE FROM {self._data_table()} WHERE {scope} AND id=?",
+            (*params, str(doc_id)),
+        )
+
+    def _delete_ids(self, ids):
+        scope, params = self._scope()
+        marks = ",".join(["?"] * len(ids))
+        return self._run(
+            f"DELETE FROM {self._data_table()} WHERE {scope} AND id IN ({marks})",
+            (*params, *ids),
+        )
+
+    def _delete_where(self, sql, params):
+        self._run(
+            f"DELETE FROM {self._unique_table()} WHERE company_id=? AND collection=? AND doc_id IN ("
+            f"SELECT id FROM {self._data_table()} WHERE {sql})",
+            (self.company_id, self.name, *params),
+        )
+        return self._run(f"DELETE FROM {self._data_table()} WHERE {sql}", params)
+
+    def _backfill_query(self):
+        return (
+            f"SELECT company_id, id, doc FROM {self._data_table()} WHERE collection=?",
+            (self.name,),
+        )
+
     def find(self, query=None, projection=None):
         _guard(self.name, "find", query=query)
         return SharedV2Cursor(self, query, projection)
@@ -269,7 +335,9 @@ class SharedV2Collection:
             self._log_fallback(reason)
             return len(self._python_match(query))
         sql, params = where
-        row = self._run("SELECT COUNT(*) FROM docs_v2 WHERE " + sql, params).fetchone()
+        row = self._run(
+            f"SELECT COUNT(*) FROM {self._data_table()} WHERE " + sql, params,
+        ).fetchone()
         return int((row or [0])[0] or 0)
 
     async def distinct(self, key, query=None):
@@ -311,10 +379,7 @@ class SharedV2Collection:
             self._begin()
             try:
                 self._check_unique(body, None)
-                self._run(
-                    "INSERT INTO docs_v2 (company_id, collection, id, doc) VALUES (?,?,?,?)",
-                    (self.company_id, self.name, str(body["_id"]), dumps(body)),
-                )
+                self._insert_row(body)
                 self._sync_unique(body)
                 self._commit()
             except Exception as exc:
@@ -351,10 +416,7 @@ class SharedV2Collection:
             self._begin()
             try:
                 self._check_unique(new_doc, old.get("_id"))
-                self._run(
-                    "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                    (dumps(new_doc), self.company_id, self.name, str(old["_id"])),
-                )
+                self._update_row(new_doc, old["_id"])
                 self._sync_unique(new_doc)
                 self._commit()
             except Exception as exc:
@@ -375,10 +437,8 @@ class SharedV2Collection:
         def write():
             self._begin()
             try:
-                row = self._run(
-                    "SELECT doc FROM docs_v2 WHERE company_id=? AND collection=? AND id=?",
-                    (self.company_id, self.name, str(doc_id)),
-                ).fetchone()
+                select_sql, select_params = self._select_by_id(doc_id)
+                row = self._run(select_sql, select_params).fetchone()
                 if not row:
                     self._rollback()
                     return UpdateResult(0, 0, None), None
@@ -392,10 +452,7 @@ class SharedV2Collection:
                     new_doc = self._prepare(new_doc)
                     new_doc["_id"] = old.get("_id")
                     self._check_unique(new_doc, old.get("_id"))
-                    self._run(
-                        "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                        (dumps(new_doc), self.company_id, self.name, str(doc_id)),
-                    )
+                    self._update_row(new_doc, doc_id)
                     self._sync_unique(new_doc)
                 self._commit()
                 return changed, new_doc if changed else None
@@ -430,10 +487,7 @@ class SharedV2Collection:
                 try:
                     for doc in changed:
                         self._check_unique(doc, doc.get("_id"))
-                        self._run(
-                            "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                            (dumps(doc), self.company_id, self.name, str(doc["_id"])),
-                        )
+                        self._update_row(doc, doc["_id"])
                         self._sync_unique(doc)
                     self._commit()
                 except Exception as exc:
@@ -461,10 +515,7 @@ class SharedV2Collection:
             self._begin()
             try:
                 self._check_unique(body, old.get("_id"))
-                self._run(
-                    "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                    (dumps(body), self.company_id, self.name, str(body["_id"])),
-                )
+                self._update_row(body, body["_id"])
                 self._sync_unique(body)
                 self._commit()
             except Exception as exc:
@@ -497,10 +548,7 @@ class SharedV2Collection:
                 self._begin()
                 try:
                     self._check_unique(new_doc, old.get("_id"))
-                    self._run(
-                        "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                        (dumps(new_doc), self.company_id, self.name, str(new_doc["_id"])),
-                    )
+                    self._update_row(new_doc, new_doc["_id"])
                     self._sync_unique(new_doc)
                     self._commit()
                 except Exception as exc:
@@ -521,10 +569,7 @@ class SharedV2Collection:
             self._begin()
             try:
                 self._drop_unique([str(old["_id"])])
-                self._run(
-                    "DELETE FROM docs_v2 WHERE company_id=? AND collection=? AND id=?",
-                    (self.company_id, self.name, str(old["_id"])),
-                )
+                self._delete_id(old["_id"])
                 self._commit()
             except Exception as exc:
                 self._fail(exc)
@@ -543,16 +588,12 @@ class SharedV2Collection:
             if not docs:
                 return DeleteResult(0)
             ids = [str(doc["_id"]) for doc in docs if doc.get("_id") is not None]
-            marks = ",".join(["?"] * len(ids))
 
             def write():
                 self._begin()
                 try:
                     self._drop_unique(ids)
-                    deleted = self._run(
-                        f"DELETE FROM docs_v2 WHERE company_id=? AND collection=? AND id IN ({marks})",
-                        (self.company_id, self.name, *ids),
-                    )
+                    deleted = self._delete_ids(ids)
                     self._commit()
                     return deleted
                 except Exception as exc:
@@ -568,12 +609,7 @@ class SharedV2Collection:
         def write():
             self._begin()
             try:
-                self._run(
-                    "DELETE FROM docs_v2_unique WHERE company_id=? AND collection=? AND doc_id IN ("
-                    "SELECT id FROM docs_v2 WHERE " + sql + ")",
-                    (self.company_id, self.name, *params),
-                )
-                deleted = self._run("DELETE FROM docs_v2 WHERE " + sql, params)
+                deleted = self._delete_where(sql, params)
                 self._commit()
                 return deleted
             except Exception as exc:
@@ -644,11 +680,10 @@ class SharedV2Collection:
             return None, exc.reason
         if not self._scalars(_fields):
             return None, "type"
-        clause = "company_id=? AND collection=?"
-        prefix = [self.company_id, self.name]
+        clause, prefix = self._scope()
         if where:
             clause += " AND " + where
-        return (clause, prefix + params), None
+        return (clause, list(prefix) + params), None
 
     def _read_plan(self, query, sort, skip, limit, length):
         try:
@@ -663,8 +698,9 @@ class SharedV2Collection:
                 return None, "type"
         except _NoPush as exc:
             return None, exc.reason
-        sql = "SELECT doc FROM docs_v2 WHERE company_id=? AND collection=?"
-        bind = [self.company_id, self.name]
+        scope, scope_params = self._scope()
+        sql = f"SELECT doc FROM {self._data_table()} WHERE {scope}"
+        bind = list(scope_params)
         if where:
             sql += " AND " + where
             bind.extend(params)
@@ -918,7 +954,7 @@ class SharedV2Collection:
         Aralıkta sınır kolon genişliğine eşitse kesik kolon sıralamayı bozar;
         orada da tam metin kullanılır. Önek aramasında eşit uzunluk güvenlidir.
         """
-        found = _COLUMN_OF.get(field)
+        found = self._column(field)
         if not found or not isinstance(value, str):
             return self._full_text(field)
         column, width = found
@@ -931,7 +967,7 @@ class SharedV2Collection:
         # Kesik kolon tek başına öneki tam eşleşme sayar. Kısa değerde indeks
         # daraltır, tam metin sonucu doğrular. Uzun değerde yalnız tam metin.
         full = self._full_text(field)
-        found = _COLUMN_OF.get(field)
+        found = self._column(field)
         if found and isinstance(value, str) and len(value) <= found[1]:
             return f"({found[0]} = ? AND {full} = ?)", [value, value]
         return f"{full} = ?", [value]
@@ -939,7 +975,7 @@ class SharedV2Collection:
     def _in_pred(self, field, values):
         full = self._full_text(field)
         marks = ",".join(["?"] * len(values))
-        found = _COLUMN_OF.get(field)
+        found = self._column(field)
         if found and all(len(item) <= found[1] for item in values):
             return (
                 f"({found[0]} IN ({marks}) AND {full} IN ({marks}))",
@@ -950,7 +986,7 @@ class SharedV2Collection:
     def _text_expr(self, field):
         if field == "_id":
             return "id"
-        found = _COLUMN_OF.get(field)
+        found = self._column(field)
         if found:
             return found[0]
         return self._full_text(field)
@@ -990,8 +1026,8 @@ class SharedV2Collection:
         return f"json_type(doc, '$.{field}') IS NOT NULL"
 
     def _nonscalar_sql(self, field):
-        found = _COLUMN_OF.get(field)
-        if found:
+        found = self._column(field)
+        if found and self._bad_column(field):
             return f"{found[0]}_bad IS NOT NULL"
         if self.store.dialect == "mysql":
             return (
@@ -1012,11 +1048,12 @@ class SharedV2Collection:
                 continue
             if key in self.store.scalar_bad:
                 return False
+            scope, scope_params = self._scope()
             row = self._run(
-                "SELECT 1 FROM docs_v2 WHERE company_id=? AND collection=? AND "
+                f"SELECT 1 FROM {self._data_table()} WHERE {scope} AND "
                 + self._nonscalar_sql(field)
                 + " LIMIT 1",
-                (self.company_id, self.name),
+                tuple(scope_params),
             ).fetchone()
             if row:
                 self.store.scalar_bad.add(key)
@@ -1026,9 +1063,10 @@ class SharedV2Collection:
 
     def _python_match(self, query):
         self.store.python_scans += 1
+        scope, scope_params = self._scope()
         docs = self._fetch_docs(
-            "SELECT doc FROM docs_v2 WHERE company_id=? AND collection=? ORDER BY id ASC",
-            (self.company_id, self.name),
+            f"SELECT doc FROM {self._data_table()} WHERE {scope} ORDER BY id ASC",
+            tuple(scope_params),
         )
         return [doc for doc in docs if match_query(doc, query or {})]
 
@@ -1102,14 +1140,15 @@ class SharedV2Collection:
             return
         doc_id = str(doc.get("_id"))
         marks = ",".join(["?"] * len(names))
+        table = self._unique_table()
         self._run(
-            "DELETE FROM docs_v2_unique WHERE company_id=? AND collection=? AND doc_id=? "
+            f"DELETE FROM {table} WHERE company_id=? AND collection=? AND doc_id=? "
             f"AND field_name IN ({marks})",
             (self.company_id, self.name, doc_id, *names),
         )
         for field_name, field_value, value_hash in self._unique_slots(doc):
             self._run(
-                "INSERT INTO docs_v2_unique "
+                f"INSERT INTO {table} "
                 "(company_id, collection, field_name, field_value, value_hash, doc_id) "
                 "VALUES (?,?,?,?,?,?)",
                 (self.company_id, self.name, field_name, field_value, value_hash, doc_id),
@@ -1121,16 +1160,14 @@ class SharedV2Collection:
             return
         marks = ",".join(["?"] * len(ids))
         self._run(
-            f"DELETE FROM docs_v2_unique WHERE company_id=? AND collection=? AND doc_id IN ({marks})",
+            f"DELETE FROM {self._unique_table()} WHERE company_id=? AND collection=? AND doc_id IN ({marks})",
             (self.company_id, self.name, *ids),
         )
 
     def _backfill_unique(self, spec, partial):
         # tenant-ok: koleksiyonun benzersiz anahtarı tüm firmalara aynıdır; satır firma kimliğiyle yazılır.
-        rows = self._run(
-            "SELECT company_id, id, doc FROM docs_v2 WHERE collection=?",
-            (self.name,),
-        ).fetchall()
+        sql, params = self._backfill_query()
+        rows = self._run(sql, params).fetchall()
         self._begin()
         try:
             field_name = _unique_name(spec)
@@ -1150,7 +1187,7 @@ class SharedV2Collection:
                     continue
                 field_value, value_hash = _unique_parts(values)
                 held = self._run(
-                    "SELECT doc_id FROM docs_v2_unique WHERE company_id=? AND collection=? "
+                    f"SELECT doc_id FROM {self._unique_table()} WHERE company_id=? AND collection=? "
                     "AND field_name=? AND value_hash=?",
                     (str(company_id), self.name, field_name, value_hash),
                 ).fetchone()
@@ -1159,7 +1196,7 @@ class SharedV2Collection:
                         raise DuplicateKeyError("duplicate key")
                     continue
                 self._run(
-                    "INSERT INTO docs_v2_unique "
+                    f"INSERT INTO {self._unique_table()} "
                     "(company_id, collection, field_name, field_value, value_hash, doc_id) "
                     "VALUES (?,?,?,?,?,?)",
                     (str(company_id), self.name, field_name, field_value, value_hash, str(doc_id)),
@@ -1192,8 +1229,9 @@ class SharedV2Collection:
                 values.append(value)
             if skipped:
                 continue
-            clauses = ["company_id=?", "collection=?"]
-            params = [self.company_id, self.name]
+            scope, params = self._scope()
+            clauses = [scope]
+            params = list(params)
             for field, value in zip(spec, values):
                 pred, bind = self._eq_pred(field, value)
                 clauses.append(pred)
@@ -1201,16 +1239,17 @@ class SharedV2Collection:
             if own is not None:
                 clauses.append("id<>?")
                 params.append(own)
-            sql = f"SELECT id FROM docs_v2 WHERE {' AND '.join(clauses)} LIMIT 1"
+            sql = f"SELECT id FROM {self._data_table()} WHERE {' AND '.join(clauses)} LIMIT 1"
             row = self._run(sql, params, unique=True).fetchone()
             if row:
                 raise DuplicateKeyError("duplicate key")
 
     def _unique_scan(self, doc, exclude_id, indexes):
         others = []
+        scope, scope_params = self._scope()
         for other in self._fetch_docs(
-            "SELECT doc FROM docs_v2 WHERE company_id=? AND collection=? ORDER BY id ASC",
-            (self.company_id, self.name),
+            f"SELECT doc FROM {self._data_table()} WHERE {scope} ORDER BY id ASC",
+            tuple(scope_params),
         ):
             if exclude_id is not None and str(other.get("_id")) == str(exclude_id):
                 continue
