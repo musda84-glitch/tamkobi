@@ -25,6 +25,7 @@ from storage_migrations.errors import ChecksumError, LegacyTargetError, Migratio
 from storage_migrations.loader import Migration, load_migrations  # noqa: E402
 from storage_migrations.session import Session, connect  # noqa: E402
 from storage_migrations.targets import list_targets  # noqa: E402
+import storage_router  # noqa: E402
 
 SECRET = "s3cret-dsn-value"
 
@@ -56,44 +57,6 @@ class TraceSession(Session):
             self.fail_marker = False
             raise RuntimeError("kesildi")
         return super().execute(sql, params)
-
-
-def _stub_router():
-    mod = types.ModuleType("storage_router")
-    mod.LEGACY = "legacy"
-    mod.SHARED_V2 = "shared_v2"
-    mod.DEDICATED = "dedicated"
-    mod.KNOWN_MODES = frozenset({mod.LEGACY, mod.SHARED_V2, mod.DEDICATED})
-    mod.DSN_FIELD = "dedicated_dsn_ref"
-    mod.MODE_FIELD = "storage_mode"
-
-    def normalize_mode(raw):
-        if raw is None:
-            return mod.LEGACY
-        text = str(raw).strip()
-        if not text:
-            return mod.LEGACY
-        lowered = text.lower()
-        if lowered in mod.KNOWN_MODES:
-            return lowered
-        return text
-
-    mod.normalize_mode = normalize_mode
-    return mod
-
-
-@pytest.fixture
-def router():
-    created = False
-    try:
-        import storage_router
-    except ImportError:
-        storage_router = _stub_router()
-        sys.modules["storage_router"] = storage_router
-        created = True
-    yield storage_router
-    if created:
-        sys.modules.pop("storage_router", None)
 
 
 def _memory(*, fail=False):
@@ -274,23 +237,25 @@ def test_raw_dsn_argument_is_rejected_without_echo(capsys):
     assert "DSN" in captured.err
 
 
-def test_targets_follow_storage_router_modes(monkeypatch, router, capsys):
+def test_targets_follow_storage_router_modes(monkeypatch, capsys):
     seen = []
-    original = router.normalize_mode
+    original = storage_router.normalize_mode
 
     def wrapped(raw):
         seen.append(raw)
         return original(raw)
 
-    monkeypatch.setattr(router, "normalize_mode", wrapped)
+    monkeypatch.setattr(storage_router, "normalize_mode", wrapped)
     secret_dsn = f"mysql://user:{SECRET}@db.internal/firm"
+    mode = storage_router.MODE_FIELD
+    dsn_field = storage_router.DSN_FIELD
     catalog = Catalog([
         {"_id": "bos"},
-        {"_id": "eski", "storage_mode": " LEGACY ", "dedicated_dsn_ref": secret_dsn},
-        {"_id": "pay-1", "storage_mode": "shared_v2"},
-        {"_id": "pay-2", "storage_mode": "SHARED_V2", "dedicated_dsn_ref": secret_dsn},
-        {"_id": "ozel", "storage_mode": "Dedicated", "dedicated_dsn_ref": secret_dsn},
-        {"_id": "garip", "storage_mode": f"mysql://user:{SECRET}@h/db"},
+        {"_id": "eski", mode: " LEGACY ", dsn_field: secret_dsn},
+        {"_id": "pay-1", mode: storage_router.SHARED_V2},
+        {"_id": "pay-2", mode: "SHARED_V2", dsn_field: secret_dsn},
+        {"_id": "ozel", mode: "Dedicated", dsn_field: secret_dsn},
+        {"_id": "garip", mode: f"mysql://user:{SECRET}@h/db"},
     ])
     refs = list_targets(catalog)
     text = "\n".join(ref.public() for ref in refs)
@@ -312,13 +277,17 @@ def test_targets_follow_storage_router_modes(monkeypatch, router, capsys):
     assert "eski" not in captured.out
 
 
-def test_legacy_company_is_not_unsealed(monkeypatch, router, capsys):
+def test_legacy_company_is_not_unsealed(monkeypatch, capsys):
     def boom(_sealed):
         raise AssertionError("DSN çözülmemeli")
 
     monkeypatch.setattr("storage_migrations.targets._unseal", boom)
     catalog = Catalog([
-        {"_id": "eski", "storage_mode": "legacy", "dedicated_dsn_ref": f"mysql://user:{SECRET}@h/db"},
+        {
+            "_id": "eski",
+            storage_router.MODE_FIELD: storage_router.LEGACY,
+            storage_router.DSN_FIELD: f"mysql://user:{SECRET}@h/db",
+        },
     ])
     code = main(["apply", "--target", "dedicated:eski", "--confirm"], catalog=catalog)
     captured = capsys.readouterr()
@@ -327,7 +296,7 @@ def test_legacy_company_is_not_unsealed(monkeypatch, router, capsys):
     assert SECRET not in captured.out + captured.err
 
 
-def test_dedicated_sealed_dsn_applies_and_stays_masked(tmp_path, monkeypatch, router, capsys):
+def test_dedicated_sealed_dsn_applies_and_stays_masked(tmp_path, monkeypatch, capsys):
     from cryptography.fernet import Fernet
 
     previous_env = os.environ.get("CREDENTIAL_ENCRYPTION_KEY")
@@ -340,10 +309,14 @@ def test_dedicated_sealed_dsn_applies_and_stays_masked(tmp_path, monkeypatch, ro
         folder = tmp_path / SECRET
         path = folder / "co.db"
         dsn = f"sqlite:///{path}"
-        sealed = comm_service.encrypt(dsn)
+        sealed = storage_router.seal_dedicated_dsn(dsn)
         assert SECRET not in sealed
         catalog = Catalog([
-            {"_id": "co1", "storage_mode": "dedicated", "dedicated_dsn_ref": sealed},
+            {
+                "_id": "co1",
+                storage_router.MODE_FIELD: storage_router.DEDICATED,
+                storage_router.DSN_FIELD: sealed,
+            },
         ])
         buffer = _capture_log()
         code = main(["apply", "--target", "dedicated:co1", "--confirm"], catalog=catalog)
