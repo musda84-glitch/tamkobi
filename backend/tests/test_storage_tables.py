@@ -12,6 +12,8 @@ import re
 import sqlite3
 import sys
 import threading
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -126,14 +128,29 @@ def test_migration_matches_layout_and_stays_independent():
     assert "PRIMARY KEY (company_id, collection, field_name, value_hash)" in sqlite_blob
     for spec in storage_tables.SPECS.values():
         assert f"CREATE TABLE IF NOT EXISTS {spec.table} " in sqlite_blob
-        for column, _field, width in spec.fields:
-            assert f"{column} VARCHAR({width})" in sqlite_blob
-            assert f"{column} VARCHAR({width})" in mysql_blob
+        for column, field, width in spec.fields:
+            if field in spec.numeric:
+                declared = f"{column} {storage_tables.DECIMAL_SQL}"
+            else:
+                declared = f"{column} VARCHAR({width})"
+            assert declared in sqlite_blob
+            assert declared in mysql_blob
         for index_name, columns in spec.indexes:
             listed = ", ".join(columns)
             assert f"idx" in index_name
             assert f"{index_name} ON {spec.table} ({listed})" in mysql_blob
             assert f"IF NOT EXISTS {index_name} ON {spec.table} ({listed})" in sqlite_blob
+    engine = "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    for step in real.mysql_steps:
+        if step.upper().startswith("CREATE TABLE"):
+            assert engine in step
+    bin_fix = named["utf8mb4_bin"]
+    assert bin_fix.version > named["docs_v2"].version
+    assert bin_fix.version > real.version
+    mysql_fix = "\n".join(bin_fix.mysql_steps)
+    assert "ALTER TABLE docs_v2 CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin" in mysql_fix
+    assert "ALTER TABLE docs_v2_unique CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin" in mysql_fix
+    assert "CONVERT TO" not in "\n".join(bin_fix.steps)
     assert "company_id VARCHAR(64) NOT NULL" in sqlite_blob
     assert "id VARCHAR(191) NOT NULL" in sqlite_blob
     others = "\n".join(named["docs_v2"].steps + named["storage_records"].steps).lower()
@@ -361,18 +378,19 @@ def test_crud_query_sort_page_and_company_isolation(conn):
     assert "company_id" in storage_shared_v2.get_store().last_plan
     status = conn.execute("SELECT order_status, total_amount FROM t_orders WHERE id = 'a'").fetchone()
     assert status[0] == "paid"
-    assert status[1] == "11"
+    assert float(status[1]) == 11
     amount = conn.execute("SELECT amount, doc_date FROM t_stock_moves WHERE id = 'm1'").fetchone()
-    assert amount == ("-2", "2024-01-02")
+    assert float(amount[0]) == -2
+    assert amount[1] == "2024-01-02"
     bank_row = conn.execute(
         "SELECT amount, doc_date, match_status FROM t_bank_transactions WHERE company_id = ?",
         (OTHER,),
     ).fetchone()
-    assert bank_row[0] == "10.5"
+    assert float(bank_row[0]) == 10.5
     assert bank_row[1] == "2024-05-01"
     assert bank_row[2] == "unmatched"
     invoice = conn.execute("SELECT grand_total FROM t_invoices WHERE id = 'i1'").fetchone()
-    assert invoice[0] == "12.5"
+    assert float(invoice[0]) == 12.5
     foreign = conn.execute("SELECT id FROM t_orders WHERE company_id = ?", (OTHER,)).fetchall()
     assert sorted(row[0] for row in foreign) == ["a", "z"]
 
@@ -552,12 +570,180 @@ def test_concurrent_unique_write_has_one_winner(tmp_path):
     setup.close()
 
 
+_MOMENTS = {
+    "m2": datetime(2024, 1, 5, 9, 0),
+    "m3": datetime(2024, 1, 12, 9, 0),
+    "m1": datetime(2024, 1, 20, 9, 0),
+}
+_DATE_FIELDS = (
+    ("orders", "order_date", "t_orders", "order_date"),
+    ("invoices", "issue_date", "t_invoices", "issue_date"),
+    ("stock_movements", "date", "t_stock_moves", "doc_date"),
+    ("bank_transactions", "date", "t_bank_transactions", "doc_date"),
+)
+
+
+def test_stored_value_follows_doc_json_scalar():
+    body = {
+        "date": datetime(2024, 1, 12, 8, 30),
+        "change": Decimal("10.50"),
+        "flag": True,
+        "note": None,
+        "order_number": "N" * 80,
+    }
+    assert storage_tables.stored_value(body, "date", 40) == "2024-01-12 08:30:00"
+    assert storage_tables.stored_decimal(body, "change") == "10.5000"
+    assert storage_tables.stored_value(body, "flag", 64) is None
+    assert storage_tables.stored_value(body, "note", 64) is None
+    assert storage_tables.stored_value(body, "missing", 64) is None
+    assert storage_tables.stored_value(body, "order_number", 64) == "N" * 64
+    assert storage_tables.stored_decimal({"change": "abc"}, "change") is None
+    with pytest.raises(ValueError, match="change"):
+        storage_tables.stored_decimal({"change": "9" * 20}, "change")
+
+
+async def _datetime_parity(company):
+    report = {}
+    for name, field, _table, _column in _DATE_FIELDS:
+        docs = storage_shared_v2.collection_for(company, name)
+        real = storage_tables.collection_for(company, name)
+        for doc_id, moment in _MOMENTS.items():
+            body = {"_id": doc_id, field: moment, "status": "open"}
+            await docs.insert_one(dict(body))
+            await real.insert_one(dict(body))
+
+        async def ids(api, query, direction, field=field):
+            found = await api.find(query).sort(field, direction).to_list(10)
+            return [doc["_id"] for doc in found]
+
+        encoded = "2024-01-12 09:00:00"
+        report[name] = {
+            "asc": (await ids(docs, {}, 1), await ids(real, {}, 1)),
+            "desc": (await ids(docs, {}, -1), await ids(real, {}, -1)),
+            "gt": (
+                await ids(docs, {field: {"$gt": "2024-01-10"}}, 1),
+                await ids(real, {field: {"$gt": "2024-01-10"}}, 1),
+            ),
+            "gte": (
+                await ids(docs, {field: {"$gte": "2024-01-10"}}, 1),
+                await ids(real, {field: {"$gte": "2024-01-10"}}, 1),
+            ),
+            "eq": (
+                await ids(docs, {field: encoded}, 1),
+                await ids(real, {field: encoded}, 1),
+            ),
+        }
+    return report
+
+
+def _assert_datetime_parity(report):
+    for name, got in report.items():
+        assert got["asc"][0] == ["m2", "m3", "m1"], name
+        assert got["desc"][0] == ["m1", "m3", "m2"], name
+        assert got["gt"][0] == ["m3", "m1"], name
+        assert got["gte"][0] == ["m3", "m1"], name
+        assert got["eq"][0] == ["m3"], name
+        for key, pair in got.items():
+            assert pair[1] == pair[0], (name, key, pair)
+
+
+def test_datetime_sort_range_and_equality_match_docs_v2(conn):
+    report = asyncio.run(_datetime_parity("co-dt"))
+    _assert_datetime_parity(report)
+    for _name, _field, table, column in _DATE_FIELDS:
+        stored = conn.execute(
+            f"SELECT {column} FROM {table} WHERE id = ?",
+            ("m3",),
+        ).fetchone()[0]
+        assert stored == "2024-01-12 09:00:00"
+
+
+def test_numeric_range_uses_amount_index(conn):
+    coll = _orders("co-num")
+
+    async def run():
+        await coll.insert_one({
+            "_id": "low", "order_number": "L", "order_status": "open",
+            "order_date": "2024-01-01", "total_amount": 10,
+        })
+        await coll.insert_one({
+            "_id": "mid", "order_number": "M", "order_status": "open",
+            "order_date": "2024-01-02", "total_amount": 10.5,
+        })
+        await coll.insert_one({
+            "_id": "high", "order_number": "H", "order_status": "open",
+            "order_date": "2024-01-03", "total_amount": 20,
+        })
+        store = storage_shared_v2.get_store()
+        store.capture_plans = True
+        store.python_scans = 0
+        store.statements.clear()
+        gt = await coll.find({"total_amount": {"$gt": 10}}).sort("total_amount", 1).to_list(10)
+        gte = await coll.find({"total_amount": {"$gte": 10.5}}).sort("total_amount", 1).to_list(10)
+        return {
+            "gt": [doc["_id"] for doc in gt],
+            "gte": [doc["_id"] for doc in gte],
+            "scans": store.python_scans,
+            "plan": store.last_plan,
+            "sql": next(
+                sql for sql in reversed(store.statements)
+                if sql.lstrip().upper().startswith("SELECT DOC")
+            ),
+        }
+
+    got = asyncio.run(run())
+    assert got["gt"] == ["mid", "high"]
+    assert got["gte"] == ["mid", "high"]
+    assert got["scans"] == 0
+    assert "total_amount >=" in got["sql"]
+    assert "idx_t_orders_amount" in got["plan"]
+    stored = conn.execute(
+        "SELECT total_amount FROM t_orders WHERE company_id = ? AND id = ?",
+        ("co-num", "mid"),
+    ).fetchone()[0]
+    assert float(stored) == 10.5
+
+
+async def _case_distinct_companies():
+    upper = storage_tables.collection_for("CoX", "orders")
+    lower = storage_tables.collection_for("cox", "orders")
+    await upper.create_index("order_number", unique=True)
+    await upper.insert_one({
+        "_id": "1", "order_number": "SAME", "order_status": "open", "order_date": "2024-01-01",
+    })
+    await lower.insert_one({
+        "_id": "1", "order_number": "SAME", "order_status": "open", "order_date": "2024-01-02",
+    })
+    await upper.delete_one({"_id": "1"})
+    with pytest.raises(DuplicateKeyError):
+        await lower.insert_one({
+            "_id": "2", "order_number": "SAME", "order_status": "open", "order_date": "2024-01-03",
+        })
+    await upper.insert_one({
+        "_id": "3", "order_number": "SAME", "order_status": "open", "order_date": "2024-01-04",
+    })
+    kept = await lower.find({}).to_list(5)
+    return [doc["_id"] for doc in kept]
+
+
+def test_case_distinct_companies_keep_unique_rows(conn):
+    assert asyncio.run(_case_distinct_companies()) == ["1"]
+    rows = conn.execute(
+        "SELECT company_id FROM t_row_unique ORDER BY company_id, doc_id"
+    ).fetchall()
+    assert [row[0] for row in rows] == ["CoX", "cox"]
+
+
 def _mariadb_dsn():
-    return (
+    raw = (
         os.environ.get("STORAGE_MARIADB_DSN")
         or os.environ.get("STORAGE_SHARED_V2_TEST_DSN")
         or ""
     ).strip()
+    if not raw:
+        return ""
+    from mariadb_fixture import isolated_dsn
+    return isolated_dsn(raw)
 
 
 def _drop_mariadb(cur):
@@ -575,6 +761,129 @@ def _drop_mariadb(cur):
         "schema_version",
     ):
         cur.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+def test_mariadb_datetime_case_collation_and_amount_index():
+    dsn = _mariadb_dsn()
+    if not dsn:
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+    import pymysql
+
+    from storage_migrations.session import connect
+
+    parsed = urlparse(dsn.replace("mariadb://", "mysql://", 1).replace("mysql+pymysql://", "mysql://", 1))
+    database = (parsed.path or "/").lstrip("/").split("?")[0]
+    admin = pymysql.connect(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
+        database=database,
+        charset="utf8mb4",
+        autocommit=True,
+        connect_timeout=5,
+    )
+    try:
+        with admin.cursor() as cur:
+            _drop_mariadb(cur)
+    finally:
+        admin.close()
+
+    opened = connect(dsn, write=True)
+    try:
+        opened.execute(
+            "SET SESSION sql_mode = "
+            "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        )
+        pack = _pack()
+        first = apply(opened, confirm=True, dry_run=False)
+        assert first.advanced == len(pack)
+        fix = _by_name(pack)["utf8mb4_bin"]
+        opened.execute(
+            "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
+            ("applying", 0, "", fix.version),
+        )
+        opened.commit()
+        rerun = apply(opened, confirm=True, dry_run=False)
+        row = next(item for item in rerun.rows if item.version == fix.version)
+        assert row.state == "uygulandı"
+        assert row.step == row.total
+        collations = {
+            str(item[0]): str(item[1]).lower()
+            for item in opened.fetchall(
+                "SELECT table_name, table_collation FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name IN "
+                "('t_orders','t_invoices','t_stock_moves','t_bank_transactions',"
+                "'t_row_unique','docs_v2','docs_v2_unique')"
+            )
+        }
+        assert set(collations) == {
+            "t_orders", "t_invoices", "t_stock_moves", "t_bank_transactions",
+            "t_row_unique", "docs_v2", "docs_v2_unique",
+        }
+        assert set(collations.values()) == {"utf8mb4_bin"}
+        amount_type = opened.fetchall(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 't_orders' "
+            "AND column_name = 'total_amount'"
+        )[0][0]
+        assert str(amount_type).lower() == "decimal"
+        storage_shared_v2.reset_store()
+        store = storage_shared_v2.get_store()
+        store.attach(opened.conn, "mysql", owned=False)
+        report = asyncio.run(_datetime_parity("co-dt"))
+        _assert_datetime_parity(report)
+        for _name, _field, table, column in _DATE_FIELDS:
+            stored = opened.fetchall(
+                f"SELECT {column} FROM {table} WHERE id = ?",
+                ("m3",),
+            )[0][0]
+            assert stored == "2024-01-12 09:00:00"
+        assert asyncio.run(_case_distinct_companies()) == ["1"]
+        companies = [
+            str(item[0])
+            for item in opened.fetchall(
+                "SELECT company_id FROM t_row_unique ORDER BY company_id, doc_id"
+            )
+        ]
+        assert companies == ["CoX", "cox"]
+        orders = storage_tables.collection_for("co-num", "orders")
+
+        async def amounts():
+            await orders.insert_one({
+                "_id": "low", "order_number": "L", "order_status": "open",
+                "total_amount": 10, "order_date": "2024-01-01",
+            })
+            await orders.insert_one({
+                "_id": "mid", "order_number": "M", "order_status": "open",
+                "total_amount": 10.5, "order_date": "2024-01-02",
+            })
+            await orders.insert_one({
+                "_id": "high", "order_number": "H", "order_status": "open",
+                "total_amount": 20, "order_date": "2024-01-03",
+            })
+            store.python_scans = 0
+            found = await orders.find({"total_amount": {"$gt": 10}}).sort("total_amount", 1).to_list(10)
+            return [doc["_id"] for doc in found], store.python_scans
+
+        ids, scans = asyncio.run(amounts())
+        assert ids == ["mid", "high"]
+        assert scans == 0
+        plan = opened.fetchall(
+            "EXPLAIN SELECT doc FROM t_orders WHERE company_id = ? AND total_amount > ?",
+            ("co-num", "10.0000"),
+        )
+        blob = " ".join(str(part) for row in plan for part in row).lower()
+        assert "idx_t_orders_amount" in blob
+    finally:
+        storage_shared_v2.reset_store()
+        try:
+            opened.rollback()
+            with opened.conn.cursor() as cur:
+                _drop_mariadb(cur)
+            opened.commit()
+        finally:
+            opened.close()
 
 
 def test_mariadb_strict_migration_and_concurrent_unique():

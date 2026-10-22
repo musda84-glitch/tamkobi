@@ -748,7 +748,11 @@ def test_long_text_is_stored_and_matches_exactly(conn):
 
 
 def _mariadb_dsn():
-    return (os.environ.get("STORAGE_SHARED_V2_TEST_DSN") or "").strip()
+    raw = (os.environ.get("STORAGE_SHARED_V2_TEST_DSN") or "").strip()
+    if not raw:
+        return ""
+    from mariadb_fixture import isolated_dsn
+    return isolated_dsn(raw)
 
 
 def test_mariadb_migration_twice_and_concurrent_unique():

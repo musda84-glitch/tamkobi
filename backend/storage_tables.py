@@ -12,7 +12,9 @@ sınırı aşan yazı, alan adını söyleyen doğrulama hatası verir.
 """
 from __future__ import annotations
 
+import json
 import logging
+from decimal import Decimal
 
 import storage_shared_v2
 from storage_shared_v2 import SharedV2Collection
@@ -23,13 +25,17 @@ DATE_WIDTH = 40
 TEXT_WIDTH = 64
 ID_WIDTH = 191
 COMPANY_WIDTH = 64
+DECIMAL_SQL = "DECIMAL(18,4)"
+_DECIMAL_SCALE = Decimal("0.0001")
+_DECIMAL_LIMIT = Decimal(10) ** 14
 
 
 class Spec:
-    def __init__(self, table, fields, indexes):
+    def __init__(self, table, fields, indexes, numeric=()):
         self.table = table
         self.fields = tuple(fields)
         self.indexes = tuple(indexes)
+        self.numeric = frozenset(numeric)
         self.columns = {field: (column, width) for column, field, width in self.fields}
 
 
@@ -53,7 +59,9 @@ SPECS = {
             ("idx_t_orders_status", ("company_id", "order_status")),
             ("idx_t_orders_contact", ("company_id", "contact_id")),
             ("idx_t_orders_number", ("company_id", "order_number")),
+            ("idx_t_orders_amount", ("company_id", "total_amount")),
         ),
+        numeric=("total_amount",),
     ),
     "invoices": Spec(
         "t_invoices",
@@ -69,7 +77,9 @@ SPECS = {
             ("idx_t_invoices_status", ("company_id", "status")),
             ("idx_t_invoices_contact", ("company_id", "contact_id")),
             ("idx_t_invoices_number", ("company_id", "invoice_number")),
+            ("idx_t_invoices_total", ("company_id", "grand_total")),
         ),
+        numeric=("grand_total",),
     ),
     "stock_movements": Spec(
         "t_stock_moves",
@@ -84,7 +94,9 @@ SPECS = {
             ("idx_t_stock_moves_date", ("company_id", "doc_date")),
             ("idx_t_stock_moves_status", ("company_id", "status")),
             ("idx_t_stock_moves_product", ("company_id", "product_id")),
+            ("idx_t_stock_moves_amount", ("company_id", "amount")),
         ),
+        numeric=("change",),
     ),
     "bank_transactions": Spec(
         "t_bank_transactions",
@@ -101,13 +113,33 @@ SPECS = {
             ("idx_t_bank_tx_status", ("company_id", "match_status")),
             ("idx_t_bank_tx_contact", ("company_id", "contact_id")),
             ("idx_t_bank_tx_account", ("company_id", "account_id")),
+            ("idx_t_bank_tx_amount", ("company_id", "amount")),
         ),
+        numeric=("amount",),
     ),
 }
 
 REAL_COLLECTIONS = frozenset(SPECS)
 UNIQUE_TABLE = "t_row_unique"
 UNIQUE_INDEX = ("idx_t_row_unique_doc", ("company_id", "collection", "doc_id"))
+
+
+def _query_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return None
+    if isinstance(value, float):
+        text = format(value, "f").rstrip("0").rstrip(".")
+        if text in ("", "-", "-0"):
+            text = "0"
+    else:
+        text = str(value)
+    try:
+        number = Decimal(text)
+    except Exception:
+        return None
+    if not number.is_finite():
+        return None
+    return format(number.quantize(_DECIMAL_SCALE), "f")
 
 
 def collection_for(company_id: str, name: str) -> "TableCollection":
@@ -120,26 +152,71 @@ def collection_for(company_id: str, name: str) -> "TableCollection":
     return TableCollection(storage_shared_v2.get_store(), cid, coll, SPECS[coll])
 
 
-def stored_value(body, field: str, width: int):
-    """Kolona yazılacak kısa metin. Kesilen değer belgede tam durur."""
+def _encoded(body):
+    """Belgenin doc ile aynı JSON hali. datetime ve Decimal default=str ile metin olur."""
+    if not isinstance(body, dict):
+        return {}
+    loaded = json.loads(storage_shared_v2.dumps(body))
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _scalar(body, field: str):
     if not isinstance(body, dict) or field not in body:
         return None
-    value = body[field]
-    if value is None or isinstance(value, bool):
+    value = _encoded(body).get(field)
+    if value is None or isinstance(value, (bool, dict, list)):
         return None
+    return value
+
+
+def _text_of(value) -> str:
     if isinstance(value, str):
-        text = value
-    elif isinstance(value, int):
-        text = str(value)
-    elif isinstance(value, float):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
         text = format(value, "f").rstrip("0").rstrip(".")
         if text in ("", "-", "-0"):
-            text = "0"
-    else:
+            return "0"
+        return text
+    return ""
+
+
+def stored_value(body, field: str, width: int):
+    """Kolona yazılacak kısa metin. doc ile aynı JSON skalerinden kırpılır."""
+    value = _scalar(body, field)
+    if value is None:
+        return None
+    text = _text_of(value)
+    if text == "" and not isinstance(value, str):
         return None
     if len(text) > width:
         return text[:width]
     return text
+
+
+def stored_decimal(body, field: str):
+    """Sayı kolonuna yazılacak DECIMAL metni. Aralık sorgusu bu kolonu indeksler.
+
+    JSON sayısı ve sayıya dönen metin (Decimal'ın str hali) yazılır.
+    Sayı olmayan metin NULL kalır; tam değer doc'tadır.
+    """
+    value = _scalar(body, field)
+    if value is None:
+        return None
+    text = _text_of(value).strip()
+    if text == "":
+        return None
+    try:
+        number = Decimal(text)
+    except Exception:
+        return None
+    if not number.is_finite():
+        return None
+    quantized = number.quantize(_DECIMAL_SCALE)
+    if quantized.copy_abs() >= _DECIMAL_LIMIT:
+        raise ValueError(f"{field} alanı DECIMAL sınırını aşıyor")
+    return format(quantized, "f")
 
 
 class TableCollection(SharedV2Collection):
@@ -172,7 +249,7 @@ class TableCollection(SharedV2Collection):
         params = [str(body["_id"]), self.company_id, storage_shared_v2.dumps(body)]
         for column, field, width in self.spec.fields:
             columns.append(column)
-            params.append(stored_value(body, field, width))
+            params.append(self._column_param(body, field, width))
         marks = ",".join(["?"] * len(columns))
         names = ", ".join(columns)
         self._run(
@@ -186,7 +263,7 @@ class TableCollection(SharedV2Collection):
         params = [storage_shared_v2.dumps(body)]
         for column, field, width in self.spec.fields:
             sets.append(f"{column}=?")
-            params.append(stored_value(body, field, width))
+            params.append(self._column_param(body, field, width))
         scope, scope_params = self._scope()
         params.extend(scope_params)
         params.append(str(doc_id))
@@ -194,6 +271,41 @@ class TableCollection(SharedV2Collection):
             f"UPDATE {self._data_table()} SET {', '.join(sets)} WHERE {scope} AND id=?",
             tuple(params),
         )
+
+    def _column_param(self, body, field: str, width: int):
+        if field in self.spec.numeric:
+            return stored_decimal(body, field)
+        return stored_value(body, field, width)
+
+    def _cmp_sql(self, field, symbol, value):
+        if field in self.spec.numeric and _query_number(value) is not None:
+            column = self.spec.columns[field][0]
+            return f"({column} {symbol} ?)", [_query_number(value)], [field]
+        return super()._cmp_sql(field, symbol, value)
+
+    def _search_expr(self, field, value, allow_equal: bool):
+        if field in self.spec.numeric:
+            return self._full_text(field)
+        return super()._search_expr(field, value, allow_equal)
+
+    def _eq_pred(self, field, value):
+        if field in self.spec.numeric:
+            return f"{self._full_text(field)} = ?", [value]
+        return super()._eq_pred(field, value)
+
+    def _nonscalar_sql(self, field):
+        if field in self.spec.numeric:
+            if self.store.dialect == "mysql":
+                return (
+                    f"JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IS NOT NULL "
+                    f"AND JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) NOT IN "
+                    "('INTEGER', 'DOUBLE', 'DECIMAL', 'NULL')"
+                )
+            return (
+                f"json_type(doc, '$.{field}') IS NOT NULL "
+                f"AND json_type(doc, '$.{field}') NOT IN ('integer', 'real', 'null')"
+            )
+        return super()._nonscalar_sql(field)
 
     def _guard_key(self, body) -> None:
         if len(self.company_id) > COMPANY_WIDTH:

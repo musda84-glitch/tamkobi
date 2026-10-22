@@ -9,7 +9,10 @@ ve belge numarasıdır. Tekrar çalışınca CREATE TABLE IF NOT EXISTS ve
 var olan indeks atlanır.
 
 Uzun metin kolona sığmazsa uygulama yazmadan keser; tam değer doc'tadır.
+total_amount, grand_total ve amount DECIMAL(18,4) kolonudur; aralık
+sorgusu (company_id, tutar) indeksini kullanır.
 Benzersiz anahtarlar t_row_unique birincil anahtarındadır.
+MySQL tabloları utf8mb4_bin kullanır; company_id harf büyüklüğünü ayırır.
 """
 
 _ORDERS = (
@@ -17,7 +20,7 @@ _ORDERS = (
     "order_status VARCHAR(64)",
     "contact_id VARCHAR(64)",
     "order_number VARCHAR(64)",
-    "total_amount VARCHAR(64)",
+    "total_amount DECIMAL(18,4)",
     "channel VARCHAR(64)",
 )
 
@@ -26,7 +29,7 @@ _INVOICES = (
     "status VARCHAR(64)",
     "contact_id VARCHAR(64)",
     "invoice_number VARCHAR(64)",
-    "grand_total VARCHAR(64)",
+    "grand_total DECIMAL(18,4)",
 )
 
 _STOCK = (
@@ -34,7 +37,7 @@ _STOCK = (
     "status VARCHAR(64)",
     "product_id VARCHAR(64)",
     "doc_no VARCHAR(64)",
-    "amount VARCHAR(64)",
+    "amount DECIMAL(18,4)",
 )
 
 _BANK = (
@@ -43,7 +46,7 @@ _BANK = (
     "contact_id VARCHAR(64)",
     "account_id VARCHAR(64)",
     "doc_no VARCHAR(64)",
-    "amount VARCHAR(64)",
+    "amount DECIMAL(18,4)",
 )
 
 _UNIQUE = """
@@ -63,17 +66,21 @@ _INDEXES = (
     ("idx_t_orders_status", "t_orders", "company_id, order_status"),
     ("idx_t_orders_contact", "t_orders", "company_id, contact_id"),
     ("idx_t_orders_number", "t_orders", "company_id, order_number"),
+    ("idx_t_orders_amount", "t_orders", "company_id, total_amount"),
     ("idx_t_invoices_date", "t_invoices", "company_id, issue_date"),
     ("idx_t_invoices_status", "t_invoices", "company_id, status"),
     ("idx_t_invoices_contact", "t_invoices", "company_id, contact_id"),
     ("idx_t_invoices_number", "t_invoices", "company_id, invoice_number"),
+    ("idx_t_invoices_total", "t_invoices", "company_id, grand_total"),
     ("idx_t_stock_moves_date", "t_stock_moves", "company_id, doc_date"),
     ("idx_t_stock_moves_status", "t_stock_moves", "company_id, status"),
     ("idx_t_stock_moves_product", "t_stock_moves", "company_id, product_id"),
+    ("idx_t_stock_moves_amount", "t_stock_moves", "company_id, amount"),
     ("idx_t_bank_tx_date", "t_bank_transactions", "company_id, doc_date"),
     ("idx_t_bank_tx_status", "t_bank_transactions", "company_id, match_status"),
     ("idx_t_bank_tx_contact", "t_bank_transactions", "company_id, contact_id"),
     ("idx_t_bank_tx_account", "t_bank_transactions", "company_id, account_id"),
+    ("idx_t_bank_tx_amount", "t_bank_transactions", "company_id, amount"),
     ("idx_t_row_unique_doc", "t_row_unique", "company_id, collection, doc_id"),
 )
 
@@ -101,13 +108,20 @@ def _indexes(guard: bool):
     ]
 
 
+def _unique(kind: str) -> str:
+    sql = _UNIQUE
+    if kind == "mysql":
+        sql += " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    return sql
+
+
 def _steps(kind: str, guard: bool):
     return [
         _table(kind, "t_orders", _ORDERS),
         _table(kind, "t_invoices", _INVOICES),
         _table(kind, "t_stock_moves", _STOCK),
         _table(kind, "t_bank_transactions", _BANK),
-        _UNIQUE,
+        _unique(kind),
         *_indexes(guard),
     ]
 

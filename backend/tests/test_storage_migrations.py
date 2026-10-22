@@ -16,6 +16,7 @@ import pytest
 
 _BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_BACKEND))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
 
@@ -309,6 +310,8 @@ def test_mariadb_migration_applies_twice():
     dsn = os.environ.get("STORAGE_MARIADB_DSN", "").strip()
     if not dsn:
         pytest.skip("STORAGE_MARIADB_DSN yok")
+    from mariadb_fixture import isolated_dsn
+    dsn = isolated_dsn(dsn)
     session = connect(dsn, write=True)
     try:
         session.execute(
@@ -361,7 +364,11 @@ def test_mariadb_migration_applies_twice():
         assert "integrity" in type(caught.value).__name__.lower() or "duplicate" in str(caught.value).lower()
         session.rollback()
         _drop_storage(session)
-        early = tuple(item for item in pack if item.version != 3)
+        # 0006 mevcut docs_v2 tablosunu çevirir; docs_v2 yokken çalışmaz.
+        early = tuple(
+            item for item in pack
+            if item.version != 3 and "docs_v2" not in "\n".join(item.mysql_steps).lower()
+        )
         primed = apply(session, early, confirm=True, dry_run=False)
         assert primed.advanced == len(early)
         assert 3 not in {int(row[0]) for row in session.fetchall("SELECT version FROM schema_version")}
