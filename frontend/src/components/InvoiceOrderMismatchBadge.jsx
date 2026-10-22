@@ -1,6 +1,17 @@
 /** Sipariş tutarı bağlı faturadan 0,01 TL'den fazla ayrıldığında. */
-export function InvoiceOrderMismatchBadge({ ord }) {
-  const text = String(ord?.invoice_mismatch_warning || "").trim();
+export function mismatchWarningText(warning, hideAmount) {
+  const text = String(warning || "").trim();
+  if (!text) return "";
+  if (!hideAmount) return text;
+  const stripped = text
+    .replace(/\s*\([^)]*\d[^)]*\)/g, "")
+    .replace(/\d[\d.]*,\d{2}\s*TL/gi, "")
+    .trim();
+  return stripped || "Fatura siparişten farklı";
+}
+
+export function InvoiceOrderMismatchBadge({ ord, hideAmount = false }) {
+  const text = mismatchWarningText(ord?.invoice_mismatch_warning, hideAmount);
   if (!text) return null;
   const no = ord?.order_number || ord?.id || "ord";
   return (

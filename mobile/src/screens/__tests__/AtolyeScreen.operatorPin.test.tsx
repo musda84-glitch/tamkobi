@@ -459,7 +459,8 @@ describe("AtolyeScreen operator PIN", () => {
     expect(findByTestId(container, "shopfloor-no-operator")).toBeNull();
     expect(findByTestId(container, "shopfloor-pinpad")).toBeNull();
     expect(findByTestId(container, "shopfloor-atolye-banner")).toBeNull();
-    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ali Usta · Kendi oturumunuz — seçim gerekmez");
+    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ali Usta");
+    expect(textOf(container)).not.toContain("Kendi oturumunuz");
     expect(findByTestId(container, "wo-need-operator-wo-ready")).toBeNull();
     await clickId("wo-start-wo-ready");
     const start = posts("/start")[0];
@@ -481,7 +482,8 @@ describe("AtolyeScreen operator PIN", () => {
     expect(posts("shopfloor-unlock")).toHaveLength(0);
     expect(findByTestId(container, "shopfloor-pinpad")).toBeNull();
     expect(findByTestId(container, "shopfloor-operator")).toBeNull();
-    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ayşe Yönetici · Kendi oturumunuz — seçim gerekmez");
+    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ayşe Yönetici");
+    expect(textOf(container)).not.toContain("Kendi oturumunuz");
     await clickId("wo-start-wo-ready");
     const managerStart = posts("/start")[0];
     expect(managerStart).toHaveLength(3);

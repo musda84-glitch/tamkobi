@@ -10,9 +10,10 @@ da aynı örnek yeniden okumaz ve gerçek sürücüde senkron hataya düşmez.
 senkron okuma yoksa bilinen eski kip kullanılır; o da yoksa legacy
 sayılır ve hata verilmez.
 
-Bu sürüm legacy ve dedicated arka uçlarını tanır. shared_v2 ve
-bilinmeyen bir kip sessizce legacy'ye düşmez. Alanı olmayan mevcut
-firmalar legacy sayılır. Hiçbir firma burada dedicated yapılmaz.
+Bu sürüm legacy, shared_v2 ve dedicated arka uçlarını tanır.
+shared_v2 docs_v2 koleksiyonuna gider. dedicated ayrı veritabanına gider.
+Bilinmeyen bir kip sessizce legacy'ye düşmez. Alanı olmayan mevcut
+firmalar legacy sayılır. Hiçbir firma burada dedicated veya shared_v2 yapılmaz.
 
 dedicated_dsn_ref şemada durur. Değer düz metin yazılmaz; mühür
 comm_service.encrypt ile atılır. Bu modül o alanı okumaz. Çözme
@@ -236,11 +237,16 @@ async def load_mode(db, company_id: str) -> str:
 def collection_for_mode(db, mode: str, company_id: str, name: str):
     """Sabitlenmiş kipe göre arka uç.
 
-    Legacy aynı db[name]. Dedicated ayrı veritabanıdır; açılamazsa
-    hata verir, legacy koleksiyon dönmez.
+    Legacy aynı db[name]. shared_v2 docs_v2 koleksiyonudur; bu çağrı
+    bağlantı açmaz. Dedicated ayrı veritabanıdır; açılamazsa hata verir,
+    legacy koleksiyon dönmez.
     """
     if mode == LEGACY:
         return db[name]
+    if mode == SHARED_V2:
+        import storage_shared_v2
+
+        return storage_shared_v2.collection_for(company_id, name)
     if mode == DEDICATED:
         import storage_dedicated
 

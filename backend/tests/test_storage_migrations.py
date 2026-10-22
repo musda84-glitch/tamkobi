@@ -22,7 +22,7 @@ os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
 from storage_migrations.cli import main  # noqa: E402
 from storage_migrations.engine import apply  # noqa: E402
 from storage_migrations.errors import ChecksumError, LegacyTargetError, MigrationError  # noqa: E402
-from storage_migrations.loader import Migration, load_migrations  # noqa: E402
+from storage_migrations.loader import Migration, load_migrations, steps_for  # noqa: E402
 from storage_migrations.session import Session, connect  # noqa: E402
 from storage_migrations.targets import list_targets  # noqa: E402
 import storage_router  # noqa: E402
@@ -71,18 +71,33 @@ def _count(session, table):
     return session.fetchall(f"SELECT COUNT(*) FROM {table}")[0][0]
 
 
-def test_pack_versions_skip_shared_v2_number():
+def _by_version(pack=None):
+    items = pack if pack is not None else load_migrations()
+    return {item.version: item for item in items}
+
+
+def _view(rows, version):
+    return next(row for row in rows if row.version == version)
+
+
+def test_pack_versions_are_addressed_by_number():
     pack = load_migrations()
-    assert [item.version for item in pack] == [1, 2, 4]
-    assert pack[0].name == "storage_meta"
-    assert pack[1].name == "marker_steps"
-    assert pack[2].name == "storage_records"
-    assert pack[2].version == 4
-    assert len(pack[0].steps) == 2
-    assert len(pack[1].steps) == 2
-    assert len(pack[2].steps) == 3
-    table, unique, index = pack[2].steps
-    lowered = "\n".join(step.lower() for step in pack[2].steps)
+    by_version = _by_version(pack)
+    assert list(by_version) == sorted(by_version)
+    assert min(by_version) == 1
+    assert by_version[1].name == "storage_meta"
+    assert by_version[2].name == "marker_steps"
+    assert by_version[3].name == "docs_v2"
+    assert by_version[4].name == "storage_records"
+    assert len(by_version[1].steps) == 2
+    assert len(by_version[2].steps) == 2
+    assert by_version[3].mysql_steps
+    assert by_version[1].mysql_steps == ()
+    records = by_version[4].steps
+    table = next(step for step in records if step.lower().startswith("create table"))
+    unique = next(step for step in records if step.lower().startswith("create unique index"))
+    index = next(step for step in records if step.lower().startswith("create index "))
+    lowered = "\n".join(step.lower() for step in records)
     assert "docs" not in lowered
     assert "longtext" in table.lower()
     assert "json_unquote(json_extract(" in table.lower()
@@ -97,8 +112,8 @@ def test_empty_target_then_second_apply_writes_nothing():
     session = _memory()
     first = apply(session, confirm=True, dry_run=False)
     assert first.wrote is True
-    assert first.advanced == 3
-    assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+    assert first.advanced == len(load_migrations())
+    assert [row.state for row in first.rows] == ["uygulandı"] * len(first.rows)
     assert _count(session, "storage_meta") == 1
     assert _count(session, "storage_marker") == 1
     session.writes = 0
@@ -125,9 +140,13 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
         if "storage_marker" in sql and sql.lstrip().upper().startswith("CREATE")
     ]
     assert len(creates) == 1
+    applied_before = session.fetchall(
+        "SELECT version FROM schema_version WHERE state = ?",
+        ("applied",),
+    )
     done = apply(session, confirm=True, dry_run=False)
-    assert done.advanced == 2
-    assert [row.state for row in done.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+    assert done.advanced == len(load_migrations()) - len(applied_before)
+    assert [row.state for row in done.rows] == ["uygulandı"] * len(done.rows)
     assert _count(session, "storage_marker") == 1
     creates = [
         sql for sql in session.calls
@@ -140,28 +159,65 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
     assert session.writes == 0
 
 
+def test_finished_index_step_is_not_created_again():
+    session = _memory()
+    apply(session, confirm=True, dry_run=False)
+    docs = _by_version()[3]
+    last = len(steps_for(docs, session.dialect))
+    name = "idx_v2_unique_doc"
+    found = session.fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (name,),
+    )
+    assert found
+    session.execute(
+        "UPDATE schema_version SET state = ?, step_no = ? WHERE version = ?",
+        ("applying", last - 1, docs.version),
+    )
+    session.commit()
+    session.calls.clear()
+    done = apply(session, confirm=True, dry_run=False)
+    row = _view(done.rows, docs.version)
+    assert row.state == "uygulandı"
+    assert row.step == last
+    created = [sql for sql in session.calls if sql.lstrip().upper().startswith("CREATE")]
+    assert created == []
+    found = session.fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (name,),
+    )
+    assert len(found) == 1
+
+
 def test_create_index_rerun_skips_existing_index():
     session = _memory()
     first = apply(session, confirm=True, dry_run=False)
-    assert first.advanced == 3
+    assert first.advanced == len(load_migrations())
     indexes = {
         row[0]
         for row in session.fetchall("SELECT name FROM sqlite_master WHERE type = 'index'")
     }
     assert "idx_storage_records_company" in indexes
     assert "uq_storage_records_doc" in indexes
+    records = _by_version()[4]
+    total = len(steps_for(records, session.dialect))
     session.execute(
         "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
-        ("applying", 1, "", 4),
+        ("applying", 1, "", records.version),
     )
     session.commit()
+    applied = session.fetchall(
+        "SELECT version FROM schema_version WHERE state = ?",
+        ("applied",),
+    )
     resumed = apply(session, confirm=True, dry_run=False)
-    assert resumed.advanced == 1
+    assert resumed.advanced == len(load_migrations()) - len(applied)
     row = session.fetchall(
-        "SELECT state, step_no FROM schema_version WHERE version = 4"
+        "SELECT state, step_no FROM schema_version WHERE version = ?",
+        (records.version,),
     )[0]
     assert row[0] == "applied"
-    assert int(row[1]) == 3
+    assert int(row[1]) == total
     count = session.fetchall(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
         ("idx_storage_records_company",),
@@ -183,64 +239,76 @@ def test_create_index_rerun_skips_existing_index():
         )
 
 
+def test_later_0003_applies_after_0004():
+    session = _memory()
+    pack = load_migrations()
+    early = tuple(item for item in pack if item.version != 3)
+    first = apply(session, early, confirm=True, dry_run=False)
+    assert first.advanced == len(early)
+    assert 3 not in {row.version for row in first.rows}
+    assert _view(first.rows, 4).state == "uygulandı"
+    present = {int(row[0]) for row in session.fetchall("SELECT version FROM schema_version")}
+    assert 4 in present
+    assert 3 not in present
+    second = apply(session, confirm=True, dry_run=False)
+    assert second.advanced == len(pack) - len(early)
+    assert {row.version for row in second.rows} == {item.version for item in pack}
+    assert [row.state for row in second.rows] == ["uygulandı"] * len(second.rows)
+    arrived = _view(second.rows, 3)
+    assert arrived.name == "docs_v2"
+    assert arrived.step == arrived.total
+    assert _view(second.rows, 4).state == "uygulandı"
+    names = session.tables()
+    assert "docs_v2" in names
+    assert "storage_records" in names
+    stored = session.fetchall(
+        "SELECT version, name, state FROM schema_version ORDER BY version"
+    )
+    assert [(int(row[0]), str(row[1]), str(row[2])) for row in stored] == [
+        (item.version, item.name, "applied") for item in pack
+    ]
+    third = apply(session, confirm=True, dry_run=False)
+    assert third.advanced == 0
+
+
 def test_mariadb_migration_applies_twice():
     dsn = os.environ.get("STORAGE_MARIADB_DSN", "").strip()
     if not dsn:
         pytest.skip("STORAGE_MARIADB_DSN yok")
     session = connect(dsn, write=True)
     try:
+        session.execute(
+            "SET SESSION sql_mode = "
+            "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        )
         _drop_storage(session)
+        pack = load_migrations()
         first = apply(session, confirm=True, dry_run=False)
-        assert first.advanced == 3
-        assert [row.version for row in first.rows] == [1, 2, 4]
-        assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
+        assert first.advanced == len(pack)
+        assert {row.version for row in first.rows} == {item.version for item in pack}
+        assert [row.state for row in first.rows] == ["uygulandı"] * len(first.rows)
         second = apply(session, confirm=True, dry_run=False)
         assert second.advanced == 0
-        columns = {
-            str(row[0]).lower(): row
-            for row in session.fetchall(
-                "SELECT column_name, data_type, generation_expression "
-                "FROM information_schema.columns "
-                "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
-            )
-        }
-        assert columns["collection"][1].lower() == "varchar"
-        assert columns["doc_id"][1].lower() == "varchar"
-        assert columns["company_id"][1].lower() == "varchar"
-        assert columns["doc"][1].lower() == "longtext"
-        generated = str(columns["company_id"][2]).lower()
-        assert "json_unquote" in generated
-        assert "json_extract" in generated
-        stats = session.fetchall(
-            "SELECT index_name, non_unique, column_name "
-            "FROM information_schema.statistics "
-            "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
-        )
-        unique = [row for row in stats if str(row[0]).lower() == "uq_storage_records_doc"]
-        assert unique
-        assert all(int(row[1]) == 0 for row in unique)
-        assert {str(row[2]).lower() for row in unique} == {"collection", "doc_id"}
-        indexed = session.fetchall(
-            "SELECT c.data_type FROM information_schema.statistics s "
-            "JOIN information_schema.columns c "
-            "ON c.table_schema = s.table_schema AND c.table_name = s.table_name "
-            "AND c.column_name = s.column_name "
-            "WHERE s.table_schema = DATABASE() AND s.table_name = 'storage_records'"
-        )
-        for (kind,) in indexed:
-            assert str(kind).lower() == "varchar"
+        _assert_mariadb_schema(session)
+        records = _by_version(pack)[4]
+        total = len(steps_for(records, session.dialect))
         session.execute(
             "UPDATE schema_version SET state = ?, step_no = ?, applied_at = ? WHERE version = ?",
-            ("applying", 1, "", 4),
+            ("applying", 1, "", records.version),
         )
         session.commit()
+        applied = session.fetchall(
+            "SELECT version FROM schema_version WHERE state = ?",
+            ("applied",),
+        )
         resumed = apply(session, confirm=True, dry_run=False)
-        assert resumed.advanced == 1
+        assert resumed.advanced == len(pack) - len(applied)
         done = session.fetchall(
-            "SELECT state, step_no FROM schema_version WHERE version = 4"
+            "SELECT state, step_no FROM schema_version WHERE version = ?",
+            (records.version,),
         )[0]
         assert done[0] == "applied"
-        assert int(done[1]) == 3
+        assert int(done[1]) == total
         session.execute(
             "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
             ("products", "p1", '{"company_id":"co_a","name":"kalem"}'),
@@ -258,6 +326,22 @@ def test_mariadb_migration_applies_twice():
             )
         assert "integrity" in type(caught.value).__name__.lower() or "duplicate" in str(caught.value).lower()
         session.rollback()
+        _drop_storage(session)
+        early = tuple(item for item in pack if item.version != 3)
+        primed = apply(session, early, confirm=True, dry_run=False)
+        assert primed.advanced == len(early)
+        assert 3 not in {int(row[0]) for row in session.fetchall("SELECT version FROM schema_version")}
+        arrived = apply(session, confirm=True, dry_run=False)
+        assert arrived.advanced == len(pack) - len(early)
+        stored = session.fetchall(
+            "SELECT version, name, state FROM schema_version ORDER BY version"
+        )
+        assert [(int(row[0]), str(row[1]), str(row[2])) for row in stored] == [
+            (item.version, item.name, "applied") for item in pack
+        ]
+        again = apply(session, confirm=True, dry_run=False)
+        assert again.advanced == 0
+        _assert_mariadb_schema(session)
     finally:
         try:
             session.rollback()
@@ -266,8 +350,61 @@ def test_mariadb_migration_applies_twice():
             session.close()
 
 
+def _assert_mariadb_schema(session):
+    columns = {
+        str(row[0]).lower(): row
+        for row in session.fetchall(
+            "SELECT column_name, data_type, generation_expression "
+            "FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
+        )
+    }
+    assert columns["collection"][1].lower() == "varchar"
+    assert columns["doc_id"][1].lower() == "varchar"
+    assert columns["company_id"][1].lower() == "varchar"
+    assert columns["doc"][1].lower() == "longtext"
+    generated = str(columns["company_id"][2]).lower()
+    assert "json_unquote" in generated
+    assert "json_extract" in generated
+    stats = session.fetchall(
+        "SELECT index_name, non_unique, column_name "
+        "FROM information_schema.statistics "
+        "WHERE table_schema = DATABASE() AND table_name = 'storage_records'"
+    )
+    unique = [row for row in stats if str(row[0]).lower() == "uq_storage_records_doc"]
+    assert unique
+    assert all(int(row[1]) == 0 for row in unique)
+    assert {str(row[2]).lower() for row in unique} == {"collection", "doc_id"}
+    indexed = session.fetchall(
+        "SELECT c.data_type FROM information_schema.statistics s "
+        "JOIN information_schema.columns c "
+        "ON c.table_schema = s.table_schema AND c.table_name = s.table_name "
+        "AND c.column_name = s.column_name "
+        "WHERE s.table_schema = DATABASE() AND s.table_name = 'storage_records'"
+    )
+    for (kind,) in indexed:
+        assert str(kind).lower() == "varchar"
+    doc_type = session.fetchall(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = 'docs_v2' AND column_name = 'doc'"
+    )[0][0]
+    assert str(doc_type).lower() in ("json", "longtext")
+    status = session.fetchall(
+        "SELECT column_type FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = 'docs_v2' AND column_name = 'g_status'"
+    )
+    assert status and "varchar" in str(status[0][0]).lower()
+
+
 def _drop_storage(session):
-    for table in ("storage_records", "storage_marker", "storage_meta", "schema_version"):
+    for table in (
+        "docs_v2_unique",
+        "docs_v2",
+        "storage_records",
+        "storage_marker",
+        "storage_meta",
+        "schema_version",
+    ):
         session.execute(f"DROP TABLE IF EXISTS {table}")
     session.commit()
 
