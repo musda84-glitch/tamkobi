@@ -301,13 +301,12 @@ export default function FieldSalesPage() {
             </label>
             <ScanButton
               size="md"
-              continuous
               qtyEnabled
               qty={scanQty}
               onQtyChange={setScanQty}
               statusText={scanStatus}
               label="Okut"
-              title="Seri barkod okut — adet çarpan"
+              title="Barkod okut"
               onScan={(code) => { setBarcode(code); scanBarcode(code); }}
             />
             <button type="submit" className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-semibold min-h-12" data-testid="saha-barcode-go">Ekle</button>
