@@ -24,9 +24,16 @@ export type WorkOrder = {
   /** Reçete adım notu — atölyede iş dosyası yanında */
   step_note?: string;
   recipe_name?: string;
+  recipe_id?: string;
+  project_id?: string;
+  project_number?: string;
+  project_name?: string;
+  sales_order_no?: string;
+  partial_qty_total?: number;
+  scrap_reason_label?: string;
   material_name?: string;
   material_product_id?: string;
-  materials?: { product_id?: string; product_name?: string; unit?: string; needed?: number }[];
+  materials?: { product_id?: string; product_name?: string; unit?: string; needed?: number; stock_note?: string; note?: string }[];
   /** Reçete adımına bağlı istasyon görselleri */
   images?: string[];
   planned_quantity?: number;
@@ -280,6 +287,23 @@ export function workOrderFinishPlan(w?: WorkOrder | null): {
     isMaterial: false,
     materialName: null,
   };
+}
+
+/** Kart miktarı. finish_unit → unit → Adet. Fiyat alanları buraya girmez. */
+export function workOrderQtyLabel(
+  w?: WorkOrder | null,
+  plan?: { qty?: number; unit?: string; isMaterial?: boolean } | null,
+): string | null {
+  const hasQty = w?.planned_quantity != null && Number.isFinite(Number(w.planned_quantity));
+  const finishedUnit = String(w?.finish_unit || w?.unit || "Adet").trim() || "Adet";
+  const finished = hasQty ? `${formatQty(w?.planned_quantity)} ${finishedUnit}`.trim() : null;
+  if (plan?.isMaterial) {
+    const unit = String(plan.unit || "Adet").trim() || "Adet";
+    const main = Number.isFinite(Number(plan.qty)) ? `${formatQty(plan.qty)} ${unit}`.trim() : null;
+    if (main && finished) return `${main} · mamul ${finished}`;
+    return main || finished;
+  }
+  return finished;
 }
 
 export type PausePolicy = {

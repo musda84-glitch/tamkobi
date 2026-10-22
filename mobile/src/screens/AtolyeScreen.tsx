@@ -6,6 +6,15 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { QuantityInput } from "../components/MoneyInput";
+import {
+  DrawingViewer,
+  FilterMenu,
+  FocusBoard,
+  IdleLock,
+  PartialCountDialog,
+  TakeoverDialog,
+  UndoToast,
+} from "../components/ShopFloorPanels";
 import { ShopfloorPinPad } from "../components/ShopfloorPinPad";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
@@ -35,10 +44,33 @@ import {
   workOrderFinishPlan,
   woStatusTone,
   woStatusTr,
+  workOrderQtyLabel,
   type PausePolicy,
   type ShopFloorKpiFilter,
   type WorkOrder,
 } from "../utils/shopFloor";
+import {
+  cardTags,
+  cardTitle,
+  matchesLinkFilter,
+  normalizeShopfloorFilters,
+  projectColor,
+  projectFilterLabel,
+  recipeFilterLabel,
+  stationColor,
+} from "../utils/shopFloorCardMeta";
+import {
+  focusJob,
+  idempotencyKey,
+  normalizeScrapReasons,
+  personnelCode,
+  shopfloorInitials,
+  shopfloorMayOperate,
+  takeoverDetail,
+  undoCountdown,
+  type ScrapReason,
+  type TakeoverDetail,
+} from "../utils/shopFloorScreen";
 import { trUpper } from "../utils/labels";
 import {
   isAtolyeAccount,
@@ -56,6 +88,9 @@ type ShopfloorOperatorRow = {
   id: string;
   name: string;
   station?: string;
+  personnel_no?: string;
+  employee_code?: string;
+  code?: string;
 };
 
 /** Süreç belleği (web sessionStorage karşılığı). Diske yazılmaz; uygulama kapanınca PIN tekrar istenir. */
@@ -70,15 +105,29 @@ function asOperators(rows: unknown): ShopfloorOperatorRow[] {
   const out: ShopfloorOperatorRow[] = [];
   for (const row of rows) {
     if (!row || typeof row !== "object") continue;
-    const rec = row as { operator_type?: unknown; id?: unknown; name?: unknown; station?: unknown };
+    const rec = row as {
+      operator_type?: unknown;
+      id?: unknown;
+      name?: unknown;
+      station?: unknown;
+      personnel_no?: unknown;
+      employee_code?: unknown;
+      code?: unknown;
+    };
     const id = String(rec.id || "").trim();
     if (!id) continue;
     const stationName = String(rec.station || "").trim();
+    const personnelNo = String(rec.personnel_no || "").trim();
+    const employeeCode = String(rec.employee_code || "").trim();
+    const code = String(rec.code || "").trim();
     out.push({
       operator_type: String(rec.operator_type || ""),
       id,
       name: String(rec.name || ""),
       ...(stationName ? { station: stationName } : {}),
+      ...(personnelNo ? { personnel_no: personnelNo } : {}),
+      ...(employeeCode ? { employee_code: employeeCode } : {}),
+      ...(code ? { code } : {}),
     });
   }
   return out;
@@ -111,46 +160,120 @@ function useMinuteNow(enabled: boolean): Date {
 function WoCard({
   w,
   needsOperator,
+  viewLocked,
   busy,
   baseUrl,
   pauseAllowed,
   pauseHint,
   stationLockMsg,
+  undoLabel,
   onStart,
   onPause,
   onFinish,
+  onPartial,
+  onDrawing,
+  onUndo,
   onTrash,
 }: {
   w: WorkOrder;
   operator: string;
   needsOperator: boolean;
+  viewLocked?: boolean;
   busy: boolean;
   baseUrl: string;
   pauseAllowed?: boolean;
   pauseHint?: string;
   stationLockMsg?: string;
+  undoLabel?: string;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
+  onPartial?: () => void;
+  onDrawing?: () => void;
+  onUndo?: () => void;
   onTrash?: () => void;
 }) {
   const key = woCardKey(w);
   const border = shopFloorCardBorder(w.status);
   const borderWide = w.status === "in_progress" || w.status === "paused";
   const who = w.operator_name || w.assigned_name;
+  const badgeWho = (w.status === "in_progress" || w.status === "paused") ? who : "";
   const imgs = (w.images || []).map((u) => resolveMediaUrl(baseUrl, u)).filter(Boolean).slice(0, 8);
-  const startLocked = !!stationLockMsg;
+  const operateLocked = !!viewLocked || needsOperator;
+  const startLocked = operateLocked || !!stationLockMsg;
   const [detailOpen, setDetailOpen] = useState(false);
-  const now = useMinuteNow(w.status === "paused");
+  const now = useMinuteNow(w.status === "paused" || w.status === "done");
   const pausedLabel = w.status === "paused" ? pausedForLabel(w.paused_at, now) : "";
   const segments = stepSegmentCount(w);
   const activeStep = Number(w.step_count) > 1 ? Math.floor(Number(w.step_no)) : 1;
   const hasDetail = (w.materials || []).length > 0 || !!w.notes;
+  const title = cardTitle(w);
+  const tags = cardTags(w);
+  const projectTone = projectColor(w.project_id);
+  const stationName = String(w.station || "").trim();
+  const stationTone = stationName ? stationColor(stationName) : null;
+  const plan = workOrderFinishPlan(w);
+  const planLabel = workOrderQtyLabel(w, plan);
+  const partialTotal = w.partial_qty_total;
+  const showDrawing = w.status === "in_progress" || w.status === "ready" || w.status === "waiting" || w.status === "paused";
+  const drawingWide = w.status === "ready" || w.status === "waiting" || w.status === "paused";
   return (
-    <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: borderWide ? 2 : 1 }}>
+    <Card
+      testID={`wo-card-${key}`}
+      style={{ borderColor: border, borderWidth: borderWide ? 2 : 1, borderLeftWidth: 8, borderLeftColor: projectTone.stripe }}
+    >
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Muted>{[w.order_code, w.step_no != null ? `Adım ${w.step_no}/${w.step_count || w.step_no}` : null].filter(Boolean).join(" · ")}</Muted>
+          <Muted>{[w.order_code, w.step_no != null ? `Adım ${w.step_no}/${w.step_count || w.step_no}` : null].filter(Boolean).join(" • ")}</Muted>
+          <Text
+            testID={`wo-title-${key}`}
+            style={{ fontWeight: "800", color: colors.text, fontSize: title.source === "recipe" ? 17 : 16 }}
+            numberOfLines={2}
+          >
+            {title.text || "İş emri"}
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 3 }}>
+            {stationTone ? (
+              <Text
+                testID={`wo-station-tag-${key}`}
+                style={{ backgroundColor: stationTone.bg, color: stationTone.fg, fontSize: 11, fontWeight: "800", borderRadius: 6, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 2 }}
+              >
+                {`■ ${stationName}`}
+              </Text>
+            ) : null}
+            {title.product && title.product !== title.text ? (
+              <Text numberOfLines={2} style={{ fontSize: 14, color: "#475569", flexShrink: 1 }}>{title.product}</Text>
+            ) : null}
+          </View>
+          {tags.length ? (
+            <View testID={`wo-tags-${key}`} style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+              {tags.map((tag) => {
+                const projectTag = tag.kind === "project";
+                const customerTag = tag.kind === "customer";
+                const prefix = projectTag ? "Proje " : (tag.kind === "order" ? "Sipariş " : "Müşteri: ");
+                return (
+                  <Text
+                    key={tag.kind}
+                    testID={`wo-tag-${tag.kind}-${key}`}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      borderWidth: 1,
+                      borderRadius: 6,
+                      overflow: "hidden",
+                      paddingHorizontal: 7,
+                      paddingVertical: 2,
+                      color: customerTag ? "#86198F" : projectTag ? projectTone.stripe : "#334155",
+                      borderColor: customerTag ? "#F0ABFC" : projectTag ? projectTone.stripe : "#CBD5E1",
+                      backgroundColor: customerTag ? "#FDF4FF" : projectTag ? "#fff" : "#F8FAFC",
+                    }}
+                  >
+                    {prefix}{tag.label}
+                  </Text>
+                );
+              })}
+            </View>
+          ) : null}
           <View testID={`wo-stepbar-${key}`} style={{ flexDirection: "row", gap: 3, marginTop: 4, marginBottom: 4 }}>
             {Array.from({ length: segments }, (_, i) => (
               <View
@@ -159,8 +282,6 @@ function WoCard({
               />
             ))}
           </View>
-          <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{w.step_name || "İş emri"}</Text>
-          <Muted numberOfLines={2}>{w.product_name || ""}</Muted>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           {w.trash_request_pending && w.status !== "done" ? (
@@ -181,7 +302,7 @@ function WoCard({
               <Text style={{ color: "#E11D48", fontWeight: "800", fontSize: 12 }}>Sil</Text>
             </Pressable>
           ) : null}
-          <Badge label={woStatusTr(w.status)} tone={woStatusTone(w.status)} />
+          <Badge label={badgeWho ? `${woStatusTr(w.status)} · ${badgeWho}` : woStatusTr(w.status)} tone={woStatusTone(w.status)} />
         </View>
       </Row>
       <View
@@ -194,6 +315,11 @@ function WoCard({
         <Text style={{ fontSize: 12, color: colors.muted }} numberOfLines={2}>
           İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
         </Text>
+        {planLabel ? (
+          <Text testID={`wo-plan-${key}`} style={{ fontSize: 12, color: colors.muted }}>
+            Plan: <Text style={{ fontWeight: "700", color: colors.text }}>{planLabel}</Text>
+          </Text>
+        ) : null}
         {String(w.step_note || "").trim() ? (
           <View testID={`wo-step-note-${key}`} style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, width: "100%", maxWidth: "100%" }}>
             <Text style={{ fontSize: 12, color: colors.muted }}>Adım notu:</Text>
@@ -282,11 +408,22 @@ function WoCard({
           {w.notes ? <Muted>{w.notes}</Muted> : null}
         </View>
       ) : null}
+      {w.status === "in_progress" && partialTotal != null ? (
+        <View testID={`wo-partial-bar-${key}`}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+            <Text style={{ fontSize: 12, color: "#475569" }}>Ara sayım toplamı</Text>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>{formatQty(partialTotal)} / {formatQty(plan.qty)} {plan.unit}</Text>
+          </View>
+          <View style={{ height: 8, borderRadius: 99, backgroundColor: "#E2E8F0", overflow: "hidden" }}>
+            <View style={{ height: 8, backgroundColor: "#F59E0B", width: `${Math.min(100, Math.round((Number(partialTotal) / Math.max(Number(plan.qty) || 1, 1)) * 100))}%` }} />
+          </View>
+        </View>
+      ) : null}
       {w.status === "ready" || w.status === "waiting" ? (
         <>
-          <PrimaryButton title="Başla" onPress={onStart} disabled={needsOperator || busy || startLocked} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
-          {startLocked ? <Muted>{stationLockMsg}</Muted> : null}
-          {w.status === "waiting" && !startLocked ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
+          <PrimaryButton title="Başla" onPress={() => { if (!startLocked) onStart(); }} disabled={busy || startLocked} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
+          {stationLockMsg ? <Muted>{stationLockMsg}</Muted> : null}
+          {w.status === "waiting" && !stationLockMsg ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
         </>
       ) : null}
       {w.status === "in_progress" || w.status === "paused" ? (
@@ -294,33 +431,70 @@ function WoCard({
           <View style={{ flex: 1 }}>
             <PrimaryButton
               title={w.status === "paused" ? "Devam" : "Duraklat"}
-              onPress={w.status === "paused" ? onStart : onPause}
+              onPress={() => {
+                if (w.status === "paused") {
+                  if (!startLocked) onStart();
+                  return;
+                }
+                if (!operateLocked && pauseAllowed !== false) onPause();
+              }}
               disabled={
-                needsOperator
+                operateLocked
                 || busy
-                || (w.status === "paused" && startLocked)
+                || (w.status === "paused" && !!stationLockMsg)
                 || (w.status === "in_progress" && pauseAllowed === false)
               }
               loading={busy}
               color={w.status === "paused" ? colors.primary : "#EA580C"}
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
-            {w.status === "paused" && startLocked ? <Muted>{stationLockMsg}</Muted> : null}
-            {w.status === "in_progress" && !needsOperator && pauseAllowed === false && pauseHint ? (
+            {w.status === "paused" && stationLockMsg ? <Muted>{stationLockMsg}</Muted> : null}
+            {w.status === "in_progress" && !operateLocked && pauseAllowed === false && pauseHint ? (
               <Muted>{pauseHint}</Muted>
             ) : null}
           </View>
           <View style={{ flex: 1 }}>
-            <PrimaryButton title="Bitir" onPress={onFinish} disabled={needsOperator || busy} color={colors.secondary} testID={`wo-finish-${key}`} />
+            <PrimaryButton title="Bitir" onPress={() => { if (!operateLocked) onFinish(); }} disabled={operateLocked || busy} color={colors.secondary} testID={`wo-finish-${key}`} />
           </View>
         </Row>
       ) : null}
+      {w.status === "in_progress" ? (
+        <Pressable
+          testID={`wo-partial-${key}`}
+          disabled={operateLocked}
+          onPress={() => { if (!operateLocked) onPartial?.(); }}
+          style={{ minHeight: 44, borderRadius: 12, borderWidth: 2, borderColor: operateLocked ? "#E2E8F0" : "#CBD5E1", backgroundColor: operateLocked ? "#E2E8F0" : "#fff", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}
+        >
+          <Text style={{ fontWeight: "700", fontSize: 15, color: operateLocked ? "#94A3B8" : colors.text }}>
+            Ara sayım{partialTotal != null ? ` ${formatQty(partialTotal)}/${formatQty(plan.qty)}` : ""}
+          </Text>
+        </Pressable>
+      ) : null}
+      {showDrawing ? (
+        <Pressable
+          testID={`wo-drawing-${key}`}
+          onPress={() => onDrawing?.()}
+          style={{ minHeight: 44, borderRadius: 12, borderWidth: 2, borderColor: "#BFDBFE", backgroundColor: "#EFF6FF", alignItems: "center", justifyContent: "center", alignSelf: drawingWide ? "stretch" : "auto" }}
+        >
+          <Text style={{ fontWeight: "700", color: "#1D4ED8", fontSize: drawingWide ? 13 : 15 }}>Teknik çizim</Text>
+        </Pressable>
+      ) : null}
       {w.status === "done" ? (
-        <Muted>
+        <Text testID={`wo-done-summary-${key}`} style={{ textAlign: "center", fontSize: 12, fontWeight: "600", color: "#047857" }}>
           {w.produced_qty != null ? `${w.produced_qty} üretildi` : "Tamamlandı"}
-          {w.scrap_qty ? `, ${w.scrap_qty} fire` : ""}
-          {w.operator_name ? ` · ${w.operator_name}` : ""}
-        </Muted>
+          {w.scrap_qty ? `, ${w.scrap_qty} fire${w.scrap_reason_label ? ` (${w.scrap_reason_label})` : ""}` : ""}
+          {w.operator_name ? ` • ${w.operator_name}` : ""}
+        </Text>
+      ) : null}
+      {w.status === "done" && undoLabel ? (
+        <Pressable
+          testID={`wo-undo-${key}`}
+          disabled={operateLocked}
+          onPress={() => { if (!operateLocked) onUndo?.(); }}
+          style={{ minHeight: 44, borderRadius: 12, borderWidth: 2, borderColor: operateLocked ? "#E2E8F0" : "#F59E0B", alignItems: "center", justifyContent: "center", opacity: operateLocked ? 0.5 : 1 }}
+        >
+          <Text style={{ fontWeight: "800", color: operateLocked ? "#94A3B8" : "#B45309" }}>{`Geri al (${undoLabel})`}</Text>
+        </Pressable>
       ) : null}
       {needsOperator ? (
         <Text testID={`wo-need-operator-${key}`} style={{ fontSize: 11, fontWeight: "700", color: "#B45309", textAlign: "center" }}>Önce operatör seçin</Text>
@@ -332,6 +506,7 @@ function WoCard({
 export function AtolyeScreen() {
   const { client, companyId, user, baseUrl, can } = useAuth();
   const canView = can("/atolye");
+  const mayOperate = user ? shopfloorMayOperate(user) : can("/atolye", "edit");
   const atolye = isAtolyeAccount(user);
   const userId = String(user?.id || "");
   const [wos, setWos] = useState<WorkOrder[]>([]);
@@ -369,6 +544,26 @@ export function AtolyeScreen() {
   const [groupBusy, setGroupBusy] = useState(false);
   const [kpi, setKpi] = useState<ShopFloorKpiFilter | null>(null);
   const [pausePolicy, setPausePolicy] = useState<PausePolicy>({ allowed: true, phase: "mesai" });
+  const [projectId, setProjectId] = useState("");
+  const [recipeId, setRecipeId] = useState("");
+  const [filterCatalog, setFilterCatalog] = useState<{ projects: Record<string, unknown>[]; recipes: Record<string, unknown>[] }>({ projects: [], recipes: [] });
+  const [filterMenu, setFilterMenu] = useState<"" | "project" | "recipe">("");
+  const [shopSettings, setShopSettings] = useState<{ idle_lock_minutes: number; undo_finish_minutes: number; scrap_reasons: ScrapReason[] }>({
+    idle_lock_minutes: 30,
+    undo_finish_minutes: 5,
+    scrap_reasons: [],
+  });
+  const [partialJob, setPartialJob] = useState<WorkOrder | null>(null);
+  const [partialBusy, setPartialBusy] = useState(false);
+  const [takeover, setTakeover] = useState<{ w: WorkOrder; action: "start" | "pause" | "finish"; body?: Record<string, unknown>; detail: TakeoverDetail } | null>(null);
+  const [drawing, setDrawing] = useState<{ title: string; filename?: string; expiresIn?: number; url?: string; contentType?: string } | null>(null);
+  const [undoToast, setUndoToast] = useState<{ text: string; finishedAt: string; workOrder: WorkOrder } | null>(null);
+  const [idleLocked, setIdleLocked] = useState(false);
+  const [idleErr, setIdleErr] = useState("");
+  const [idleBusy, setIdleBusy] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [scrapReason, setScrapReason] = useState<ScrapReason | null>(null);
+  const [nowTick, setNowTick] = useState(() => new Date());
 
   const loadPausePolicy = useCallback(async (opName: string) => {
     if (!opName) {
@@ -394,10 +589,12 @@ export function AtolyeScreen() {
     if (!canView) return;
     setRefreshing(true);
     try {
-      const [w, lockRows, ops, s, parks, me, settings] = await Promise.all([
+      const [w, lockRows, ops, s, parks, me, settings, filters] = await Promise.all([
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
+          project_id: projectId || undefined,
+          recipe_id: recipeId || undefined,
         }),
         station
           ? get<WorkOrder[]>(client, "/production/work-orders", {
@@ -411,7 +608,15 @@ export function AtolyeScreen() {
         get<string[]>(client, "/production/work-orders/stations", { company_id: companyId }).catch(() => []),
         get<{ parks?: unknown[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
         get<{ employee?: { full_name?: string }; tasks?: AssignedDuty[] }>(client, "/personnel/me").catch(() => null),
-        get<{ group_same_station?: boolean }>(client, "/production/work-orders/shopfloor-settings", { company_id: companyId }).catch(() => null),
+        get<{ group_same_station?: boolean; idle_lock_minutes?: number; undo_finish_minutes?: number; scrap_reasons?: ScrapReason[] }>(
+          client,
+          "/production/work-orders/shopfloor-settings",
+          { company_id: companyId },
+        ).catch(() => null),
+        get<unknown>(client, "/production/work-orders/shopfloor-filters", {
+          company_id: companyId,
+          station: station || undefined,
+        }).catch(() => ({ projects: [], recipes: [] })),
       ]);
       const list = Array.isArray(w) ? w : [];
       setWos(list);
@@ -420,14 +625,23 @@ export function AtolyeScreen() {
       setStations(stationNamesFromParks(parks?.parks, Array.isArray(s) ? s : []));
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
       setLinkedName(String(me?.employee?.full_name || "").trim());
+      setFilterCatalog(normalizeShopfloorFilters(filters));
       if (settings && typeof settings.group_same_station === "boolean") setGroupSameStation(settings.group_same_station);
+      if (settings) {
+        setShopSettings((prev) => ({
+          ...prev,
+          idle_lock_minutes: Number(settings.idle_lock_minutes) || prev.idle_lock_minutes,
+          undo_finish_minutes: Number(settings.undo_finish_minutes) || prev.undo_finish_minutes,
+          scrap_reasons: normalizeScrapReasons(settings.scrap_reasons),
+        }));
+      }
       setError(null);
     } catch {
       setError("Yetkiniz yok / yüklenemedi");
     } finally {
       setRefreshing(false);
     }
-  }, [atolye, canView, client, companyId, station]);
+  }, [atolye, canView, client, companyId, projectId, recipeId, station]);
 
   useFocusEffect(
     useCallback(() => {
@@ -454,6 +668,17 @@ export function AtolyeScreen() {
       return () => clearInterval(t);
     }, [loadPausePolicy, operator])
   );
+  useEffect(() => {
+    if (!undoToast) return undefined;
+    const t = setInterval(() => setNowTick(new Date()), 1000);
+    return () => clearInterval(t);
+  }, [undoToast]);
+  useEffect(() => {
+    if (!atolye || !operatorSession || idleLocked) return undefined;
+    const minutes = Number(shopSettings.idle_lock_minutes) || 30;
+    const timer = setTimeout(() => setIdleLocked(true), minutes * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [atolye, idleLocked, operatorSession, shopSettings.idle_lock_minutes]);
 
   const ownName = (linkedName || String(user?.name || "")).trim();
 
@@ -570,7 +795,16 @@ export function AtolyeScreen() {
     }
   };
 
+  const postHeaders = (extra?: Record<string, string>) => {
+    const headers = { ...(extra || {}), ...(atolye ? operatorHeaders(operatorSession) : {}) };
+    return Object.keys(headers).length ? headers : undefined;
+  };
+
   const act = async (w: WorkOrder, action: "start" | "pause" | "finish", body?: Record<string, unknown>) => {
+    if (!mayOperate) {
+      setError("Görüntüleme yetkisiyle iş başlatılamaz.");
+      return;
+    }
     if (atolye && !operator) {
       setError("Önce operatör (personel) seçin.");
       return;
@@ -595,18 +829,33 @@ export function AtolyeScreen() {
     setBusyId(key);
     try {
       const payload = { operator_name: operator, ...(body || {}) };
-      const r = atolye
+      const headers = postHeaders();
+      const r = headers
         ? await post<{ message?: string; work_order?: WorkOrder }>(
           client,
           `/production/work-orders/${wid}/${action}`,
           payload,
           undefined,
-          operatorHeaders(operatorSession),
+          headers,
         )
-        : await post<{ message?: string; work_order?: WorkOrder }>(client, `/production/work-orders/${wid}/${action}`, payload);
+        : await post<{ message?: string; work_order?: WorkOrder }>(
+          client,
+          `/production/work-orders/${wid}/${action}`,
+          payload,
+        );
       setNotice(r.message || "İşlem tamamlandı.");
       setError(null);
       setFinishing(null);
+      setTakeover(null);
+      setScrapReason(null);
+      if (action === "finish") {
+        const finishedAt = r.work_order?.finished_at || new Date().toISOString();
+        setUndoToast({
+          text: `${w.order_code || "İş"} Adım ${w.step_no ?? ""} bitirildi · stok işlendi`.trim(),
+          finishedAt,
+          workOrder: r.work_order || { ...w, status: "done", finished_at: finishedAt },
+        });
+      }
       // Web tablete hemen yansısın diye yerel durumu anında güncelle
       if (r.work_order && idOf(r.work_order)) {
         const uid = idOf(r.work_order);
@@ -634,6 +883,11 @@ export function AtolyeScreen() {
         endOperatorSession();
         return;
       }
+      const takeoverInfo = takeoverDetail(err);
+      if (takeoverInfo) {
+        setTakeover({ w, action, body: body || {}, detail: takeoverInfo });
+        return;
+      }
       setError(apiErrorMessage(err, "İşlem başarısız."));
     } finally {
       setBusyId(null);
@@ -641,9 +895,133 @@ export function AtolyeScreen() {
   };
 
   const openFinish = (w: WorkOrder) => {
+    if (!mayOperate) return;
     const plan = workOrderFinishPlan(w);
     setFinishing(w);
+    setScrapReason(null);
     setFin({ produced_qty: String(plan.qty ?? 0), scrap_qty: "0", notes: "" });
+  };
+
+  const openDrawing = async (w: WorkOrder) => {
+    const wid = idOf(w);
+    if (!wid) return;
+    try {
+      const headers = postHeaders();
+      const data = await get<{ url?: string; content_type?: string; filename?: string; expires_in?: number }>(
+        client,
+        `/production/work-orders/${wid}/drawing`,
+        undefined,
+        headers,
+      );
+      setDrawing({
+        title: `${w.order_code || ""} Adım ${w.step_no ?? ""}/${w.step_count ?? ""}`.trim(),
+        filename: data?.filename,
+        expiresIn: data?.expires_in,
+        url: resolveMediaUrl(baseUrl, data?.url),
+        contentType: data?.content_type,
+      });
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Teknik çizim açılamadı."));
+    }
+  };
+
+  const submitPartial = async (qty: number) => {
+    if (!mayOperate || !partialJob || partialBusy) return;
+    const wid = idOf(partialJob);
+    if (!wid) return;
+    setPartialBusy(true);
+    try {
+      const headers = postHeaders({ "Idempotency-Key": idempotencyKey() });
+      const r = await post<{ partial_qty_total?: number; message?: string }>(
+        client,
+        `/production/work-orders/${wid}/partial-count`,
+        { qty, operator_name: operator },
+        undefined,
+        headers,
+      );
+      if (r.partial_qty_total != null) {
+        setWos((prev) => prev.map((row) => (idOf(row) === wid ? { ...row, partial_qty_total: r.partial_qty_total } : row)));
+      }
+      setPartialJob(null);
+      setNotice("Ara sayım eklendi.");
+      setError(null);
+      await load();
+    } catch (err) {
+      if (atolye && isOperatorSessionError(err)) {
+        endOperatorSession();
+        return;
+      }
+      setError(apiErrorMessage(err, "Ara sayım eklenemedi."));
+    } finally {
+      setPartialBusy(false);
+    }
+  };
+
+  const undoWork = async (w: WorkOrder) => {
+    if (!mayOperate || !w) return;
+    const wid = idOf(w);
+    if (!wid) return;
+    try {
+      const headers = postHeaders();
+      const r = await post<{ message?: string }>(
+        client,
+        `/production/work-orders/${wid}/undo-finish`,
+        { operator_name: operator },
+        undefined,
+        headers,
+      );
+      setNotice(r.message || "Bitirme geri alındı.");
+      setUndoToast(null);
+      setError(null);
+      await load();
+    } catch (err) {
+      if (atolye && isOperatorSessionError(err)) {
+        endOperatorSession();
+        return;
+      }
+      setError(apiErrorMessage(err, "Geri alınamadı."));
+    }
+  };
+
+  const submitIdlePin = async (pin: string) => {
+    if (!operatorSession || idleBusy) return;
+    if (!isValidPin(pin)) {
+      setIdleErr("PIN 4 haneli olmalı.");
+      return;
+    }
+    setIdleBusy(true);
+    setIdleErr("");
+    try {
+      const r = await post<{
+        operator_token?: string;
+        operator_name?: string;
+        operator_type?: string;
+        operator_id?: string;
+        expires_at?: string;
+      }>(client, "/production/work-orders/shopfloor-unlock", {
+        company_id: companyId,
+        operator_type: operatorSession.operator_type,
+        operator_id: operatorSession.operator_id,
+        pin,
+      });
+      const session: ShopfloorOperatorSession = {
+        token: String(r.operator_token || operatorSession.token),
+        operator_name: String(r.operator_name || operatorSession.operator_name),
+        operator_type: String(r.operator_type || operatorSession.operator_type),
+        operator_id: String(r.operator_id || operatorSession.operator_id),
+        expires_at: String(r.expires_at || operatorSession.expires_at),
+      };
+      shopfloorOperatorMemory.set(memoryKey(companyId, userId), session);
+      setOperatorSession(session);
+      setOperator(session.operator_name);
+      setIdleLocked(false);
+      setIdleErr("");
+    } catch (err) {
+      setIdleErr(unlockErrorMessage(err));
+    } finally {
+      setIdleBusy(false);
+    }
   };
 
   const confirmFinish = () => {
@@ -657,13 +1035,22 @@ export function AtolyeScreen() {
       setError(qtyErr);
       return;
     }
-    act(finishing, "finish", { produced_qty: produced, scrap_qty: scrap, notes: fin.notes });
+    act(finishing, "finish", {
+      produced_qty: produced,
+      scrap_qty: scrap,
+      notes: fin.notes,
+      ...(scrapReason ? { scrap_reason_code: scrapReason.code, scrap_reason_label: scrapReason.label } : {}),
+    });
   };
 
-  const parts = useMemo(() => partitionWorkOrders(wos, operator), [wos, operator]);
+  const shownWos = useMemo(
+    () => wos.filter((w) => matchesLinkFilter(w, projectId, recipeId)),
+    [projectId, recipeId, wos],
+  );
+  const parts = useMemo(() => partitionWorkOrders(shownWos, operator), [operator, shownWos]);
   const visible = useMemo(() => {
     if (kpi === "done") {
-      const todayDone = filterByKpi(wos, "done");
+      const todayDone = filterByKpi(shownWos, "done");
       return {
         mine: todayDone.filter((w) => isMine(w, operator)),
         others: todayDone.filter((w) => !isMine(w, operator)),
@@ -675,7 +1062,7 @@ export function AtolyeScreen() {
       others: filterByKpi(parts.others, kpi),
       waiting: filterByKpi(parts.waiting, kpi),
     };
-  }, [kpi, operator, parts.mine, parts.others, parts.waiting, wos]);
+  }, [kpi, operator, parts.mine, parts.others, parts.waiting, shownWos]);
   const arrangedMine = useMemo(
     () => arrangeOpenWorkOrders(visible.mine, groupSameStation),
     [groupSameStation, visible.mine],
@@ -839,6 +1226,35 @@ export function AtolyeScreen() {
     }
   };
 
+  const needsOperator = atolye && !operator;
+  const renderWo = (w: WorkOrder) => (
+    <WoCard
+      key={woCardKey(w)}
+      w={w}
+      operator={operator}
+      needsOperator={needsOperator}
+      viewLocked={!mayOperate}
+      busy={busyId === woCardKey(w)}
+      baseUrl={baseUrl}
+      pauseAllowed={!!pausePolicy?.allowed}
+      pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
+      stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
+      undoLabel={w.status === "done" ? undoCountdown(w.finished_at, shopSettings.undo_finish_minutes, nowTick) || "" : ""}
+      onStart={() => act(w, "start")}
+      onPause={() => act(w, "pause")}
+      onFinish={() => openFinish(w)}
+      onPartial={() => setPartialJob(w)}
+      onDrawing={() => { void openDrawing(w); }}
+      onUndo={() => { void undoWork(w); }}
+      onTrash={() => openTrashRequest(w)}
+    />
+  );
+
+  const pickedFocus = focusOpen ? focusJob(shownWos, operator) : null;
+  const focusPlan = pickedFocus?.job ? workOrderFinishPlan(pickedFocus.job) : null;
+  const operatorCode = personnelCode(operators.find((row) => row.id === operatorSession?.operator_id));
+  const undoLeft = undoToast ? undoCountdown(undoToast.finishedAt, shopSettings.undo_finish_minutes, nowTick) : null;
+
   if (!canView) {
     return (
       <Screen>
@@ -848,11 +1264,10 @@ export function AtolyeScreen() {
   }
 
   const stationBadges = Array.isArray(user?.shopfloor_stations) ? user.shopfloor_stations.filter(Boolean) : [];
-  const needsOperator = atolye && !operator;
   const kpiItems: { key: ShopFloorKpiFilter; testID: string; label: string; value: string; valueColor: string }[] = [
-    { key: "ready", testID: "shopfloor-kpi-ready", label: "Hazır", value: String(readyCount(wos)), valueColor: "#2563EB" },
-    { key: "active", testID: "shopfloor-kpi-active", label: "Devam Eden", value: String(runningCount(wos)), valueColor: "#D97706" },
-    { key: "done", testID: "shopfloor-kpi-done", label: "Bugün Biten", value: String(todayDoneCount(wos)), valueColor: colors.primaryHover },
+    { key: "ready", testID: "shopfloor-kpi-ready", label: "Hazır", value: String(readyCount(shownWos)), valueColor: "#2563EB" },
+    { key: "active", testID: "shopfloor-kpi-active", label: "Devam Eden", value: String(runningCount(shownWos)), valueColor: "#D97706" },
+    { key: "done", testID: "shopfloor-kpi-done", label: "Bugün Biten", value: String(todayDoneCount(shownWos)), valueColor: colors.primaryHover },
   ];
 
   return (
@@ -865,11 +1280,14 @@ export function AtolyeScreen() {
           <Text testID="shopfloor-atolye-account" style={{ fontWeight: "800", color: colors.text }}>
             {user?.name || "Atölye"} · Atölye kullanıcısı
           </Text>
-          {stationBadges.map((name) => (
-            <View key={name} testID={`shopfloor-station-badge-${name}`} style={{ backgroundColor: colors.slate100, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
-              <Text style={{ fontSize: 11, fontWeight: "700", color: colors.secondary }}>{name}</Text>
-            </View>
-          ))}
+          {stationBadges.map((name) => {
+            const tone = stationColor(name);
+            return (
+              <View key={name} testID={`shopfloor-station-badge-${name}`} style={{ backgroundColor: tone.bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: tone.fg }}>{`■ ${name}`}</Text>
+              </View>
+            );
+          })}
         </View>
       ) : null}
       {atolye && !operator ? (
@@ -877,28 +1295,34 @@ export function AtolyeScreen() {
           testID="shopfloor-no-operator"
           style={{ backgroundColor: colors.amber50, borderColor: "#F59E0B", borderWidth: 2, paddingVertical: 18, paddingHorizontal: 14, gap: 8 }}
         >
-          <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 18 }}>Operatör seçin</Text>
+          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 28 }}>Kim çalışıyor?</Text>
+          <Text style={{ color: colors.muted, fontSize: 16 }}>Adınıza dokunun, sonra şifrenizi girin.</Text>
+          <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 16 }}>Operatör seçin</Text>
           <Text style={{ fontWeight: "600", color: "#B45309", fontSize: 14 }}>Başla / Devam / Bitir operatör PIN girişinden sonra açılır.</Text>
           {operators.length === 0 ? (
             <Text testID="shopfloor-operators-empty" style={{ fontWeight: "700", color: "#92400E" }}>
               PIN tanımlı ve mesaiye giriş yapmış operatör yok
             </Text>
           ) : (
-            <View testID="shopfloor-operators" style={{ gap: 8 }}>
+            <View testID="shopfloor-operators" style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {operators.map((op) => (
                 <Pressable
                   key={`${op.operator_type || "op"}-${op.id}`}
                   testID={`shopfloor-operator-card-${op.id}`}
                   onPress={() => chooseOperator(op)}
-                  style={{ backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 2, borderColor: "#fff", paddingHorizontal: 12, paddingVertical: 12, gap: 2 }}
+                  style={{ width: "47%", minHeight: 120, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 2, borderColor: "#E2E8F0", paddingHorizontal: 12, paddingVertical: 12, gap: 4, alignItems: "center" }}
                 >
-                  <Text style={{ fontWeight: "800", color: colors.text }}>{op.name}</Text>
+                  <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: "#DBEAFE", alignItems: "center", justifyContent: "center" }}>
+                    <Text style={{ fontSize: 22, fontWeight: "800", color: "#1D4ED8" }}>{shopfloorInitials(op.name)}</Text>
+                  </View>
+                  <Text style={{ fontWeight: "800", color: colors.text, textAlign: "center" }}>{op.name}</Text>
                   {op.station ? <Text style={{ fontSize: 12, color: colors.muted }}>{op.station}</Text> : null}
                   <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primaryHover }}>PIN tanımlı</Text>
                 </Pressable>
               ))}
             </View>
           )}
+          <Text style={{ color: colors.muted, fontSize: 15 }}>Birkaç dakika işlem yapılmazsa ekran kilitlenir</Text>
         </Card>
       ) : (
         <View
@@ -906,16 +1330,22 @@ export function AtolyeScreen() {
           style={{ alignSelf: "flex-start", backgroundColor: colors.emerald50, borderWidth: 1, borderColor: "#A7F3D0", borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8 }}
         >
           {atolye ? (
-            <Row style={{ gap: 8, alignItems: "center" }}>
-              <Text style={{ fontWeight: "800", color: colors.primaryHover }}>{operator}</Text>
+            <Row style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Text style={{ fontWeight: "800", color: colors.primaryHover }}>
+                {`Operatör: ${operator}${personnelCode(operators.find((row) => row.id === operatorSession?.operator_id)) ? ` · ${personnelCode(operators.find((row) => row.id === operatorSession?.operator_id))}` : ""}`}
+              </Text>
               <Text style={{ color: colors.primaryHover }}>·</Text>
               <Pressable onPress={logoutOperator} hitSlop={8} testID="shopfloor-operator-change" style={{ minHeight: 44, justifyContent: "center" }}>
                 <Text style={{ color: colors.primaryHover, fontWeight: "800", textDecorationLine: "underline" }}>değiştir</Text>
               </Pressable>
+              <Text style={{ color: colors.primaryHover }}>·</Text>
+              <Pressable onPress={logoutOperator} hitSlop={8} testID="shopfloor-operator-logout" style={{ minHeight: 44, justifyContent: "center" }}>
+                <Text style={{ color: colors.primaryHover, fontWeight: "800", textDecorationLine: "underline" }}>Çıkış</Text>
+              </Pressable>
             </Row>
           ) : (
             <Text style={{ fontWeight: "700", color: colors.primaryHover }}>
-              {`Operatör: ${operator || "—"} · Kendi oturumunuz — seçim gerekmez`}
+              {`Operatör: ${operator || "—"}`}
             </Text>
           )}
         </View>
@@ -927,6 +1357,55 @@ export function AtolyeScreen() {
         onChange={setStation}
         groups={stationGroups}
         emptyLabel="Tüm istasyonlar"
+      />
+      <Text testID="shopfloor-project" style={{ height: 0, width: 0, opacity: 0 }}>{projectId}</Text>
+      <Text testID="shopfloor-recipe" style={{ height: 0, width: 0, opacity: 0 }}>{recipeId}</Text>
+      <Pressable testID="shopfloor-focus-open" onPress={() => setFocusOpen(true)} style={{ minHeight: 44, alignSelf: "flex-start", borderWidth: 2, borderColor: "#CBD5E1", backgroundColor: "#fff", borderRadius: 12, paddingHorizontal: 12, justifyContent: "center" }}>
+        <Text style={{ fontWeight: "800", color: colors.text }}>Sıradaki iş</Text>
+      </Pressable>
+      <View testID="shopfloor-filters" style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        <Pressable
+          testID="shopfloor-filter-all"
+          onPress={() => { setProjectId(""); setRecipeId(""); setFilterMenu(""); }}
+          style={{ minHeight: 44, borderRadius: 999, borderWidth: 2, paddingHorizontal: 14, justifyContent: "center", borderColor: !projectId && !recipeId ? "#0F172A" : "#CBD5E1", backgroundColor: !projectId && !recipeId ? "#0F172A" : "#fff" }}
+        >
+          <Text style={{ fontWeight: "700", color: !projectId && !recipeId ? "#fff" : colors.text }}>Tümü</Text>
+        </Pressable>
+        <Pressable
+          testID="shopfloor-filter-project"
+          onPress={() => setFilterMenu((cur) => (cur === "project" ? "" : "project"))}
+          style={{ minHeight: 44, borderRadius: 999, borderWidth: 2, paddingHorizontal: 14, justifyContent: "center", borderColor: filterMenu === "project" || projectId ? "#0F172A" : "#CBD5E1", backgroundColor: filterMenu === "project" || projectId ? "#0F172A" : "#fff" }}
+        >
+          <Text style={{ fontWeight: "700", color: filterMenu === "project" || projectId ? "#fff" : colors.text }}>Proje ▾</Text>
+        </Pressable>
+        <Pressable
+          testID="shopfloor-filter-recipe"
+          onPress={() => setFilterMenu((cur) => (cur === "recipe" ? "" : "recipe"))}
+          style={{ minHeight: 44, borderRadius: 999, borderWidth: 2, paddingHorizontal: 14, justifyContent: "center", borderColor: filterMenu === "recipe" || recipeId ? "#0F172A" : "#CBD5E1", backgroundColor: filterMenu === "recipe" || recipeId ? "#0F172A" : "#fff" }}
+        >
+          <Text style={{ fontWeight: "700", color: filterMenu === "recipe" || recipeId ? "#fff" : colors.text }}>Reçete ▾</Text>
+        </Pressable>
+      </View>
+      <FilterMenu
+        open={filterMenu === "project" || filterMenu === "recipe"}
+        selectedId={filterMenu === "recipe" ? recipeId : projectId}
+        onPick={(id) => {
+          if (filterMenu === "recipe") setRecipeId(id);
+          else setProjectId(id);
+          setFilterMenu("");
+        }}
+        rows={(filterMenu === "recipe" ? filterCatalog.recipes : filterCatalog.projects).map((row) => {
+          const id = String(filterMenu === "recipe" ? row.recipe_id : row.project_id);
+          const tone = projectColor(filterMenu === "recipe" ? id : row.project_id);
+          const full = filterMenu === "recipe" ? recipeFilterLabel(row) : projectFilterLabel(row);
+          return {
+            id,
+            label: full.replace(/\s*\(\d+\)\s*$/, ""),
+            count: `${Number(row.job_count) || 0} iş`,
+            wash: tone.wash,
+            edge: tone.stripe,
+          };
+        })}
       />
       <Card testID="shopfloor-group-station-wrap">
         <Row style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}>
@@ -1040,67 +1519,25 @@ export function AtolyeScreen() {
       {arrangedMine.length ? (
         <View testID="shopfloor-mine">
           <Text style={{ fontWeight: "800", color: colors.text }}>Benim İşlerim ({arrangedMine.length})</Text>
-          {renderGrouped(arrangedMine, (w) => (
-            <WoCard
-              key={woCardKey(w)}
-              w={w}
-              operator={operator}
-              needsOperator={needsOperator}
-              busy={busyId === woCardKey(w)}
-              baseUrl={baseUrl}
-              pauseAllowed={!!pausePolicy?.allowed}
-              pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
-              stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
-              onStart={() => act(w, "start")}
-              onPause={() => act(w, "pause")}
-              onFinish={() => openFinish(w)}
-              onTrash={() => openTrashRequest(w)}
-            />
-          ))}
+          {renderGrouped(arrangedMine, (w) => renderWo(w))}
         </View>
       ) : null}
 
       <Text style={{ fontWeight: "800", color: colors.text }}>Açık İş Emirleri ({arrangedOthers.length})</Text>
       {error ? null : !parts.active.length && kpi == null ? (
         <Empty icon="build-outline" title="Bekleyen iş emri yok" hint="Üretim & Reçete sayfasından üretim emri verin." />
-      ) : renderGrouped(arrangedOthers, (w) => (
-        <WoCard
-          key={woCardKey(w)}
-          w={w}
-          operator={operator}
-          needsOperator={needsOperator}
-          busy={busyId === woCardKey(w)}
-          baseUrl={baseUrl}
-          pauseAllowed={!!pausePolicy?.allowed}
-          pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
-          stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
-          onStart={() => act(w, "start")}
-          onPause={() => act(w, "pause")}
-          onFinish={() => openFinish(w)}
-          onTrash={() => openTrashRequest(w)}
-        />
-      ))}
+      ) : renderGrouped(arrangedOthers, (w) => renderWo(w))}
 
       {arrangedWaiting.length ? (
         <View testID="shopfloor-waiting">
           <Text style={{ fontWeight: "800", color: colors.muted }}>Sıradaki Adımlar ({arrangedWaiting.length})</Text>
-          {renderGrouped(arrangedWaiting, (w) => (
-            <WoCard
-              key={woCardKey(w)}
-              w={w}
-              operator={operator}
-              needsOperator={needsOperator}
-              busy={busyId === woCardKey(w)}
-              baseUrl={baseUrl}
-              stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
-              onStart={() => act(w, "start")}
-              onPause={() => act(w, "pause")}
-              onFinish={() => openFinish(w)}
-              onTrash={() => openTrashRequest(w)}
-            />
-          ))}
+          {renderGrouped(arrangedWaiting, (w) => renderWo(w))}
         </View>
       ) : null}
+
+      <Text testID="shopfloor-color-note" style={{ fontSize: 12, color: colors.muted }}>
+        Renk: istasyon = dolu etiket · proje = kartın sol kenarı + çerçeveli etiket
+      </Text>
 
       {parts.done.length > 0 ? (
         <Pressable onPress={trashCompleted} disabled={trashBusy} testID="shopfloor-trash-done" style={{ minHeight: 40, justifyContent: "center" }}>
@@ -1195,6 +1632,26 @@ export function AtolyeScreen() {
                 />
               </View>
             </Row>
+            {Number(fin.scrap_qty) > 0 ? (
+              <View testID="wo-finish-scrap-reasons" style={{ gap: 8 }}>
+                <Text style={{ fontWeight: "700", color: colors.text }}>Fire neden oldu?</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {normalizeScrapReasons(shopSettings.scrap_reasons).map((reason) => {
+                    const on = scrapReason?.code === reason.code;
+                    return (
+                      <Pressable
+                        key={reason.code}
+                        testID={`wo-scrap-reason-${reason.code}`}
+                        onPress={() => setScrapReason(reason)}
+                        style={{ minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: on ? "#2563EB" : "#CBD5E1", backgroundColor: on ? "#EFF6FF" : "#fff", paddingHorizontal: 12, justifyContent: "center" }}
+                      >
+                        <Text style={{ fontWeight: "600", color: on ? "#1D4ED8" : colors.text }}>{reason.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
             {finishing && (() => {
               const plan = workOrderFinishPlan(finishing);
               const entered = Number(fin.produced_qty) + Number(fin.scrap_qty || 0);
@@ -1247,6 +1704,66 @@ export function AtolyeScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      {partialJob ? (
+        <PartialCountDialog
+          job={partialJob}
+          unit={workOrderFinishPlan(partialJob).unit}
+          busy={partialBusy}
+          onClose={() => { if (!partialBusy) setPartialJob(null); }}
+          onSubmit={(qty) => { void submitPartial(qty); }}
+        />
+      ) : null}
+      {takeover ? (
+        <TakeoverDialog
+          job={takeover.w}
+          detail={takeover.detail}
+          busy={busyId === woCardKey(takeover.w)}
+          onClose={() => setTakeover(null)}
+          onConfirm={() => { void act(takeover.w, takeover.action, { ...(takeover.body || {}), confirm_takeover: true }); }}
+        />
+      ) : null}
+      {drawing ? (
+        <DrawingViewer
+          title={drawing.title}
+          filename={drawing.filename}
+          expiresIn={drawing.expiresIn}
+          url={drawing.url}
+          contentType={drawing.contentType}
+          onClose={() => setDrawing(null)}
+        />
+      ) : null}
+      {undoToast && undoLeft ? (
+        <UndoToast text={undoToast.text} countdown={undoLeft} onUndo={() => { void undoWork(undoToast.workOrder); }} />
+      ) : null}
+      {idleLocked && operatorSession ? (
+        <IdleLock
+          name={operatorSession.operator_name || operator}
+          code={operatorCode}
+          minutes={Number(shopSettings.idle_lock_minutes) || 30}
+          error={idleErr}
+          busy={idleBusy}
+          onSubmit={(pin) => { void submitIdlePin(pin); }}
+          onSwitch={() => { setIdleLocked(false); setIdleErr(""); logoutOperator(); }}
+        />
+      ) : null}
+      {focusOpen ? (
+        <FocusBoard
+          mode={pickedFocus?.mode || "next"}
+          title={pickedFocus?.job ? cardTitle(pickedFocus.job).text : "Sıradaki iş yok"}
+          step={pickedFocus?.job?.step_name || pickedFocus?.job?.station}
+          meta={pickedFocus?.job?.sales_order_no ? `Sipariş no: ${pickedFocus.job.sales_order_no}` : pickedFocus?.job?.order_code}
+          qtyLabel={pickedFocus?.job && focusPlan ? (workOrderQtyLabel(pickedFocus.job, focusPlan) || `${formatQty(focusPlan.qty)} ${focusPlan.unit}`) : ""}
+          passive={!mayOperate || !pickedFocus?.job || (atolye && !operator)}
+          onBack={() => setFocusOpen(false)}
+          onStart={() => { if (pickedFocus?.job) void act(pickedFocus.job, "start"); }}
+          onFinish={() => {
+            if (!pickedFocus?.job) return;
+            setFocusOpen(false);
+            openFinish(pickedFocus.job);
+          }}
+          onDrawing={() => { if (pickedFocus?.job) void openDrawing(pickedFocus.job); }}
+        />
+      ) : null}
     </Screen>
   );
 }

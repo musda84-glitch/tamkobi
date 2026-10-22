@@ -326,7 +326,8 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
     expect(findByTestId(container, "shopfloor-operator")).toBeNull();
     expect(findByTestId(container, "shopfloor-pin-modal")).toBeNull();
     expect(findByTestId(container, "shopfloor-pinpad")).toBeNull();
-    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ali Usta · Kendi oturumunuz — seçim gerekmez");
+    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ali Usta");
+    expect(textOf(container)).not.toContain("Kendi oturumunuz");
     expect(reactProps(findByTestId(container, "wo-start-mine-ready"))?.disabled).toBe(false);
     expect(reactProps(findByTestId(container, "wo-finish-other-run"))?.disabled).toBe(false);
     expect(reactProps(findByTestId(container, "wo-trash-mine-ready"))?.disabled).toBe(false);
@@ -464,7 +465,8 @@ describe("AtolyeScreen mobile_atolye_v1", () => {
 
     expect(findByTestId(container, "shopfloor-pin-modal")).toBeNull();
     expect(findByTestId(container, "shopfloor-pinpad")).toBeNull();
-    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Kendi oturumunuz — seçim gerekmez");
+    expect(textOf(findByTestId(container, "shopfloor-operator-chip"))).toContain("Operatör: Ali Usta");
+    expect(textOf(container)).not.toContain("Kendi oturumunuz");
   });
 
   it("shows only today's finished cards when the done counter is selected", async () => {
