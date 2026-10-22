@@ -107,27 +107,30 @@ describe("NotificationsPanel", () => {
     const view = await renderPanel();
     const title = findTextNode(view.container, "Bildirimler");
     expect(reactProps(title)?.numberOfLines).toBe(1);
-    expect(reactProps(title)?.style?.flexShrink).toBe(0);
+    expect(reactProps(title)?.style?.flexShrink).toBe(1);
     expect(reactProps(title)?.style?.flex).toBeUndefined();
 
-    const titleRow = findByTestId(view.container, "home-notifications-all").parentNode;
+    const titleRow = findByTestId(view.container, "notifications-title-row");
+    const actionsRow = findByTestId(view.container, "notifications-actions-row");
     const readAll = findByTestId(view.container, "home-notifications-read-all");
     const clearAll = findByTestId(view.container, "home-notifications-clear-all");
-    expect(readAll.parentNode).not.toBe(titleRow);
-    expect(clearAll.parentNode).toBe(readAll.parentNode);
-    expect(titleRow.nextSibling).toBe(readAll.parentNode);
-    expect(reactProps(readAll.parentNode)?.style?.justifyContent).toBe("flex-end");
+    const openAll = findByTestId(view.container, "home-notifications-all");
+    expect(titleRow.contains(title)).toBe(true);
+    expect(titleRow.contains(openAll)).toBe(false);
+    expect(actionsRow.contains(openAll)).toBe(true);
+    expect(actionsRow.contains(readAll)).toBe(true);
+    expect(actionsRow.contains(clearAll)).toBe(true);
+    expect(reactProps(titleRow)?.style?.flexDirection).toBe("row");
+    expect(reactProps(titleRow)?.style?.alignItems).toBe("center");
+    expect(reactProps(titleRow)?.style?.minWidth).toBe(0);
+    expect(reactProps(actionsRow)?.style?.flexWrap).toBe("wrap");
     expect(textOf(titleRow)).toContain("Bildirimler");
-    expect(textOf(titleRow)).toContain("Tümü");
+    expect(textOf(titleRow)).not.toContain("Tümü");
     expect(textOf(titleRow)).not.toContain("Okundu");
     expect(textOf(titleRow)).not.toContain("Tümünü sil");
-    expect(textOf(readAll.parentNode)).toContain("Okundu");
-    expect(textOf(readAll.parentNode)).toContain("Tümünü sil");
-
-    const spacer = [...findByTestId(view.container, "home-notifications-all").childNodes].find(
-      (child: any) => reactProps(child)?.style?.flex === 1 && textOf(child) === "",
-    );
-    expect(spacer).toBeTruthy();
+    expect(textOf(actionsRow)).toContain("Tümü");
+    expect(textOf(actionsRow)).toContain("Okundu");
+    expect(textOf(actionsRow)).toContain("Tümünü sil");
     await view.unmount();
   });
 
