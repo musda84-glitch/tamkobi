@@ -23,6 +23,7 @@ from urllib.parse import urljoin
 import httpx
 from fastapi import HTTPException
 
+import isnet_tls
 from safe_error import mask_sensitive_text
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,17 @@ _ROOT_RE = re.compile(rb"<\s*(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)[\s/>]")
 MAX_ZIP_ENTRIES = 32
 MAX_ZIP_MEMBER_BYTES = 4 * 1024 * 1024
 MAX_ZIP_TOTAL_BYTES = 16 * 1024 * 1024
+
+
+def _http(**kwargs: Any) -> httpx.AsyncClient:
+    """İşNet portal / Mobile HTTP istemcisi.
+
+    TLS doğrulaması certifi + GlobalSign ara sertifikasıdır. EINVOICE_SOURCE_IP
+    tanımlıysa SOAP ile aynı çıkış adresine bağlanır.
+    """
+    from isnet import einvoice_source_ip
+
+    return isnet_tls.open_async_client(httpx, einvoice_source_ip(), **kwargs)
 
 
 def _ubl_root_name(data: bytes) -> str:
@@ -479,7 +491,7 @@ class IsnetPortalClient:
             or self.settings.get("portal_company_id")
             or ""
         ).strip()
-        self._client = httpx.AsyncClient(
+        self._client = _http(
             base_url=self.base,
             timeout=45.0,
             follow_redirects=True,
@@ -975,7 +987,7 @@ async def _mobile_login(settings: dict, password: str, *, _tried_alt_env: bool =
         payloads.extend(_mobile_login_payloads(ident, password, corp))
     last = "İşNet Mobile API girişi başarısız."
     saw_401 = False
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers={"User-Agent": UA}) as client:
+    async with _http(timeout=30.0, follow_redirects=True, headers={"User-Agent": UA}) as client:
         for body in payloads:
             try:
                 r = await client.post(url, json=body)
@@ -1138,7 +1150,7 @@ async def advance_outgoing_invoice(
         or "gib" in proc
     )
 
-    async with httpx.AsyncClient(timeout=45.0, headers={"User-Agent": UA}) as client:
+    async with _http(timeout=45.0, headers={"User-Agent": UA}) as client:
         if need_approve:
             st, data = await _mobile_post_json(
                 client,
@@ -1333,7 +1345,7 @@ async def respond_incoming_invoice(
     approve_url = f"{api}/api/Invoice/ApproveIncomingInvoice"
     portal_inv_id = None
 
-    async with httpx.AsyncClient(timeout=45.0, headers={"User-Agent": UA}) as client:
+    async with _http(timeout=45.0, headers={"User-Agent": UA}) as client:
         for page in range(3):
             status, data = await _mobile_post_json(
                 client,
@@ -1773,7 +1785,7 @@ async def _mobile_gib_registered_user(settings: dict, password: str, tax: str) -
     token = str(session.get("token") or "")
     api = mobile_api_base(settings)
     try:
-        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": UA}) as client:
+        async with _http(timeout=30.0, headers={"User-Agent": UA}) as client:
             status, data = await _mobile_post_json(
                 client,
                 f"{api}/api/Company/GetGibUserByVknTckn",
@@ -1905,7 +1917,7 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
         },
     ]
     out: List[Dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True, headers={"User-Agent": UA}) as client:
+    async with _http(timeout=60.0, follow_redirects=True, headers={"User-Agent": UA}) as client:
         data: Any = None
         status = 0
         last_err = ""
