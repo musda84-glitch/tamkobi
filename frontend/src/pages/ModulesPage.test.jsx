@@ -46,7 +46,7 @@ describe("marketing module and product pages", () => {
     document.title = "";
   });
 
-  test("modules page renders cards, details and a placeholder when the screenshot is missing", async () => {
+  test("modules page renders real screenshots and falls back when a file is missing", async () => {
     const view = await render({ node: <ModulesPage /> });
     expect(view.host.querySelector('[data-testid="modules-page"]')).toBeTruthy();
     expect(view.host.querySelectorAll('[data-testid^="module-card-"]')).toHaveLength(15);
@@ -58,7 +58,13 @@ describe("marketing module and product pages", () => {
     const imgs = [...view.host.querySelectorAll('[data-testid="shot-img-e-fatura"]')];
     expect(imgs.length).toBeGreaterThan(0);
     expect(imgs[0].getAttribute("src")).toBe("/brand/screenshots/e-fatura.png");
-    expect(view.host.querySelector('[data-testid="shot-placeholder-e-fatura"]').textContent).toMatch(/Örnek görsel/);
+    expect(imgs[0].getAttribute("alt")).toBe("e-Fatura & e-Arşiv ekran görüntüsü");
+    expect(imgs[0].getAttribute("loading")).toBe("lazy");
+    expect(imgs[0].getAttribute("width")).toBe("1440");
+    expect(imgs[0].getAttribute("height")).toBe("900");
+    expect(view.host.querySelector('[data-testid="shot-placeholder-e-fatura"]')).toBeNull();
+    expect(view.host.textContent).toContain("Ekran görüntüleri örnek verilerle hazırlanmıştır.");
+    expect(view.host.textContent).not.toContain("Örnek görsel");
     await act(async () => {
       imgs[0].dispatchEvent(new Event("error"));
     });
@@ -104,7 +110,14 @@ describe("marketing module and product pages", () => {
     expect(view.host.querySelectorAll('[data-testid^="product-section-"]')).toHaveLength(5);
     expect(view.host.querySelector('[data-testid="product-domain-web-paneli"]').textContent).toBe("app.tamkobi.com");
     expect(view.host.textContent).not.toContain("tamkobi.com/panel");
-    expect(view.host.querySelector('[data-testid="shot-placeholder-web-paneli"]').textContent).toMatch(/Örnek görsel/);
+    const panel = view.host.querySelector('[data-testid="shot-img-web-paneli"]');
+    expect(panel.getAttribute("src")).toBe("/brand/screenshots/web-paneli.png");
+    expect(panel.getAttribute("alt")).toBe("Web Paneli ekran görüntüsü");
+    expect(panel.getAttribute("loading")).toBe("lazy");
+    expect(view.host.querySelector('[data-testid="shot-placeholder-web-paneli"]')).toBeNull();
+    const phone = view.host.querySelector('[data-testid="shot-img-mobil"]');
+    expect(phone.getAttribute("width")).toBe("390");
+    expect(phone.getAttribute("height")).toBe("844");
     expect(view.host.querySelector('[data-testid="footer-link-moduller"]').getAttribute("href")).toBe("/moduller");
     expect(view.host.querySelector('[data-testid="footer-link-urunler"]').getAttribute("href")).toBe("/urunler");
     await view.cleanup();

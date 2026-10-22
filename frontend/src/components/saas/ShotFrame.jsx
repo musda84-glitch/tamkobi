@@ -53,26 +53,37 @@ function Sketch({ accent, icon, slug }) {
 }
 
 /** Ekran görüntüsü varsa gösterir; dosya yoksa sade arayüz çizimine düşer. */
-export default function ShotFrame({ slug, accent = "#34d399", icon = "", className = "" }) {
-  const [phase, setPhase] = useState("pending");
+export default function ShotFrame({
+  slug,
+  alt = "",
+  width = 1440,
+  height = 900,
+  accent = "#34d399",
+  icon = "",
+  className = "",
+}) {
+  const [missing, setMissing] = useState(false);
   const src = screenshotSrc(slug);
-  const showSketch = phase !== "ok";
   return (
     <div
-      className={`relative aspect-[16/10] overflow-hidden bg-gradient-to-br from-[#111827] to-[#1e1b4b] ${className}`}
+      className={`relative overflow-hidden bg-gradient-to-br from-[#111827] to-[#1e1b4b] ${className}`}
+      style={{ aspectRatio: `${width} / ${height}` }}
       data-testid={`shot-${slug}`}
     >
-      {phase !== "missing" ? (
+      {missing ? (
+        <Sketch accent={accent} icon={icon} slug={slug} />
+      ) : (
         <img
           src={src}
-          alt=""
-          className={phase === "ok" ? "absolute inset-0 h-full w-full object-cover" : "sr-only"}
-          onLoad={() => setPhase("ok")}
-          onError={() => setPhase("missing")}
+          alt={alt}
+          width={width}
+          height={height}
+          loading="lazy"
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={() => setMissing(true)}
           data-testid={`shot-img-${slug}`}
         />
-      ) : null}
-      {showSketch ? <Sketch accent={accent} icon={icon} slug={slug} /> : null}
+      )}
     </div>
   );
 }

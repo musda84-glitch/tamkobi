@@ -81,9 +81,12 @@ export default function ModulesPage() {
             >
               <ShotFrame
                 slug={mod.slug}
+                alt={`${mod.title} ekran görüntüsü`}
+                width={mod.width}
+                height={mod.height}
                 accent={mod.accent}
                 icon={mod.icon}
-                className="border-b border-dashed border-white/20"
+                className="border-b border-white/10"
               />
               <div className="flex flex-1 flex-col gap-1.5 px-[18px] pb-[18px] pt-4">
                 <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-400">{categoryLabel(mod.category)}</div>
@@ -111,9 +114,12 @@ export default function ModulesPage() {
             >
               <ShotFrame
                 slug={mod.slug}
+                alt={`${mod.title} ekran görüntüsü`}
+                width={mod.width}
+                height={mod.height}
                 accent={mod.accent}
                 icon={mod.icon}
-                className="rounded-[20px] border border-dashed border-white/20"
+                className="rounded-[20px] border border-white/10"
               />
               <div className="min-w-0">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-emerald-400">{categoryLabel(mod.category)}</div>

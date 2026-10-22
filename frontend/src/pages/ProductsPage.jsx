@@ -35,9 +35,12 @@ export default function ProductsPage() {
             <div className={product.reverse ? "min-w-0 md:order-2" : "min-w-0"}>
               <ShotFrame
                 slug={product.slug}
+                alt={`${product.title} ekran görüntüsü`}
+                width={product.width}
+                height={product.height}
                 accent={product.accent}
                 icon={product.icon}
-                className="rounded-3xl border border-dashed border-white/20"
+                className="rounded-3xl border border-white/10"
               />
             </div>
             <div className={product.reverse ? "min-w-0 md:order-1" : "min-w-0"}>

@@ -2,6 +2,7 @@
  * tamkobi.com /moduller ve /urunler vitrin metinleri.
  * Kart ve madde metinleri onaylı mockup HTML'inden gelir.
  * Görseller public/brand/screenshots/<slug>.png; dosya yoksa yer tutucu çizilir.
+ * width/height dosyaların gerçek piksel ölçüsüdür; görseller yeniden boyutlandırılmaz.
  */
 
 export const MODULE_CATEGORIES = [
@@ -109,7 +110,7 @@ export const MODULES = [
     ],
   },
   {
-    slug: "b2b",
+    slug: "b2b-portal",
     category: "satis",
     icon: "🤝",
     title: "B2B Bayi Portalı",
@@ -123,7 +124,7 @@ export const MODULES = [
     ],
   },
   {
-    slug: "stok-barkod",
+    slug: "stok",
     category: "stok",
     icon: "📦",
     title: "Stok & Barkod",
@@ -151,7 +152,7 @@ export const MODULES = [
     ],
   },
   {
-    slug: "personel-mesai",
+    slug: "personel",
     category: "ik",
     icon: "🕒",
     title: "Personel & Mesai",
@@ -165,7 +166,7 @@ export const MODULES = [
     ],
   },
   {
-    slug: "atolye",
+    slug: "atolye-is-emirleri",
     category: "uretim",
     icon: "🏭",
     title: "Atölye & İş Emirleri",
@@ -234,7 +235,7 @@ export const MODULES = [
       "Yanıt panelde",
     ],
   },
-].map((row) => ({ ...row, accent: ACCENT[row.category] }));
+].map((row) => ({ ...row, accent: ACCENT[row.category], width: 1440, height: 900 }));
 
 export const PRODUCTS = [
   {
@@ -268,7 +269,7 @@ export const PRODUCTS = [
     reverse: true,
   },
   {
-    slug: "b2b-portali",
+    slug: "b2b",
     icon: "🤝",
     accent: "#c6f432",
     domain: "b2b.tamkobi.com",
@@ -283,7 +284,7 @@ export const PRODUCTS = [
     reverse: false,
   },
   {
-    slug: "ik-portali",
+    slug: "ik",
     icon: "🧑‍💼",
     accent: "#f59e0b",
     domain: "ik.tamkobi.com",
@@ -298,7 +299,7 @@ export const PRODUCTS = [
     reverse: true,
   },
   {
-    slug: "atolye-ekrani",
+    slug: "atolye",
     icon: "🏭",
     accent: "#4f2fd0",
     domain: "Atölye ekranı",
@@ -312,7 +313,10 @@ export const PRODUCTS = [
     ],
     reverse: false,
   },
-];
+].map((row) => ({
+  ...row,
+  ...(row.slug === "mobil" ? { width: 390, height: 844 } : { width: 1440, height: 900 }),
+}));
 
 export const MODULES_HERO = {
   eyebrow: "TamKobi · Modüller",
@@ -320,7 +324,7 @@ export const MODULES_HERO = {
   titleEm: "tek panelde",
   titleTail: ".",
   lead: "Fatura, cari, stok, banka, personel ve üretim. Modülleri inceleyin, yalnızca kullandıklarınızla kendi paketinizi oluşturun.",
-  note: "Not: Tüm görseller yer tutucudur (repoda modül ekran görüntüsü yok). Gerçek ekran görüntüleri public/brand/screenshots/ altına eklenip değiştirilecek.",
+  note: "Ekran görüntüleri örnek verilerle hazırlanmıştır.",
 };
 
 export const PRODUCTS_HERO = {
@@ -329,7 +333,7 @@ export const PRODUCTS_HERO = {
   titleEm: "beş ürün",
   titleTail: ".",
   lead: "Web paneli, mobil uygulama, bayi portalı, İK ekranı ve atölye ekranı aynı veriyi kullanır; bir yerde girdiğiniz bilgi her yerde günceldir.",
-  note: "Not: Görseller yer tutucudur; gerçek ekran görüntüleriyle değiştirilecek.",
+  note: "Ekran görüntüleri örnek verilerle hazırlanmıştır.",
 };
 
 export function screenshotSrc(slug) {
