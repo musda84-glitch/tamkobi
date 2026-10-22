@@ -452,22 +452,45 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     if (fallbackId) attempts.push(() => startRelaxed(fallbackId));
     if (deviceId) attempts.push(() => startRelaxed(null));
 
+    const releaseLateHtml5 = async () => {
+      try { await scanner.stop(); } catch { /* ignore */ }
+      try { scanner.clear(); } catch { /* ignore */ }
+      host?.querySelectorAll?.("video")?.forEach((video) => {
+        stopStream(video.srcObject);
+        try { video.srcObject = null; } catch { /* ignore */ }
+      });
+      if (scannerRef.current === scanner) scannerRef.current = null;
+    };
+
     let started = false;
     let lastErr;
     for (const attempt of attempts) {
+      if (!aliveRef.current || hiddenRef.current) {
+        await releaseLateHtml5();
+        return false;
+      }
       try {
         await attempt();
-        started = true;
-        break;
       } catch (err) {
         lastErr = err;
+        if (!aliveRef.current || hiddenRef.current) {
+          await releaseLateHtml5();
+          return false;
+        }
         try { await scanner.stop().catch(() => {}); } catch { /* ignore */ }
+        continue;
       }
+      if (!aliveRef.current || hiddenRef.current) {
+        await releaseLateHtml5();
+        return false;
+      }
+      started = true;
+      break;
     }
     if (!started) throw lastErr || new Error("Kamera açılamadı");
 
     if (!aliveRef.current || hiddenRef.current) {
-      await stopAll();
+      await releaseLateHtml5();
       return false;
     }
     await bindTrack(scanner, host.querySelector("video"));

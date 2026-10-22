@@ -95,6 +95,12 @@ async function openStream(deviceId: string | null) {
   throw last instanceof Error ? last : new Error("Kamera açılamadı");
 }
 
+function stopMedia(stream: MediaStream | null | undefined) {
+  stream?.getTracks?.().forEach((track) => {
+    try { track.stop(); } catch { /* ignore */ }
+  });
+}
+
 function applyFocusTuning(track: MediaStreamTrack | undefined) {
   if (!track || typeof track.getCapabilities !== "function" || typeof track.applyConstraints !== "function") return;
   let caps: TrackCaps = {};
@@ -222,21 +228,37 @@ export function WebBarcodeCamera({
           const listed = await navigator.mediaDevices.enumerateDevices();
           deviceId = pickBackCamera(listed);
         } catch { /* etiket için önce akış */ }
-        stream = await openStream(deviceId);
+        const opened = await openStream(deviceId);
+        if (stopped) {
+          stopMedia(opened);
+          return;
+        }
+        stream = opened;
         streamRef.current = stream;
         video.srcObject = stream;
         if (!deviceId) {
           try {
             const listed = await navigator.mediaDevices.enumerateDevices();
+            if (stopped) return;
             const picked = pickBackCamera(listed);
             const current = stream.getVideoTracks()[0]?.getSettings?.().deviceId;
             if (picked && picked !== current) {
-              stream.getTracks().forEach((track) => track.stop());
-              stream = await openStream(picked);
+              stopMedia(stream);
+              if (streamRef.current === stream) streamRef.current = null;
+              const next = await openStream(picked);
+              if (stopped) {
+                stopMedia(next);
+                return;
+              }
+              stream = next;
               streamRef.current = stream;
               video.srcObject = stream;
             }
           } catch { /* mevcut akış kalsın */ }
+        }
+        if (stopped) {
+          stopMedia(stream);
+          return;
         }
         applyFocusTuning(stream.getVideoTracks()[0]);
         try {
