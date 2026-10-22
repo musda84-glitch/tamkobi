@@ -2,6 +2,8 @@
  * @jest-environment jsdom
  */
 import React from "react";
+import fs from "fs";
+import path from "path";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
 import axios from "axios";
@@ -139,6 +141,17 @@ test("bağsız satır gizlenir ve 390px düzeni taşma sınıflarını taşır",
   expect(segment.className).toMatch(/max-w-full/);
   expect(host.querySelector("[data-testid='perm-row-/kontor']")).toBeNull();
   expect(host.querySelector("[data-testid='role-open-only']").className).toMatch(/hidden/);
+});
+
+test("özet paneli içeriği ayrı bileşendedir", () => {
+  const editor = fs.readFileSync(path.join(__dirname, "RoleEditor.jsx"), "utf8");
+  const panel = fs.readFileSync(path.join(__dirname, "roles/RoleSummaryPanel.jsx"), "utf8");
+  expect(editor).not.toMatch(/Bu rol neler yapabilir/);
+  expect(editor).toMatch(/RoleSummarySlot/);
+  expect(panel).toMatch(/Bu rol neler yapabilir/);
+  expect(panel).toMatch(/Yapabilir/);
+  expect(panel).toMatch(/Yapamaz/);
+  expect(panel).toMatch(/role-user-warn/);
 });
 
 test("1280px düzeninde segment tek satırda kalır ve grup başlığı çakışmaz", async () => {

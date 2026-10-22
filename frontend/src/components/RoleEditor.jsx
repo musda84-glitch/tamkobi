@@ -5,9 +5,10 @@ import { Plus, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import {
   EDITOR_GROUPS, FEATURE_GROUPS, LEVELS, ROLE_TEMPLATES,
-  applyRowLevel, editorOverflowGuard, roleSummary, rowLevel, visibleRows,
+  applyRowLevel, editorOverflowGuard, rowLevel, visibleRows,
 } from "./roleEditorModel";
 import { helpFor } from "./roleHelpContent";
+import { RoleSummarySlot } from "./roles/RoleSummaryPanel";
 
 const ON = {
   none: "bg-white text-slate-700 shadow-[0_0_0_1px_#cbd5e1]",
@@ -35,28 +36,6 @@ function Segment({ value, disabled, onChange, testPrefix, compact }) {
           {label}
         </button>
       ))}
-    </div>
-  );
-}
-
-function Summary({ perms, features, userCount, mobile }) {
-  const { can, cannot } = roleSummary(perms, features);
-  return (
-    <div className={mobile ? "" : "space-y-1"} data-testid={mobile ? "role-summary-mobile" : "role-summary"}>
-      <h3 className="m-0 mb-1.5 text-[13px] font-bold leading-5 text-slate-900">Bu rol neler yapabilir?</h3>
-      <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 mt-1.5">Yapabilir</div>
-      <ul className="mt-1 mb-1.5 list-disc pl-4 text-[12px] leading-snug text-slate-700 marker:text-emerald-600">
-        {can.length ? can.map((line) => <li key={line}>{line}</li>) : <li>Açık yetki yok</li>}
-      </ul>
-      <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Yapamaz</div>
-      <ul className="mt-1 mb-1.5 list-disc pl-4 text-[12px] leading-snug text-slate-700 marker:text-red-600">
-        {cannot.map((line) => <li key={line}>{line}</li>)}
-      </ul>
-      {!mobile && userCount > 0 && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded-[10px] p-2 text-[11px] leading-snug" data-testid="role-user-warn">
-          Bu rolde {userCount} kullanıcı var. Değişiklikler &quot;Kaydet&quot; ile uygulanır.
-        </div>
-      )}
     </div>
   );
 }
@@ -238,9 +217,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
           </button>
         </div>
 
-        <div className="min-[1024px]:hidden mb-2 bg-slate-50 border border-slate-200 rounded-[14px] p-2.5" data-testid="role-summary-mobile-wrap">
-          <Summary perms={perms} features={features} userCount={role?.user_count || 0} mobile />
-        </div>
+        <RoleSummarySlot placement="inline" perms={perms} features={features} userCount={role?.user_count || 0} />
 
         {EDITOR_GROUPS.map((group) => {
           const rows = visibleRows(group, { query, openOnly, perms, unwired });
@@ -316,9 +293,7 @@ export function RoleEditor({ companyId, rolesData, reload }) {
         )}
       </div>
 
-      <div className="hidden min-[1024px]:block min-[1024px]:max-[1279px]:col-start-2 min-[1024px]:max-[1279px]:row-start-2 min-[1280px]:col-start-3 min-[1280px]:row-start-1 min-[1280px]:sticky min-[1280px]:top-20 min-[1280px]:z-10 min-[1280px]:max-h-[calc(100vh-5.5rem)] min-[1280px]:self-start min-[1280px]:overflow-y-auto w-full bg-white border border-slate-200 rounded-[14px] p-3" data-testid="role-summary-side">
-        <Summary perms={perms} features={features} userCount={role?.user_count || 0} />
-      </div>
+      <RoleSummarySlot placement="side" perms={perms} features={features} userCount={role?.user_count || 0} />
 
       {help && (
         <div className="fixed inset-0 z-40" data-testid="role-help-drawer">
