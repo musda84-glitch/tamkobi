@@ -18,7 +18,7 @@ import math
 from decimal import Decimal, InvalidOperation
 
 import storage_shared_v2
-from storage_shared_v2 import SharedV2Collection
+from storage_shared_v2 import SharedV2Collection, _NoPush
 
 log = logging.getLogger("storage_tables")
 
@@ -141,6 +141,22 @@ def _query_number(value):
     if not number.is_finite():
         return None
     return format(number.quantize(_DECIMAL_SCALE), "f")
+
+
+def _mixed_bounds(values) -> bool:
+    if not isinstance(values, list):
+        return False
+    kinds = set()
+    for item in values:
+        if isinstance(item, bool):
+            kinds.add("other")
+        elif isinstance(item, str):
+            kinds.add("str")
+        elif isinstance(item, (int, float)):
+            kinds.add("num")
+        else:
+            kinds.add("other")
+    return len(kinds) > 1
 
 
 def collection_for(company_id: str, name: str) -> "TableCollection":
@@ -284,10 +300,55 @@ class TableCollection(SharedV2Collection):
         return stored_value(body, field, width)
 
     def _cmp_sql(self, field, symbol, value):
-        if field in self.spec.numeric and _query_number(value) is not None:
+        if field in self.spec.numeric:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise _NoPush("type")
+            number = _query_number(value)
+            if number is None:
+                raise _NoPush("type")
             column = self.spec.columns[field][0]
-            return f"({column} {symbol} ?)", [_query_number(value)], [field]
+            return f"({column} {symbol} ?)", [number], [field]
         return super()._cmp_sql(field, symbol, value)
+
+    def _eq_sql(self, field, value):
+        if field in self.spec.numeric and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise _NoPush("type")
+        return super()._eq_sql(field, value)
+
+    def _in_sql(self, field, values, negate: bool):
+        if field in self.spec.numeric and _mixed_bounds(values):
+            raise _NoPush("operator:$nin" if negate else "operator:$in")
+        return super()._in_sql(field, values, negate)
+
+    def _scalars(self, fields) -> bool:
+        """Sayı kolonunun güvenilirliği sorgular arasında tutulmaz.
+
+        Başka bir worker 10**15 gibi sığmayan satır yazınca önbellekteki
+        'güvenli' sonucu o satırı $gt dışında bırakır. Kontrol her sorguda,
+        firma kapsamında ve tutar indeksinden okunur.
+        """
+        others = []
+        for field in fields:
+            if field in self.spec.numeric:
+                if not self._numeric_column_reliable(field):
+                    return False
+            else:
+                others.append(field)
+        if others:
+            return super()._scalars(others)
+        return True
+
+    def _numeric_column_reliable(self, field) -> bool:
+        scope, scope_params = self._scope()
+        row = self._run(
+            f"SELECT 1 FROM {self._data_table()} WHERE {scope} AND "
+            + self._nonscalar_sql(field)
+            + " LIMIT 1",
+            tuple(scope_params),
+        ).fetchone()
+        return row is None
 
     def _search_expr(self, field, value, allow_equal: bool):
         if field in self.spec.numeric:

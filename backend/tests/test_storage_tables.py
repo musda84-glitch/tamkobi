@@ -817,6 +817,117 @@ def test_extreme_amounts_match_docs_v2(conn):
     assert float(kept) == 10
 
 
+def _bank(store, company):
+    return storage_tables.TableCollection(
+        store, company, "bank_transactions", storage_tables.SPECS["bank_transactions"],
+    )
+
+
+def _docs_bank(store, company):
+    return storage_shared_v2.SharedV2Collection(store, company, "bank_transactions")
+
+
+async def _text_bound_parity(company):
+    docs = storage_shared_v2.collection_for(company, "bank_transactions")
+    real = storage_tables.collection_for(company, "bank_transactions")
+    for doc_id, amount in (("a", 20), ("b", 3), ("c", 0), ("d", 9)):
+        body = {"_id": doc_id, "amount": amount, "date": "2024-01-01"}
+        await docs.insert_one(dict(body))
+        await real.insert_one(dict(body))
+
+    async def ids(api, query):
+        found = await api.find(query).sort("_id", 1).to_list(20)
+        return [doc["_id"] for doc in found]
+
+    report = {
+        "gt_text": (
+            await ids(docs, {"amount": {"$gt": "1"}}),
+            await ids(real, {"amount": {"$gt": "1"}}),
+        ),
+    }
+    for doc_id, amount in (("e", "abc"),):
+        body = {"_id": doc_id, "amount": amount, "date": "2024-01-02"}
+        await docs.insert_one(dict(body))
+        await real.insert_one(dict(body))
+    queries = {
+        "gt_with_text": {"amount": {"$gt": "1"}},
+        "gte_text": {"amount": {"$gte": "3"}},
+        "lt_text": {"amount": {"$lt": "3"}},
+        "lte_text": {"amount": {"$lte": "3"}},
+        "eq_text": {"amount": "abc"},
+        "eq_number_text": {"amount": "20"},
+        "in_mix": {"amount": {"$in": ["abc", 20, 0]}},
+        "in_text": {"amount": {"$in": ["abc", "1"]}},
+    }
+    for name, query in queries.items():
+        report[name] = (await ids(docs, query), await ids(real, query))
+    return report
+
+
+def _assert_text_bounds(report):
+    assert report["gt_text"][0] == ["a", "b", "d"]
+    assert report["gt_with_text"][0] == ["a", "b", "d", "e"]
+    assert report["eq_text"][0] == ["e"]
+    assert report["eq_number_text"][0] == []
+    assert report["in_mix"][0] == ["a", "c", "e"]
+    assert report["in_text"][0] == ["e"]
+    for name, pair in report.items():
+        assert pair[1] == pair[0], (name, pair)
+
+
+def test_text_bounds_on_amount_match_docs_v2(conn):
+    report = asyncio.run(_text_bound_parity("co-text"))
+    _assert_text_bounds(report)
+
+
+async def _cached_amount_ids(store, company, query):
+    found = await _bank(store, company).find(query).sort("_id", 1).to_list(10)
+    return [doc["_id"] for doc in found]
+
+
+def test_amount_safety_is_rechecked_for_each_store(tmp_path):
+    path = tmp_path / "amounts.db"
+    setup = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+    _apply_conn(setup)
+    setup.close()
+    company = "co-vis"
+
+    def open_store():
+        conn = sqlite3.connect(path, check_same_thread=False, timeout=15)
+        conn.row_factory = sqlite3.Row
+        store = storage_shared_v2.SharedV2Store()
+        store.attach(conn, "sqlite", owned=False)
+        return conn, store
+
+    conn_a, store_a = open_store()
+    conn_b, store_b = open_store()
+    query = {"amount": {"$gt": 10}}
+    try:
+        async def put(store, doc):
+            await _docs_bank(store, company).insert_one(dict(doc))
+            await _bank(store, company).insert_one(dict(doc))
+
+        asyncio.run(put(store_a, {"_id": "p", "amount": 20, "date": "2024-01-01"}))
+        first = asyncio.run(_cached_amount_ids(store_a, company, query))
+        conn_a.rollback()
+        asyncio.run(put(store_b, {"_id": "q", "amount": 10**15, "date": "2024-01-02"}))
+        conn_b.commit()
+        conn_a.rollback()
+        second = asyncio.run(_cached_amount_ids(store_a, company, query))
+        assert (company, "bank_transactions", "amount") not in store_a.scalar_ok
+        assert (company, "bank_transactions", "amount") not in store_a.scalar_bad
+        docs = asyncio.run(
+            _docs_bank(store_a, company).find(query).sort("_id", 1).to_list(10)
+        )
+        assert first == ["p"]
+        assert [doc["_id"] for doc in docs] == ["p", "q"]
+        assert second == ["p", "q"]
+    finally:
+        conn_a.close()
+        conn_b.close()
+        storage_shared_v2.reset_store()
+
+
 def test_case_distinct_companies_keep_unique_rows(conn):
     assert asyncio.run(_case_distinct_companies()) == ["1"]
     rows = conn.execute(
@@ -979,6 +1090,50 @@ def test_mariadb_datetime_case_collation_and_amount_index():
             ("co-ext", "mid"),
         )[0][0]
         assert float(kept) == 10.5
+        _assert_text_bounds(asyncio.run(_text_bound_parity("co-text")))
+        other = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=database,
+            charset="utf8mb4",
+            autocommit=False,
+            connect_timeout=5,
+        )
+        try:
+            with other.cursor() as cur:
+                cur.execute(
+                    "SET SESSION sql_mode = "
+                    "'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+                )
+            other.commit()
+            store_b = storage_shared_v2.SharedV2Store()
+            store_b.attach(other, "mysql", owned=False)
+            company = "co-vis"
+            query = {"amount": {"$gt": 10}}
+
+            async def put(store, doc):
+                await _docs_bank(store, company).insert_one(dict(doc))
+                await _bank(store, company).insert_one(dict(doc))
+
+            asyncio.run(put(store, {"_id": "p", "amount": 20, "date": "2024-01-01"}))
+            first = asyncio.run(_cached_amount_ids(store, company, query))
+            opened.rollback()
+            asyncio.run(put(store_b, {"_id": "q", "amount": 10**15, "date": "2024-01-02"}))
+            other.commit()
+            opened.rollback()
+            second = asyncio.run(_cached_amount_ids(store, company, query))
+            assert (company, "bank_transactions", "amount") not in store.scalar_ok
+            assert (company, "bank_transactions", "amount") not in store.scalar_bad
+            docs = asyncio.run(
+                _docs_bank(store, company).find(query).sort("_id", 1).to_list(10)
+            )
+            assert first == ["p"]
+            assert [doc["_id"] for doc in docs] == ["p", "q"]
+            assert second == ["p", "q"]
+        finally:
+            other.close()
     finally:
         storage_shared_v2.reset_store()
         try:
