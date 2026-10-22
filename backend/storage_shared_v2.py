@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from urllib.parse import unquote, urlparse
 
 from mysql_store import (
@@ -46,23 +47,25 @@ from mysql_store import (
 log = logging.getLogger("storage_shared_v2")
 
 # Sık okunan JSON alanları. Gerekçe PR açıklamasında.
+# (kolon, alan, indeks uzunluğu). Uzun metin LEFT/substr ile kesilir.
 GENERATED_COLUMNS = (
-    ("g_status", "status"),
-    ("g_contact_id", "contact_id"),
-    ("g_date", "date"),
-    ("g_created_at", "created_at"),
-    ("g_account_id", "account_id"),
-    ("g_invoice_number", "invoice_number"),
-    ("g_sku", "sku"),
-    ("g_barcode", "barcode"),
-    ("g_partner_id", "partner_id"),
-    ("g_account_name", "account_name"),
-    ("g_issue_date", "issue_date"),
-    ("g_order_number", "order_number"),
+    ("g_status", "status", 64),
+    ("g_contact_id", "contact_id", 64),
+    ("g_date", "date", 32),
+    ("g_created_at", "created_at", 40),
+    ("g_account_id", "account_id", 64),
+    ("g_invoice_number", "invoice_number", 64),
+    ("g_sku", "sku", 64),
+    ("g_barcode", "barcode", 64),
+    ("g_partner_id", "partner_id", 64),
+    ("g_account_name", "account_name", 191),
+    ("g_issue_date", "issue_date", 32),
+    ("g_order_number", "order_number", 64),
 )
-_COLUMN_OF = {field: column for column, field in GENERATED_COLUMNS}
+_COLUMN_OF = {field: (column, width) for column, field, width in GENERATED_COLUMNS}
 ENV_DSN = "STORAGE_SHARED_V2_DSN"
 _MAX_LIMIT = 18446744073709551615
+_WRITE_ATTEMPTS = 3
 
 _store = None
 
@@ -303,17 +306,21 @@ class SharedV2Collection:
     async def insert_one(self, doc):
         _guard(self.name, "insert_one", doc=doc)
         body = self._prepare(doc)
-        self._begin()
-        try:
-            self._check_unique(body, None)
-            self._run(
-                "INSERT INTO docs_v2 (company_id, collection, id, doc) VALUES (?,?,?,?)",
-                (self.company_id, self.name, str(body["_id"]), dumps(body)),
-            )
-            self._sync_unique(body)
-            self._commit()
-        except Exception as exc:
-            self._fail(exc)
+
+        def write():
+            self._begin()
+            try:
+                self._check_unique(body, None)
+                self._run(
+                    "INSERT INTO docs_v2 (company_id, collection, id, doc) VALUES (?,?,?,?)",
+                    (self.company_id, self.name, str(body["_id"]), dumps(body)),
+                )
+                self._sync_unique(body)
+                self._commit()
+            except Exception as exc:
+                self._fail(exc)
+
+        self._run_write(write)
         self._invalidate()
         _note(self.name, body)
         return InsertOneResult(body["_id"])
@@ -339,17 +346,21 @@ class SharedV2Collection:
             return UpdateResult(1, 0, None)
         new_doc = self._prepare(new_doc)
         new_doc["_id"] = old.get("_id") or new_doc.get("_id")
-        self._begin()
-        try:
-            self._check_unique(new_doc, old.get("_id"))
-            self._run(
-                "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                (dumps(new_doc), self.company_id, self.name, str(old["_id"])),
-            )
-            self._sync_unique(new_doc)
-            self._commit()
-        except Exception as exc:
-            self._fail(exc)
+
+        def write():
+            self._begin()
+            try:
+                self._check_unique(new_doc, old.get("_id"))
+                self._run(
+                    "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
+                    (dumps(new_doc), self.company_id, self.name, str(old["_id"])),
+                )
+                self._sync_unique(new_doc)
+                self._commit()
+            except Exception as exc:
+                self._fail(exc)
+
+        self._run_write(write)
         self._invalidate()
         _note(self.name, new_doc)
         return UpdateResult(1, 1, None)
@@ -360,33 +371,40 @@ class SharedV2Collection:
         doc_id = q.get("_id")
         if doc_id is None or isinstance(doc_id, dict):
             raise ValueError("update_one_atomic requires equality _id in query")
-        self._begin()
-        try:
-            row = self._run(
-                "SELECT doc FROM docs_v2 WHERE company_id=? AND collection=? AND id=?",
-                (self.company_id, self.name, str(doc_id)),
-            ).fetchone()
-            if not row:
-                self._rollback()
-                return UpdateResult(0, 0, None)
-            old = loads(row[0])
-            if not match_query(old, q):
-                self._rollback()
-                return UpdateResult(0, 0, None)
-            new_doc = apply_update(old, update, q, is_insert=False)
-            changed = new_doc != old
-            if changed:
-                new_doc = self._prepare(new_doc)
-                new_doc["_id"] = old.get("_id")
-                self._check_unique(new_doc, old.get("_id"))
-                self._run(
-                    "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                    (dumps(new_doc), self.company_id, self.name, str(doc_id)),
-                )
-                self._sync_unique(new_doc)
-            self._commit()
-        except Exception as exc:
-            self._fail(exc)
+
+        def write():
+            self._begin()
+            try:
+                row = self._run(
+                    "SELECT doc FROM docs_v2 WHERE company_id=? AND collection=? AND id=?",
+                    (self.company_id, self.name, str(doc_id)),
+                ).fetchone()
+                if not row:
+                    self._rollback()
+                    return UpdateResult(0, 0, None), None
+                old = loads(row[0])
+                if not match_query(old, q):
+                    self._rollback()
+                    return UpdateResult(0, 0, None), None
+                new_doc = apply_update(old, update, q, is_insert=False)
+                changed = new_doc != old
+                if changed:
+                    new_doc = self._prepare(new_doc)
+                    new_doc["_id"] = old.get("_id")
+                    self._check_unique(new_doc, old.get("_id"))
+                    self._run(
+                        "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
+                        (dumps(new_doc), self.company_id, self.name, str(doc_id)),
+                    )
+                    self._sync_unique(new_doc)
+                self._commit()
+                return changed, new_doc if changed else None
+            except Exception as exc:
+                self._fail(exc)
+
+        changed, new_doc = self._run_write(write)
+        if isinstance(changed, UpdateResult):
+            return changed
         if changed:
             self._invalidate()
             _note(self.name, new_doc)
@@ -407,18 +425,21 @@ class SharedV2Collection:
                 new_doc["_id"] = old.get("_id") or new_doc.get("_id")
                 changed.append(new_doc)
         if changed:
-            self._begin()
-            try:
-                for doc in changed:
-                    self._check_unique(doc, doc.get("_id"))
-                    self._run(
-                        "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                        (dumps(doc), self.company_id, self.name, str(doc["_id"])),
-                    )
-                    self._sync_unique(doc)
-                self._commit()
-            except Exception as exc:
-                self._fail(exc)
+            def write():
+                self._begin()
+                try:
+                    for doc in changed:
+                        self._check_unique(doc, doc.get("_id"))
+                        self._run(
+                            "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
+                            (dumps(doc), self.company_id, self.name, str(doc["_id"])),
+                        )
+                        self._sync_unique(doc)
+                    self._commit()
+                except Exception as exc:
+                    self._fail(exc)
+
+            self._run_write(write)
             self._invalidate()
             for doc in changed:
                 _note(self.name, doc)
@@ -435,17 +456,21 @@ class SharedV2Collection:
             return UpdateResult(0, 1, result.inserted_id)
         body = self._prepare(replacement)
         body["_id"] = old.get("_id") or body.get("_id")
-        self._begin()
-        try:
-            self._check_unique(body, old.get("_id"))
-            self._run(
-                "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                (dumps(body), self.company_id, self.name, str(body["_id"])),
-            )
-            self._sync_unique(body)
-            self._commit()
-        except Exception as exc:
-            self._fail(exc)
+
+        def write():
+            self._begin()
+            try:
+                self._check_unique(body, old.get("_id"))
+                self._run(
+                    "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
+                    (dumps(body), self.company_id, self.name, str(body["_id"])),
+                )
+                self._sync_unique(body)
+                self._commit()
+            except Exception as exc:
+                self._fail(exc)
+
+        self._run_write(write)
         self._invalidate()
         _note(self.name, body)
         return UpdateResult(1, 1, None)
@@ -468,17 +493,20 @@ class SharedV2Collection:
         new_doc = self._prepare(new_doc)
         new_doc["_id"] = old.get("_id") or new_doc.get("_id")
         if new_doc != old:
-            self._begin()
-            try:
-                self._check_unique(new_doc, old.get("_id"))
-                self._run(
-                    "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
-                    (dumps(new_doc), self.company_id, self.name, str(new_doc["_id"])),
-                )
-                self._sync_unique(new_doc)
-                self._commit()
-            except Exception as exc:
-                self._fail(exc)
+            def write():
+                self._begin()
+                try:
+                    self._check_unique(new_doc, old.get("_id"))
+                    self._run(
+                        "UPDATE docs_v2 SET doc=? WHERE company_id=? AND collection=? AND id=?",
+                        (dumps(new_doc), self.company_id, self.name, str(new_doc["_id"])),
+                    )
+                    self._sync_unique(new_doc)
+                    self._commit()
+                except Exception as exc:
+                    self._fail(exc)
+
+            self._run_write(write)
             self._invalidate()
             _note(self.name, new_doc)
         out = new_doc if return_document else old
@@ -489,16 +517,19 @@ class SharedV2Collection:
         old = await self._first(query)
         if old is None:
             return DeleteResult(0)
-        self._begin()
-        try:
-            self._drop_unique([str(old["_id"])])
-            self._run(
-                "DELETE FROM docs_v2 WHERE company_id=? AND collection=? AND id=?",
-                (self.company_id, self.name, str(old["_id"])),
-            )
-            self._commit()
-        except Exception as exc:
-            self._fail(exc)
+        def write():
+            self._begin()
+            try:
+                self._drop_unique([str(old["_id"])])
+                self._run(
+                    "DELETE FROM docs_v2 WHERE company_id=? AND collection=? AND id=?",
+                    (self.company_id, self.name, str(old["_id"])),
+                )
+                self._commit()
+            except Exception as exc:
+                self._fail(exc)
+
+        self._run_write(write)
         self._invalidate()
         _note(self.name, old)
         return DeleteResult(1)
@@ -513,32 +544,42 @@ class SharedV2Collection:
                 return DeleteResult(0)
             ids = [str(doc["_id"]) for doc in docs if doc.get("_id") is not None]
             marks = ",".join(["?"] * len(ids))
-            self._begin()
-            try:
-                self._drop_unique(ids)
-                cur = self._run(
-                    f"DELETE FROM docs_v2 WHERE company_id=? AND collection=? AND id IN ({marks})",
-                    (self.company_id, self.name, *ids),
-                )
-                self._commit()
-            except Exception as exc:
-                self._fail(exc)
+
+            def write():
+                self._begin()
+                try:
+                    self._drop_unique(ids)
+                    deleted = self._run(
+                        f"DELETE FROM docs_v2 WHERE company_id=? AND collection=? AND id IN ({marks})",
+                        (self.company_id, self.name, *ids),
+                    )
+                    self._commit()
+                    return deleted
+                except Exception as exc:
+                    self._fail(exc)
+
+            cur = self._run_write(write)
             self._invalidate()
             for doc in docs:
                 _note(self.name, doc)
             return DeleteResult(cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else len(ids))
         sql, params = where
-        self._begin()
-        try:
-            self._run(
-                "DELETE FROM docs_v2_unique WHERE company_id=? AND collection=? AND doc_id IN ("
-                "SELECT id FROM docs_v2 WHERE " + sql + ")",
-                (self.company_id, self.name, *params),
-            )
-            cur = self._run("DELETE FROM docs_v2 WHERE " + sql, params)
-            self._commit()
-        except Exception as exc:
-            self._fail(exc)
+
+        def write():
+            self._begin()
+            try:
+                self._run(
+                    "DELETE FROM docs_v2_unique WHERE company_id=? AND collection=? AND doc_id IN ("
+                    "SELECT id FROM docs_v2 WHERE " + sql + ")",
+                    (self.company_id, self.name, *params),
+                )
+                deleted = self._run("DELETE FROM docs_v2 WHERE " + sql, params)
+                self._commit()
+                return deleted
+            except Exception as exc:
+                self._fail(exc)
+
+        cur = self._run_write(write)
         self._invalidate()
         deleted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
         return DeleteResult(deleted)
@@ -788,9 +829,10 @@ class SharedV2Collection:
         raise _NoPush(f"operator:{op}")
 
     def _eq_sql(self, field, value):
+        pred, bind = self._eq_pred(field, value)
         return (
-            f"({self._text_type_sql(field)} AND {self._eq_pred(field)})",
-            [value],
+            f"({self._text_type_sql(field)} AND {pred})",
+            bind,
             [field],
         )
 
@@ -799,11 +841,11 @@ class SharedV2Collection:
             return ("", [], []) if negate else ("0", [], [])
         if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
             raise _NoPush("operator:$nin" if negate else "operator:$in")
-        pred = self._in_pred(field, len(values))
+        pred, bind = self._in_pred(field, values)
         sql = f"({self._text_type_sql(field)} AND {pred})"
         if negate:
             sql = "NOT " + sql
-        return sql, list(values), [field]
+        return sql, bind, [field]
 
     def _regex_sql(self, field, cond):
         if cond.get("$options"):
@@ -812,7 +854,7 @@ class SharedV2Collection:
         if not _PREFIX_RE.match(pattern):
             raise _NoPush("operator:$regex")
         prefix = pattern[1:]
-        expr = self._text_expr(field)
+        expr = self._search_expr(field, prefix, allow_equal=True)
         if self.store.dialect == "mysql":
             like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             sql = (
@@ -825,7 +867,7 @@ class SharedV2Collection:
     def _cmp_sql(self, field, symbol, value):
         if not isinstance(value, str):
             raise _NoPush("type")
-        expr = self._text_expr(field)
+        expr = self._search_expr(field, value, allow_equal=False)
         if self.store.dialect == "mysql":
             expr = f"{expr} COLLATE utf8mb4_bin"
         compared = f"({self._text_type_sql(field)} AND {expr} {symbol} ?)"
@@ -865,33 +907,53 @@ class SharedV2Collection:
             bits.append(tie)
         return "ORDER BY " + ", ".join(bits), tuple(fields)
 
-    def _eq_pred(self, field):
-        # Generated kolon zaten JSON_UNQUOTE sonucudur. Düz metinle karşılaştırılır.
-        column = _COLUMN_OF.get(field)
-        if column:
-            return f"{column} = ?"
+    def _full_text(self, field):
         if self.store.dialect == "mysql":
-            return f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}')) = ?"
-        return f"json_extract(doc, '$.{field}') = ?"
+            return f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}'))"
+        return f"json_extract(doc, '$.{field}')"
 
-    def _in_pred(self, field, count):
-        marks = ",".join(["?"] * count)
-        column = _COLUMN_OF.get(field)
-        if column:
-            return f"{column} IN ({marks})"
-        if self.store.dialect == "mysql":
-            return f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}')) IN ({marks})"
-        return f"json_extract(doc, '$.{field}') IN ({marks})"
+    def _search_expr(self, field, value, allow_equal: bool):
+        """Uzun aranan değer kesik indeks kolonuna değil tam JSON metnine gider.
+
+        Aralıkta sınır kolon genişliğine eşitse kesik kolon sıralamayı bozar;
+        orada da tam metin kullanılır. Önek aramasında eşit uzunluk güvenlidir.
+        """
+        found = _COLUMN_OF.get(field)
+        if not found or not isinstance(value, str):
+            return self._full_text(field)
+        column, width = found
+        limit = width if allow_equal else width - 1
+        if len(value) <= limit:
+            return column
+        return self._full_text(field)
+
+    def _eq_pred(self, field, value):
+        # Kesik kolon tek başına öneki tam eşleşme sayar. Kısa değerde indeks
+        # daraltır, tam metin sonucu doğrular. Uzun değerde yalnız tam metin.
+        full = self._full_text(field)
+        found = _COLUMN_OF.get(field)
+        if found and isinstance(value, str) and len(value) <= found[1]:
+            return f"({found[0]} = ? AND {full} = ?)", [value, value]
+        return f"{full} = ?", [value]
+
+    def _in_pred(self, field, values):
+        full = self._full_text(field)
+        marks = ",".join(["?"] * len(values))
+        found = _COLUMN_OF.get(field)
+        if found and all(len(item) <= found[1] for item in values):
+            return (
+                f"({found[0]} IN ({marks}) AND {full} IN ({marks}))",
+                list(values) + list(values),
+            )
+        return f"{full} IN ({marks})", list(values)
 
     def _text_expr(self, field):
         if field == "_id":
             return "id"
-        column = _COLUMN_OF.get(field)
-        if column:
-            return column
-        if self.store.dialect == "mysql":
-            return f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}'))"
-        return f"json_extract(doc, '$.{field}')"
+        found = _COLUMN_OF.get(field)
+        if found:
+            return found[0]
+        return self._full_text(field)
 
     def _order_expr(self, field, token):
         expr = self._text_expr(field)
@@ -928,9 +990,9 @@ class SharedV2Collection:
         return f"json_type(doc, '$.{field}') IS NOT NULL"
 
     def _nonscalar_sql(self, field):
-        column = _COLUMN_OF.get(field)
-        if column:
-            return f"{column}_bad IS NOT NULL"
+        found = _COLUMN_OF.get(field)
+        if found:
+            return f"{found[0]}_bad IS NOT NULL"
         if self.store.dialect == "mysql":
             return (
                 f"JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IS NOT NULL "
@@ -994,6 +1056,17 @@ class SharedV2Collection:
             raise DuplicateKeyError("duplicate key") from None
         raise exc
 
+    def _run_write(self, work):
+        """Deadlock ve kilit beklemesi işlemi geri alıp sınırlı tekrar dener."""
+        for attempt in range(_WRITE_ATTEMPTS):
+            try:
+                return work()
+            except Exception as exc:
+                if _is_retryable_lock(exc) and attempt + 1 < _WRITE_ATTEMPTS:
+                    time.sleep(0.02 * (attempt + 1))
+                    continue
+                raise
+
     def _unique_names(self):
         names = []
         for item in self.store.indexes.get(self.name) or []:
@@ -1020,7 +1093,7 @@ class SharedV2Collection:
                 values.append(value)
             if missing:
                 continue
-            slots.append((_unique_name(spec), _unique_token(values)))
+            slots.append((_unique_name(spec), *_unique_parts(values)))
         return slots
 
     def _sync_unique(self, doc):
@@ -1034,11 +1107,12 @@ class SharedV2Collection:
             f"AND field_name IN ({marks})",
             (self.company_id, self.name, doc_id, *names),
         )
-        for field_name, field_value in self._unique_slots(doc):
+        for field_name, field_value, value_hash in self._unique_slots(doc):
             self._run(
                 "INSERT INTO docs_v2_unique "
-                "(company_id, collection, field_name, field_value, doc_id) VALUES (?,?,?,?,?)",
-                (self.company_id, self.name, field_name, field_value, doc_id),
+                "(company_id, collection, field_name, field_value, value_hash, doc_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (self.company_id, self.name, field_name, field_value, value_hash, doc_id),
             )
 
     def _drop_unique(self, doc_ids):
@@ -1074,11 +1148,11 @@ class SharedV2Collection:
                     values.append(value)
                 if missing:
                     continue
-                field_value = _unique_token(values)
+                field_value, value_hash = _unique_parts(values)
                 held = self._run(
                     "SELECT doc_id FROM docs_v2_unique WHERE company_id=? AND collection=? "
-                    "AND field_name=? AND field_value=?",
-                    (str(company_id), self.name, field_name, field_value),
+                    "AND field_name=? AND value_hash=?",
+                    (str(company_id), self.name, field_name, value_hash),
                 ).fetchone()
                 if held:
                     if str(held[0]) != str(doc_id):
@@ -1086,8 +1160,9 @@ class SharedV2Collection:
                     continue
                 self._run(
                     "INSERT INTO docs_v2_unique "
-                    "(company_id, collection, field_name, field_value, doc_id) VALUES (?,?,?,?,?)",
-                    (str(company_id), self.name, field_name, field_value, str(doc_id)),
+                    "(company_id, collection, field_name, field_value, value_hash, doc_id) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (str(company_id), self.name, field_name, field_value, value_hash, str(doc_id)),
                 )
             self._commit()
         except Exception as exc:
@@ -1120,8 +1195,9 @@ class SharedV2Collection:
             clauses = ["company_id=?", "collection=?"]
             params = [self.company_id, self.name]
             for field, value in zip(spec, values):
-                clauses.append(self._eq_pred(field))
-                params.append(value)
+                pred, bind = self._eq_pred(field, value)
+                clauses.append(pred)
+                params.extend(bind)
             if own is not None:
                 clauses.append("id<>?")
                 params.append(own)
@@ -1271,11 +1347,24 @@ def _unique_name(spec) -> str:
     return "h:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:61]
 
 
-def _unique_token(values) -> str:
+def _unique_parts(values):
+    """Kısa değer field_value'da durur. Benzersizlik her zaman SHA-256 hex kolonundadır."""
     raw = json.dumps(list(values), ensure_ascii=False, separators=(",", ":"), default=str)
-    if len(raw) <= 188:
-        return "v:" + raw
-    return "h:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    stored = raw if len(raw) <= 191 else digest
+    return stored, digest
+
+
+def _is_retryable_lock(exc: BaseException) -> bool:
+    args = getattr(exc, "args", ())
+    if args and args[0] in (1020, 1205, 1213):
+        return True
+    text = str(exc).lower()
+    return (
+        "deadlock" in text
+        or "lock wait timeout" in text
+        or "record has changed since last read" in text
+    )
 
 
 def _is_duplicate(exc: BaseException) -> bool:

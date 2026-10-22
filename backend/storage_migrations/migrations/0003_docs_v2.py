@@ -1,14 +1,15 @@
 """docs_v2 şeması.
 
 SQLite json_extract kullanır. MySQL/MariaDB generated kolon
-JSON_UNQUOTE(JSON_EXTRACT(...)) olur ve VARCHAR(n) olarak indekslenir.
-TEXT generated kolon prefixsiz indekste 1170 verir. doc MySQL'de JSON,
-SQLite'ta LONGTEXT'tir; 64KB TEXT sınırı yoktur.
+LEFT(JSON_UNQUOTE(JSON_EXTRACT(...)), n) olur ve VARCHAR(n) olarak indekslenir.
+Kesme olmazsa strict modda uzun metin 1406 verir. TEXT generated kolon
+prefixsiz indekste 1170 verir. doc MySQL'de JSON, SQLite'ta LONGTEXT'tir.
 
 Benzersiz alanlar koleksiyon bazında çalışma anında bildirilir. status gibi
 alanlar firma içinde tekrar eder, bu yüzden generated kolonların hepsine
 UNIQUE konmaz. Eşzamanlı yazmayı docs_v2_unique birincil anahtarı tutar:
-(company_id, collection, field_name, field_value).
+(company_id, collection, field_name, value_hash). value_hash tam değerin
+SHA-256 hex özetidir; uzun metin field_value sınırına takılmaz.
 """
 
 _FIELDS = (
@@ -32,8 +33,9 @@ CREATE TABLE IF NOT EXISTS docs_v2_unique (
   collection VARCHAR(128) NOT NULL,
   field_name VARCHAR(64) NOT NULL,
   field_value VARCHAR(191) NOT NULL,
+  value_hash CHAR(64) NOT NULL,
   doc_id VARCHAR(191) NOT NULL,
-  PRIMARY KEY (company_id, collection, field_name, field_value)
+  PRIMARY KEY (company_id, collection, field_name, value_hash)
 )
 """.strip()
 
@@ -47,14 +49,14 @@ def _table(kind: str) -> str:
     ]
     for column, field, length in _FIELDS:
         if kind == "mysql":
-            value = f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}'))"
+            value = f"LEFT(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}')), {length})"
             marker = (
                 f"CASE WHEN JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IS NULL "
                 f"OR JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IN ('STRING', 'NULL') "
                 f"THEN NULL ELSE '1' END"
             )
         else:
-            value = f"json_extract(doc, '$.{field}')"
+            value = f"substr(json_extract(doc, '$.{field}'), 1, {length})"
             marker = (
                 f"CASE WHEN json_type(doc, '$.{field}') IS NULL "
                 f"OR json_type(doc, '$.{field}') IN ('text', 'null') "

@@ -340,19 +340,21 @@ def test_migration_contract_and_no_startup_create():
     mysql_blob = "\n".join(mig.mysql_steps)
     for blob in (sqlite_blob, mysql_blob):
         assert "PRIMARY KEY (company_id, collection, id)" in blob
-        assert "PRIMARY KEY (company_id, collection, field_name, field_value)" in blob
+        assert "PRIMARY KEY (company_id, collection, field_name, value_hash)" in blob
+        assert "value_hash CHAR(64) NOT NULL" in blob
         assert " g_status TEXT" not in blob
         assert "doc TEXT " not in blob
     assert "doc LONGTEXT NOT NULL" in sqlite_blob
-    assert "json_extract(doc, '$.status')" in sqlite_blob
+    assert "substr(json_extract(doc, '$.status'), 1, 64)" in sqlite_blob
     assert "CREATE INDEX IF NOT EXISTS idx_v2_status " in sqlite_blob
     assert "doc JSON NOT NULL" in mysql_blob
-    assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.status'))" in mysql_blob
+    assert "LEFT(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.status')), 64)" in mysql_blob
+    assert "LEFT(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.account_name')), 191)" in mysql_blob
     assert "g_status VARCHAR(64)" in mysql_blob
     assert "g_account_name VARCHAR(191)" in mysql_blob
     assert "CREATE INDEX IF NOT EXISTS" not in mysql_blob
     assert "CREATE INDEX idx_v2_status " in mysql_blob
-    for column, field in storage_shared_v2.GENERATED_COLUMNS:
+    for column, field, _width in storage_shared_v2.GENERATED_COLUMNS:
         for blob in (sqlite_blob, mysql_blob):
             assert column in blob
             assert f"{column}_bad" in blob
@@ -374,14 +376,22 @@ def test_mysql_equality_uses_unquoted_generated_text():
     assert "JSON_QUOTE" not in where
     assert "JSON_UNQUOTE(g_status)" not in where
     assert "STRING" in where
-    assert params == ["open"]
+    assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.status')) = ?" in where
+    assert params == ["open", "open"]
     assert fields == ("status",)
+    long_status = "S" * 100
+    long_where, long_params, _long_fields = coll._filter_sql({"status": long_status})
+    assert "g_status = ?" not in long_where
+    assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.status')) = ?" in long_where
+    assert long_params == [long_status]
     note_where, note_params, _note_fields = coll._filter_sql({"note": "bir"})
     assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.note')) = ?" in note_where
     assert note_params == ["bir"]
     store.dialect = "sqlite"
     where, params, _fields = coll._filter_sql({"status": "open"})
     assert "g_status = ?" in where
+    assert "json_extract(doc, '$.status') = ?" in where
+    assert params == ["open", "open"]
     assert "COALESCE(json_type(doc, '$.status'), '') = 'text'" in where
     assert "JSON_QUOTE" not in where
     assert "JSON_UNQUOTE" not in where
@@ -674,9 +684,67 @@ def test_unique_index_is_company_scoped_and_releases_on_delete(conn):
     held = conn.execute(
         "SELECT company_id, collection FROM docs_v2_unique "
         "WHERE field_name='invoice_number' AND field_value=? ORDER BY company_id",
-        ('v:["INV-1"]',),
+        ('["INV-1"]',),
     ).fetchall()
     assert [(row[0], row[1]) for row in held] == [(CO, "invoices"), (OTHER, "invoices")]
+
+
+def test_long_text_is_stored_and_matches_exactly(conn):
+    status = "S" * 100
+    account = "N" * 300
+    renamed = "M" * 300
+    coll = _shared(CO, "invoices")
+
+    async def run():
+        await coll.insert_one({
+            "_id": "long",
+            "company_id": CO,
+            "status": status,
+            "account_name": account,
+            "created_at": "2024-01-01",
+        })
+        stored = await coll.find_one({"_id": "long"})
+        by_full = await coll.find({"status": status}).to_list(5)
+        by_prefix = await coll.find({"status": status[:64]}).to_list(5)
+        await coll.update_one({"_id": "long"}, {"$set": {"account_name": renamed, "status": "T" * 80}})
+        updated = await coll.find_one({"account_name": renamed})
+        await coll.create_index("account_name", unique=True)
+        with pytest.raises(DuplicateKeyError):
+            await coll.insert_one({
+                "_id": "dup",
+                "company_id": CO,
+                "status": "open",
+                "account_name": renamed,
+                "created_at": "2024-01-02",
+            })
+        other_tail = "M" * 191 + "Z"
+        await coll.insert_one({
+            "_id": "tail",
+            "company_id": CO,
+            "status": "open",
+            "account_name": other_tail,
+            "created_at": "2024-01-03",
+        })
+        return stored, by_full, by_prefix, updated
+
+    stored, by_full, by_prefix, updated = asyncio.run(run())
+    assert stored["status"] == status
+    assert stored["account_name"] == account
+    assert [doc["_id"] for doc in by_full] == ["long"]
+    assert by_prefix == []
+    assert updated["account_name"] == renamed
+    assert updated["status"] == "T" * 80
+    column = conn.execute(
+        "SELECT g_status, g_account_name FROM docs_v2 WHERE id='long'"
+    ).fetchone()
+    assert column[0] == "T" * 64
+    assert column[1] == "M" * 191
+    hashes = conn.execute(
+        "SELECT value_hash, field_value FROM docs_v2_unique WHERE doc_id='long'"
+    ).fetchall()
+    assert len(hashes) == 1
+    assert len(hashes[0][0]) == 64
+    assert hashes[0][1] == hashes[0][0]
 
 
 def _mariadb_dsn():
@@ -758,90 +826,108 @@ def test_mariadb_migration_twice_and_concurrent_unique():
     finally:
         opened.close()
 
-    left = pymysql.connect(
-        host=parsed.hostname or "127.0.0.1",
-        port=parsed.port or 3306,
-        user=unquote(parsed.username or ""),
-        password=unquote(parsed.password or ""),
-        database=database,
-        charset="utf8mb4",
-        autocommit=False,
-        connect_timeout=5,
-    )
-    right = pymysql.connect(
-        host=parsed.hostname or "127.0.0.1",
-        port=parsed.port or 3306,
-        user=unquote(parsed.username or ""),
-        password=unquote(parsed.password or ""),
-        database=database,
-        charset="utf8mb4",
-        autocommit=False,
-        connect_timeout=5,
-    )
+    def connect_worker():
+        conn = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=database,
+            charset="utf8mb4",
+            autocommit=False,
+            connect_timeout=5,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SET SESSION sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+            )
+            cur.execute("SET SESSION innodb_lock_wait_timeout=2")
+        conn.commit()
+        return conn
+
     storage_shared_v2.reset_store()
     original = storage_shared_v2.SharedV2Collection._sync_unique
+    setup = connect_worker()
     try:
-        store_a = storage_shared_v2.SharedV2Store()
-        store_b = storage_shared_v2.SharedV2Store()
-        store_a.attach(left, "mysql", owned=False)
-        store_b.attach(right, "mysql", owned=False)
-        store_b.indexes = store_a.indexes
-        coll_a = storage_shared_v2.SharedV2Collection(store_a, CO, "invoices")
-        coll_b = storage_shared_v2.SharedV2Collection(store_b, CO, "invoices")
+        setup_store = storage_shared_v2.SharedV2Store()
+        setup_store.attach(setup, "mysql", owned=False)
+        setup_coll = storage_shared_v2.SharedV2Collection(setup_store, CO, "invoices")
 
         async def prepare():
-            await coll_a.create_index("invoice_number", unique=True)
-            await coll_a.insert_one({
+            await setup_coll.create_index("invoice_number", unique=True)
+            await setup_coll.insert_one({
                 "_id": "keep", "company_id": CO, "invoice_number": "OTHER",
-                "status": "open", "created_at": "2024-01-01",
+                "status": "S" * 100, "account_name": "N" * 300, "created_at": "2024-01-01",
             })
 
         asyncio.run(prepare())
+        kept = asyncio.run(setup_coll.find_one({"status": "S" * 100}))
+        assert kept["account_name"] == "N" * 300
+        assert asyncio.run(setup_coll.find({"status": "S" * 64}).to_list(5)) == []
+        indexes = setup_store.indexes
         barrier = threading.Barrier(2)
+        entered = {"n": 0}
+        gate = threading.Lock()
 
         def synced(self, doc):
-            barrier.wait(timeout=8)
+            with gate:
+                entered["n"] += 1
+                turn = entered["n"]
+            if turn <= 2:
+                barrier.wait(timeout=8)
             return original(self, doc)
 
         storage_shared_v2.SharedV2Collection._sync_unique = synced
         outcomes = []
+        errors = []
 
-        def worker(coll, doc_id):
+        def worker(doc_id):
+            conn = connect_worker()
             try:
-                asyncio.run(coll.insert_one({
-                    "_id": doc_id,
-                    "company_id": CO,
-                    "invoice_number": "RACE",
-                    "status": "open",
-                    "created_at": "2024-02-01",
-                }))
-                outcomes.append("ok")
-            except DuplicateKeyError:
-                outcomes.append("dup")
+                store = storage_shared_v2.SharedV2Store()
+                store.attach(conn, "mysql", owned=False)
+                store.indexes = indexes
+                coll = storage_shared_v2.SharedV2Collection(store, CO, "invoices")
+                try:
+                    asyncio.run(coll.insert_one({
+                        "_id": doc_id,
+                        "company_id": CO,
+                        "invoice_number": "RACE",
+                        "status": "open",
+                        "created_at": "2024-02-01",
+                    }))
+                    outcomes.append("ok")
+                except DuplicateKeyError:
+                    outcomes.append("dup")
+                except Exception as exc:
+                    errors.append(f"{doc_id} {type(exc).__name__}: {exc}")
+            except Exception as exc:
+                errors.append(f"{doc_id} bağlantı {type(exc).__name__}: {exc}")
+            finally:
+                conn.close()
 
         threads = [
-            threading.Thread(target=worker, args=(coll_a, "race-a")),
-            threading.Thread(target=worker, args=(coll_b, "race-b")),
+            threading.Thread(target=worker, args=("race-a",), name="race-a"),
+            threading.Thread(target=worker, args=("race-b",), name="race-b"),
         ]
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=15)
-        assert sorted(outcomes) == ["dup", "ok"]
-        with left.cursor() as cur:
+            thread.join(timeout=20)
+        alive = [thread.name for thread in threads if thread.is_alive()]
+        assert not alive, alive
+        assert errors == [], errors
+        assert sorted(outcomes) == ["dup", "ok"], outcomes
+        setup.commit()
+        with setup.cursor() as cur:
             cur.execute(
-                "SELECT id, JSON_UNQUOTE(JSON_EXTRACT(doc, '$.invoice_number')) "
-                "FROM docs_v2 WHERE company_id=%s AND collection=%s AND "
+                "SELECT id FROM docs_v2 WHERE company_id=%s AND collection=%s AND "
                 "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.invoice_number'))=%s",
                 (CO, "invoices", "RACE"),
             )
             raced = cur.fetchall()
-        assert len(raced) == 1
-        found = asyncio.run(coll_a.find({"invoice_number": "RACE"}).to_list(10))
-        assert len(found) == 1
-        assert found[0]["invoice_number"] == "RACE"
+        assert len(raced) == 1, (outcomes, errors, raced)
     finally:
         storage_shared_v2.SharedV2Collection._sync_unique = original
         storage_shared_v2.reset_store()
-        left.close()
-        right.close()
+        setup.close()
