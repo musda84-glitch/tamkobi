@@ -512,6 +512,295 @@ async def gift(company_id: str, credits: int, note: str = "Platform yüklemesi",
     return int(fresh.get("balance") or 0)
 
 
+# Cüzdan belgesinde aynı transferin düşüm / ekleme hakkı. Bakiye ile aynı yazıda durur.
+TRANSFER_DEBIT_FIELD = "transfer_debit_id"
+TRANSFER_CREDIT_FIELD = "transfer_credit_id"
+_ATTACH_EVENT = "license-attach"
+
+
+def _transfer_out_id(transfer_id: str) -> str:
+    return _bounded_id("transfer_out", transfer_id)
+
+
+def _transfer_in_id(transfer_id: str) -> str:
+    return _bounded_id("transfer_in", transfer_id)
+
+
+def _attach_transfer_id(company_id: str, old_wid: str, new_wid: str, event_id: str) -> str:
+    """Şirket, kaynak, hedef ve bağlama olayı kimliğinden deterministik anahtar."""
+    return _bounded_id("gib-wallet-attach", f"{company_id}|{old_wid}|{new_wid}|{event_id}")
+
+
+def _claimed(result) -> bool:
+    if result is None:
+        return False
+    if isinstance(result, dict):
+        return bool(result.get("_id"))
+    matched = getattr(result, "matched_count", None)
+    if matched is not None:
+        return int(matched) > 0
+    return False
+
+
+async def _ledger_by_id(row_id: str, company_id: str):
+    try:
+        row = await _db.gib_credit_ledger.find_one({"_id": row_id, "company_id": company_id})
+    except Exception:
+        return None
+    return row if isinstance(row, dict) else None
+
+
+async def ensure_wallet(wallet_id: str) -> dict:
+    """Cüzdan yoksa bakiye 0 ile açar. Hoş geldin kontörü ve ledger yazmaz."""
+    wid = str(wallet_id or "").strip()
+    if not wid:
+        raise HTTPException(status_code=400, detail="Cüzdan anahtarı gerekli.")
+    found = await _db.gib_wallets.find_one({"_id": wid})
+    if found:
+        return found
+    now = _now()
+    doc = {"_id": wid, "balance": 0, "created_at": now, "updated_at": now}
+    try:
+        await _db.gib_wallets.insert_one(doc)
+    except Exception as exc:
+        if not _is_dup_error(exc):
+            raise
+        found = await _db.gib_wallets.find_one({"_id": wid})
+        if found:
+            return found
+        raise
+    return await _db.gib_wallets.find_one({"_id": wid}) or doc
+
+
+async def _resolve_attach_transfer_id(company_id: str, old_wid: str, new_wid: str) -> str:
+    """Bağlama olayı kimliği. Önceki defter satırları sayılmaz.
+
+    Yarım kalmış olay aynı kimliği döndürür. Tamamlanmış olayın kimliği,
+    bir sonraki bağlamanın olay anahtarı olur; aynı deneme ikinci kez
+    bakiye eklemez, sonraki gerçek bağlama yeni bir kimlik alır.
+    """
+    event_id = _ATTACH_EVENT
+    seen = set()
+    transfer_id = _attach_transfer_id(company_id, old_wid, new_wid, event_id)
+    for _ in range(32):
+        if transfer_id in seen:
+            return transfer_id
+        seen.add(transfer_id)
+        out_row = await _ledger_by_id(_transfer_out_id(transfer_id), company_id)
+        in_row = await _ledger_by_id(_transfer_in_id(transfer_id), company_id)
+        if out_row and not in_row:
+            return transfer_id
+        if not in_row:
+            return transfer_id
+        event_id = transfer_id
+        transfer_id = _attach_transfer_id(company_id, old_wid, new_wid, event_id)
+    return transfer_id
+
+
+async def _drop_open_out(out_id: str, company_id: str) -> None:
+    """Düşüm tutmadıysa ve hedefe yazılmadıysa işaret satırını geri al."""
+    try:
+        await _db.gib_credit_ledger.delete_one({"_id": out_id, "company_id": company_id})
+    except Exception:
+        logger.exception("transfer out rollback failed")
+
+
+async def _finish_transfer(
+    out_row: dict,
+    *,
+    old_wid: str,
+    new_wid: str,
+    company_id: str,
+    transfer_id: str,
+) -> dict:
+    """İşaret satırı dururken kaldığı yerden bitir. Tamamlanmış aktarımı yazmaz."""
+    in_id = _transfer_in_id(transfer_id)
+    if await _ledger_by_id(in_id, company_id):
+        return {"transferred": 0, "applied": False, "duplicate": True}
+
+    amount = int(out_row.get("amount") or 0)
+    if amount <= 0:
+        return {"transferred": 0, "applied": False, "duplicate": True}
+
+    now = _now()
+    route = str(out_row.get("route") or f"{old_wid}->{new_wid}")
+    source = await _db.gib_wallets.find_one({"_id": old_wid}) or {}
+    dest = await ensure_wallet(new_wid)
+    source_done = (source or {}).get(TRANSFER_DEBIT_FIELD) == transfer_id
+    dest_done = (dest or {}).get(TRANSFER_CREDIT_FIELD) == transfer_id
+
+    if not source_done:
+        # #1504 ile aynı koşullu düşüm: bakiye yetmiyorsa eşleşme yok, hedefe yazılmaz.
+        claimed = await _db.gib_wallets.find_one_and_update(
+            {
+                "_id": old_wid,
+                "balance": {"$gte": amount},
+                TRANSFER_DEBIT_FIELD: {"$ne": transfer_id},
+            },
+            {
+                "$inc": {"balance": -amount},
+                "$set": {"updated_at": now, TRANSFER_DEBIT_FIELD: transfer_id},
+            },
+        )
+        if _claimed(claimed):
+            source_done = True
+        else:
+            fresh = await _db.gib_wallets.find_one({"_id": old_wid}) or {}
+            source_done = fresh.get(TRANSFER_DEBIT_FIELD) == transfer_id
+            if not source_done:
+                if not dest_done:
+                    await _drop_open_out(str(out_row.get("_id") or ""), company_id)
+                return {"transferred": 0, "applied": False, "transfer_id": transfer_id}
+
+    if source_done and not dest_done:
+        credited = await _db.gib_wallets.find_one_and_update(
+            {
+                "_id": new_wid,
+                TRANSFER_CREDIT_FIELD: {"$ne": transfer_id},
+            },
+            {
+                "$inc": {"balance": amount},
+                "$set": {"updated_at": now, TRANSFER_CREDIT_FIELD: transfer_id},
+            },
+        )
+        if _claimed(credited):
+            dest_done = True
+        else:
+            fresh = await _db.gib_wallets.find_one({"_id": new_wid}) or {}
+            dest_done = fresh.get(TRANSFER_CREDIT_FIELD) == transfer_id
+            if not dest_done:
+                return {"transferred": 0, "applied": False, "transfer_id": transfer_id}
+
+    if not (source_done and dest_done):
+        return {"transferred": 0, "applied": False, "transfer_id": transfer_id}
+
+    try:
+        await _db.gib_credit_ledger.insert_one({
+            "_id": in_id,
+            "wallet_id": new_wid,
+            "company_id": company_id,
+            "type": "transfer_in",
+            "credits": amount,
+            "amount": amount,
+            "transfer_id": transfer_id,
+            "route": route,
+            "note": "Lisans birleştirme — kontör girişi",
+            "created_at": now,
+        })
+    except Exception as exc:
+        if not _is_dup_error(exc):
+            raise
+    return {"transferred": amount, "applied": True, "transfer_id": transfer_id}
+
+
+async def transfer_wallet_balance(old_wid: str, new_wid: str, *, company_id: str, transfer_id: str) -> dict:
+    """Eski bakiyeyi yeni cüzdana taşır. Aynı transfer_id ikinci kez bakiye eklemez.
+
+    Sıra: çıkış defter satırı (idempotency) → kaynakta koşullu düşüm → hedefe ekleme
+    → giriş satırı. Kaynak düşümü tutmazsa hedefe yazılmaz. Satır zaten varsa
+    işlem bitmiş ya da yarımdır; kaldığı yerden sürer, bakiyeyi ikinci kez eklemez.
+
+    Eski cüzdan yoksa sessizce döner. Yeni cüzdan yoksa hoş geldin kontörü olmadan açılır.
+    credits işareti mevcut defterle aynıdır: çıkış eksi, giriş artı.
+    """
+    old_wid = str(old_wid or "").strip()
+    new_wid = str(new_wid or "").strip()
+    company_id = str(company_id or "").strip()
+    transfer_id = str(transfer_id or "").strip()
+    if not old_wid or not new_wid or not company_id or not transfer_id or old_wid == new_wid:
+        return {"transferred": 0, "applied": False}
+
+    out_id = _transfer_out_id(transfer_id)
+    in_id = _transfer_in_id(transfer_id)
+    existing_out = await _ledger_by_id(out_id, company_id)
+    if existing_out and await _ledger_by_id(in_id, company_id):
+        return {"transferred": 0, "applied": False, "duplicate": True}
+    if existing_out:
+        return await _finish_transfer(
+            existing_out, old_wid=old_wid, new_wid=new_wid, company_id=company_id, transfer_id=transfer_id,
+        )
+
+    old = await _db.gib_wallets.find_one({"_id": old_wid})
+    if not old:
+        return {"transferred": 0, "applied": False, "missing": True}
+
+    amount = int(old.get("balance") or 0)
+    now = _now()
+    if amount <= 0:
+        await ensure_wallet(new_wid)
+        await _db.gib_wallets.update_one({"_id": old_wid}, {"$set": {"balance": 0, "updated_at": now}})
+        return {"transferred": 0, "applied": True}
+
+    await ensure_wallet(new_wid)
+    route = f"{old_wid}->{new_wid}"
+    out_row = {
+        "_id": out_id,
+        "wallet_id": old_wid,
+        "company_id": company_id,
+        "type": "transfer_out",
+        "credits": -amount,
+        "amount": amount,
+        "transfer_id": transfer_id,
+        "route": route,
+        "note": "Lisans birleştirme — kontör çıkışı",
+        "created_at": now,
+    }
+    try:
+        await _db.gib_credit_ledger.insert_one(out_row)
+        inserted = True
+    except Exception as exc:
+        if not _is_dup_error(exc):
+            raise
+        inserted = False
+    if not inserted:
+        existing_out = await _ledger_by_id(out_id, company_id)
+        if existing_out and await _ledger_by_id(in_id, company_id):
+            return {"transferred": 0, "applied": False, "duplicate": True}
+        if not existing_out:
+            return {"transferred": 0, "applied": False, "duplicate": True}
+        return await _finish_transfer(
+            existing_out, old_wid=old_wid, new_wid=new_wid, company_id=company_id, transfer_id=transfer_id,
+        )
+    return await _finish_transfer(
+        out_row, old_wid=old_wid, new_wid=new_wid, company_id=company_id, transfer_id=transfer_id,
+    )
+
+
+async def move_wallet_on_license_change(company_id: str, old_license_id: str, new_license_id: str) -> dict:
+    """Lisans anahtarı değişince eski cüzdanı (license_id veya company_id) yeni anahtara taşır.
+
+    Eski cüzdan yoksa hata vermez ve hoş geldin kontörü açmaz.
+    """
+    company_id = str(company_id or "").strip()
+    new_wid = str(new_license_id or "").strip()
+    old_lid = str(old_license_id or "").strip()
+    if not company_id or not new_wid:
+        return {"transferred": 0, "applied": False}
+    source = ""
+    seen = set()
+    for key in (old_lid, company_id):
+        if not key or key == new_wid or key in seen:
+            continue
+        seen.add(key)
+        wallet = await _db.gib_wallets.find_one({"_id": key})
+        if wallet:
+            source = key
+            break
+    if not source:
+        return {"transferred": 0, "applied": False, "missing": True}
+    old = await _db.gib_wallets.find_one({"_id": source})
+    amount = int((old or {}).get("balance") or 0)
+    if amount <= 0:
+        await ensure_wallet(new_wid)
+        await _db.gib_wallets.update_one(
+            {"_id": source},
+            {"$set": {"balance": 0, "updated_at": _now()}},
+        )
+        return {"transferred": 0, "applied": True}
+    transfer_id = await _resolve_attach_transfer_id(company_id, source, new_wid)
+    return await transfer_wallet_balance(source, new_wid, company_id=company_id, transfer_id=transfer_id)
+
+
 @router.get("/account/gib-credits")
 async def account_credits(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
     cid = tenant_access.resolve_company_id(user, company_id)
