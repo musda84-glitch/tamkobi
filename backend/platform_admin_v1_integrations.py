@@ -1,12 +1,13 @@
 """admin-v1: e-fatura kimliği, SMS, AI, PayTR, SMTP/IMAP.
 
 Parola ve API anahtarı yazılır, okunmaz. Yanıtta configured ve maskeli ipucu vardır.
+İşNet testi, destek paketi, sistem gelen kutusu (salt okunur) ve test postası da buradadır.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 import isnet
 import platform_mail
@@ -15,7 +16,7 @@ import platform_store as store
 import saas
 import saas_billing
 import saas_extras
-from platform_admin_v1 import _auth, _item, _redact
+from platform_admin_v1 import _auth, _drop_key, _item, _redact
 from platform_admin_v1_write import (
     _company_or_404,
     _present,
@@ -609,4 +610,338 @@ async def admin_v1_mailbox_delete(box_id: str, request: Request):
 
     return await _write(
         request, store.SCOPE_ADMIN_SETTINGS_WRITE, "mailbox", box_id, apply, op="mail.mailbox.delete", prepare=prepare,
+    )
+
+
+_ISNET_TEST_FIELDS = (
+    "operator_email",
+    "mode",
+    "test_mode",
+    "username",
+    "corporate_code",
+    "client_code",
+    "alias",
+    "gib_alias",
+    "company_tax_id",
+    "vkn",
+    "company_vendor_number",
+    "e_dispatch_enabled",
+    "despatch_defaults",
+    "series_vendor_map",
+)
+_EGRESS_FIELDS = (
+    "egress_ips",
+    "production_host",
+    "production_ips",
+    "same_as_production",
+    "support_email",
+    "message",
+)
+_PACK_FIELDS = (
+    "request_xml",
+    "request_headers",
+    "endpoint",
+    "response_txt",
+    "egress_ips",
+    "live_path",
+    "http_status",
+    "error",
+    "elapsed_ms",
+    "support_email",
+)
+_PACK_HEADER_KEEP = {"content-type", "soapaction"}
+_SEND_TEST_FIELDS = ("operator_email", "mailbox_id", "to", "subject", "body")
+
+
+def _egress_public(info: Dict[str, Any]) -> dict:
+    out = {}
+    for key in _EGRESS_FIELDS:
+        if key in info:
+            out[key] = info.get(key)
+    out["egress_ips"] = list(out.get("egress_ips") or [])
+    out["production_ips"] = list(out.get("production_ips") or [])
+    out["same_as_production"] = bool(info.get("same_as_production"))
+    return out
+
+
+def _secret_needles(existing: dict) -> List[str]:
+    """Kayıtlı sır değerleri ve İşNet deneme portal parolası. Kısa diziler metni bozmasın."""
+    found: List[str] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, str) and _drop_secret_key(key) and len(value.strip()) >= 8:
+                    found.append(value.strip())
+                elif isinstance(value, (dict, list)):
+                    walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(existing or {})
+    for key in ("password_enc", "api_key_enc"):
+        stored = (existing or {}).get(key)
+        if not isinstance(stored, str) or not stored.strip():
+            continue
+        try:
+            import comm_service
+            plain = comm_service.decrypt(stored)
+        except Exception:
+            plain = ""
+        if isinstance(plain, str) and len(plain.strip()) >= 8:
+            found.append(plain.strip())
+    portal = str(getattr(isnet, "TEST_PORTAL_PASSWORD", "") or "")
+    user = str(getattr(isnet, "TEST_PORTAL_USER", "") or "")
+    if portal and user:
+        found.append(f"{user} / {portal}")
+    if portal:
+        found.append(f" / {portal}")
+    uniq: List[str] = []
+    for value in sorted(set(found), key=len, reverse=True):
+        if value not in uniq:
+            uniq.append(value)
+    return uniq
+
+
+def _drop_secret_key(name: str) -> bool:
+    return _drop_key(name, "")
+
+
+def _scrub_text(text: str, needles: List[str]) -> str:
+    for needle in needles:
+        if needle and needle in text:
+            text = text.replace(needle, "•••")
+    return text
+
+
+def _scrub_obj(obj: Any, needles: List[str]) -> Any:
+    if isinstance(obj, dict):
+        out = {}
+        for key, value in obj.items():
+            if _drop_secret_key(str(key)) or str(key).lower() in ("authorization", "cookie", "set-cookie"):
+                continue
+            out[key] = _scrub_obj(value, needles)
+        return out
+    if isinstance(obj, list):
+        return [_scrub_obj(item, needles) for item in obj]
+    if isinstance(obj, str):
+        return _scrub_text(obj, needles)
+    return obj
+
+
+def _pack_headers(headers: Any) -> dict:
+    if not isinstance(headers, dict):
+        return {}
+    out = {}
+    for key, value in headers.items():
+        if str(key).lower() not in _PACK_HEADER_KEEP:
+            continue
+        out[str(key)] = value
+    return out
+
+
+def _support_pack_public(pack: Dict[str, Any], existing: dict) -> dict:
+    needles = _secret_needles(existing)
+    raw = {key: pack.get(key) for key in _PACK_FIELDS if key in pack}
+    raw["request_headers"] = _pack_headers(raw.get("request_headers"))
+    return _scrub_obj(_redact(raw), needles)
+
+
+async def _operator_user(payload: Dict[str, Any]) -> dict:
+    from platform_admin_v1_danger import _operator_or_403
+
+    email = await _operator_or_403(payload)
+    user = await saas._db.users.find_one({"email": email}) or {}
+    uid = user.get("_id") or ""
+    return {
+        "id": uid,
+        "_id": uid,
+        "email": email,
+        "name": user.get("name") or email,
+        "is_super_admin": True,
+        "is_active": True,
+    }
+
+
+def _prepare_isnet_test(payload: Dict[str, Any]) -> None:
+    _reject_unknown(payload, _ISNET_TEST_FIELDS)
+    if "test_mode" in payload and not isinstance(payload["test_mode"], bool):
+        raise HTTPException(status_code=400, detail="test_mode boolean olmalı.")
+    if "e_dispatch_enabled" in payload and not isinstance(payload["e_dispatch_enabled"], bool):
+        raise HTTPException(status_code=400, detail="e_dispatch_enabled boolean olmalı.")
+    if "despatch_defaults" in payload and not isinstance(payload["despatch_defaults"], dict):
+        raise HTTPException(status_code=400, detail="despatch_defaults nesne olmalı.")
+    if "series_vendor_map" in payload and not isinstance(payload["series_vendor_map"], dict):
+        raise HTTPException(status_code=400, detail="series_vendor_map nesne olmalı.")
+    for field in (
+        "mode", "username", "corporate_code", "client_code", "alias", "gib_alias",
+        "company_tax_id", "vkn", "company_vendor_number",
+    ):
+        if field in payload and not isinstance(payload[field], str):
+            raise HTTPException(status_code=400, detail=f"{field} metin olmalı.")
+
+
+@router.post("/platform/admin-v1/companies/{company_id}/isnet/test")
+async def admin_v1_isnet_test(company_id: str, request: Request):
+    """Kayıtlı veya gövdedeki İşNet SOAP alanlarıyla bağlantı testi ve çıkış IP bilgisi.
+
+    server.isnet_test_connection + server.isnet_egress_ips. Parola kabul edilmez.
+    """
+    async def prepare(payload: Dict[str, Any]) -> List[str]:
+        _prepare_isnet_test(payload)
+        await _operator_user(payload)
+        await _company_or_404(company_id)
+        return audit_field_names(_present(payload, _ISNET_TEST_FIELDS) or ["test"])
+
+    async def apply(payload: Dict[str, Any], key_doc: dict):
+        import server
+        body = {key: value for key, value in payload.items() if key != "operator_email"}
+        body["company_id"] = company_id
+        caller = {"is_super_admin": True}
+        existing = await server.db.einvoice_settings.find_one({"company_id": company_id}) or {}
+        needles = _secret_needles(existing)
+        try:
+            info = await server.isnet_test_connection(body, caller)
+        except HTTPException as exc:
+            egress = _egress_public(await server.isnet_egress_ips())
+            detail = exc.detail
+            if isinstance(detail, str):
+                detail = _scrub_text(detail, needles)
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"message": detail, "egress": _scrub_obj(egress, needles)},
+            ) from exc
+        merged = dict(info)
+        merged["egress"] = _egress_public(await server.isnet_egress_ips())
+        return _item(_scrub_obj(merged, needles)), audit_field_names(_present(payload, _ISNET_TEST_FIELDS) or ["test"])
+
+    return await _write(
+        request,
+        store.SCOPE_ADMIN_EINVOICE_WRITE,
+        "company",
+        company_id,
+        apply,
+        op="isnet.test",
+        prepare=prepare,
+    )
+
+
+@router.get("/platform/admin-v1/companies/{company_id}/isnet/support-pack")
+async def admin_v1_isnet_support_pack(company_id: str, request: Request):
+    """İşNet HealthCheck destek paketi. Eski /integrations/isnet/support-pack.
+
+    Parola, password_enc ve yetki başlığı yanıta girmez.
+    """
+    await _auth(request, store.SCOPE_ADMIN_EINVOICE_READ)
+    await _company_or_404(company_id)
+    import server
+    existing = await server.db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    caller = {"is_super_admin": True, "active_company_id": company_id}
+    pack = await server.isnet_support_pack(company_id, caller)
+    if not isinstance(pack, dict):
+        pack = {}
+    return _support_pack_public(pack, existing)
+
+
+@router.get("/platform/admin-v1/mail/mailboxes/{box_id}/messages")
+async def admin_v1_mailbox_messages(
+    box_id: str,
+    request: Request,
+    page: int = Query(1, ge=1, le=1000),
+    operator_email: Optional[str] = Query(None),
+):
+    """Sistem gelen kutusu listesi. IMAP salt okunur; okundu işareti yazılmaz."""
+    await _auth(request, store.SCOPE_ADMIN_MAIL_READ)
+    import platform_mail_inbox as inbox
+
+    user = await _operator_user({"operator_email": operator_email})
+    box = await inbox._authorized_box(box_id, user)
+    password = await inbox._imap_password(box)
+    try:
+        listed = await inbox._run_imap(inbox.imap_list_inbox, inbox._imap_user(box), password, page)
+    except inbox.InboxImapError as exc:
+        inbox._raise_imap(box_id, exc)
+    return _redact(listed)
+
+
+@router.get("/platform/admin-v1/mail/mailboxes/{box_id}/messages/{uid}")
+async def admin_v1_mailbox_message(
+    box_id: str,
+    uid: str,
+    request: Request,
+    operator_email: Optional[str] = Query(None),
+    images: bool = Query(False),
+):
+    """Tek ileti. Eski gelen kutusu okuması; IMAP salt okunur."""
+    await _auth(request, store.SCOPE_ADMIN_MAIL_READ)
+    import platform_mail_inbox as inbox
+
+    uid = inbox._check_uid(uid)
+    user = await _operator_user({"operator_email": operator_email})
+    box = await inbox._authorized_box(box_id, user)
+    password = await inbox._imap_password(box)
+    try:
+        body = await inbox._run_imap(
+            inbox.imap_read_inbox, inbox._imap_user(box), password, uid, images,
+        )
+    except inbox.InboxNotFound:
+        raise HTTPException(status_code=404, detail="İleti bulunamadı.")
+    except inbox.InboxImapError as exc:
+        inbox._raise_imap(box_id, exc)
+    await inbox._audit_open(user, box, uid, request)
+    return _redact(body)
+
+
+@router.post("/platform/admin-v1/mail/send-test")
+async def admin_v1_mail_send_test(request: Request):
+    """Seçilen sistem SMTP göndericisinden test postası. platform_mail.send_test."""
+    async def prepare(payload: Dict[str, Any]) -> List[str]:
+        _reject_unknown(payload, _SEND_TEST_FIELDS)
+        await _operator_user(payload)
+        mailbox_id = payload.get("mailbox_id")
+        if not isinstance(mailbox_id, str) or not mailbox_id.strip():
+            raise HTTPException(status_code=400, detail="mailbox_id zorunlu.")
+        to = payload.get("to")
+        if not isinstance(to, str) or not to.strip():
+            raise HTTPException(status_code=400, detail="to zorunlu.")
+        if "subject" in payload:
+            if not isinstance(payload["subject"], str):
+                raise HTTPException(status_code=400, detail="subject metin olmalı.")
+            if len(payload["subject"]) > 200:
+                raise HTTPException(status_code=400, detail="subject en çok 200 karakter olabilir.")
+        if "body" in payload:
+            if not isinstance(payload["body"], str):
+                raise HTTPException(status_code=400, detail="body metin olmalı.")
+            if len(payload["body"]) > 4000:
+                raise HTTPException(status_code=400, detail="body en çok 4000 karakter olabilir.")
+        return ["mailbox_id", "to"]
+
+    async def apply(payload: Dict[str, Any], key_doc: dict):
+        user = await _operator_user(payload)
+        req = {
+            "mailbox_id": payload["mailbox_id"].strip(),
+            "to": payload["to"],
+        }
+        if "subject" in payload:
+            req["subject"] = payload["subject"]
+        if "body" in payload:
+            req["body"] = payload["body"]
+        result = await platform_mail.send_test(req, user)
+        return _item(result), {
+            "fields": ["mailbox_id", "to"],
+            "mailbox_id": req["mailbox_id"],
+            "to": result.get("to"),
+            "idempotency": True,
+        }
+
+    return await _write(
+        request,
+        store.SCOPE_ADMIN_SETTINGS_WRITE,
+        "mailbox",
+        "send-test",
+        apply,
+        op="mail.send_test",
+        prepare=prepare,
+        action="admin_v1.write.mail.send_test",
     )

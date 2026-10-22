@@ -59,6 +59,20 @@ def test_sql_skips_noise_collections(monkeypatch, tmp_path):
     assert "activity_logs" not in sql
 
 
+def test_log_query_filters_level_text_and_tail():
+    sql, args = applog.build_log_query(level="ERROR", q="100%", before_id=40, limit=10, offset=5)
+    assert "level=%s" in sql
+    assert "id < %s" in sql
+    assert "ORDER BY id DESC" in sql
+    assert "LIMIT %s OFFSET %s" in sql
+    assert args == ["ERROR", "%100\\%%", "%100\\%%", "%100\\%%", "%100\\%%", 40, 10, 5]
+    count_sql, count_args = applog.build_log_query(level="INFO", q="disk", count=True)
+    assert count_sql.startswith("SELECT COUNT(*)")
+    assert "LIMIT" not in count_sql
+    assert count_args[0] == "INFO"
+    assert count_args[1:] == ["%disk%", "%disk%", "%disk%", "%disk%"]
+
+
 def test_rotate_copytruncates_and_gzips(monkeypatch, tmp_path):
     d = _reset(monkeypatch, tmp_path)
     target = d / "app.log"

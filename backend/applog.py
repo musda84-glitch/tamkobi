@@ -20,7 +20,7 @@ import traceback
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 LOG_DIR_ENV = "LOG_DIR"
 LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(50 * 1024 * 1024)))
@@ -259,20 +259,19 @@ def persist_record(rec: dict) -> None:
         _persist_lock = 0
 
 
-def query_logs(category: Optional[str] = None, event: Optional[str] = None,
-               user_email: Optional[str] = None, level: Optional[str] = None,
-               company_id: Optional[str] = None, limit: int = 100) -> list:
-    from mysql_store import mysql_settings_from_env
-    import db_ssl
-    import pymysql
-    cfg = mysql_settings_from_env()
-    conn = pymysql.connect(
-        host=cfg["host"], port=int(cfg["port"]), user=cfg["user"],
-        password=cfg["password"], database=cfg["db"], charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor, connect_timeout=5,
-        **db_ssl.connect_kwargs(cfg),
-    )
-    where, args = ["1=1"], []
+def _log_where(
+    *,
+    category: Optional[str] = None,
+    event: Optional[str] = None,
+    user_email: Optional[str] = None,
+    level: Optional[str] = None,
+    company_id: Optional[str] = None,
+    q: Optional[str] = None,
+    before_id: Optional[int] = None,
+) -> Tuple[List[str], List[Any]]:
+    """system_logs süzgeci. Metin araması message, event, path ve category üzerindedir."""
+    where: List[str] = ["1=1"]
+    args: List[Any] = []
     if category:
         where.append("category=%s")
         args.append(category)
@@ -288,21 +287,127 @@ def query_logs(category: Optional[str] = None, event: Optional[str] = None,
     if company_id:
         where.append("company_id=%s")
         args.append(company_id)
-    sql = f"SELECT id, created_at, level, category, event, user_id, user_email, company_id, ip, method, path, status_code, duration_ms, collection_name, message, details FROM system_logs WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT %s"
-    args.append(min(int(limit or 100), 500))
+    text = str(q or "").strip()
+    if text:
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
+        where.append(
+            "(message LIKE %s ESCAPE '\\\\' OR event LIKE %s ESCAPE '\\\\' "
+            "OR path LIKE %s ESCAPE '\\\\' OR category LIKE %s ESCAPE '\\\\')"
+        )
+        args.extend([like, like, like, like])
+    if before_id is not None:
+        where.append("id < %s")
+        args.append(int(before_id))
+    return where, args
+
+
+def build_log_query(
+    category: Optional[str] = None,
+    event: Optional[str] = None,
+    user_email: Optional[str] = None,
+    level: Optional[str] = None,
+    company_id: Optional[str] = None,
+    q: Optional[str] = None,
+    before_id: Optional[int] = None,
+    limit: int = 100,
+    offset: int = 0,
+    *,
+    count: bool = False,
+) -> Tuple[str, List[Any]]:
+    """Sayfalı sistem logu sorgusu. Sıra id DESC (kuyruk en yeni satırdır)."""
+    where, args = _log_where(
+        category=category,
+        event=event,
+        user_email=user_email,
+        level=level,
+        company_id=company_id,
+        q=q,
+        before_id=before_id,
+    )
+    clause = " AND ".join(where)
+    if count:
+        return f"SELECT COUNT(*) AS n FROM system_logs WHERE {clause}", args
+    safe_limit = min(int(limit or 100), 500)
+    if safe_limit < 1:
+        safe_limit = 1
+    safe_offset = max(int(offset or 0), 0)
+    sql = (
+        "SELECT id, created_at, level, category, event, user_id, user_email, company_id, "
+        "ip, method, path, status_code, duration_ms, collection_name, message, details "
+        f"FROM system_logs WHERE {clause} ORDER BY id DESC LIMIT %s OFFSET %s"
+    )
+    return sql, [*args, safe_limit, safe_offset]
+
+
+def _normalize_log_rows(rows: List[dict]) -> List[dict]:
+    for row in rows:
+        if row.get("created_at") and hasattr(row["created_at"], "isoformat"):
+            row["created_at"] = row["created_at"].isoformat()
+        if isinstance(row.get("details"), (bytes, str)):
+            try:
+                row["details"] = json.loads(row["details"])
+            except Exception:
+                pass
+    return rows
+
+
+def _mysql_log_conn():
+    from mysql_store import mysql_settings_from_env
+    import db_ssl
+    import pymysql
+    cfg = mysql_settings_from_env()
+    return pymysql.connect(
+        host=cfg["host"], port=int(cfg["port"]), user=cfg["user"],
+        password=cfg["password"], database=cfg["db"], charset="utf8mb4",
+        cursorclass=pymysql.cursors.DictCursor, connect_timeout=5,
+        **db_ssl.connect_kwargs(cfg),
+    )
+
+
+def query_logs(category: Optional[str] = None, event: Optional[str] = None,
+               user_email: Optional[str] = None, level: Optional[str] = None,
+               company_id: Optional[str] = None, limit: int = 100,
+               q: Optional[str] = None, offset: int = 0,
+               before_id: Optional[int] = None) -> list:
+    """system_logs okuması. Eski /system/logs ile aynı sütunlar; sıra yeniden eskiye."""
+    sql, args = build_log_query(
+        category=category, event=event, user_email=user_email, level=level,
+        company_id=company_id, q=q, before_id=before_id, limit=limit, offset=offset,
+    )
+    conn = _mysql_log_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(sql, args)
             rows = cur.fetchall()
-        for r in rows:
-            if r.get("created_at"):
-                r["created_at"] = r["created_at"].isoformat()
-            if isinstance(r.get("details"), (bytes, str)):
-                try:
-                    r["details"] = json.loads(r["details"])
-                except Exception:
-                    pass
-        return rows
+        return _normalize_log_rows(rows)
+    finally:
+        conn.close()
+
+
+def query_log_page(category: Optional[str] = None, event: Optional[str] = None,
+                   user_email: Optional[str] = None, level: Optional[str] = None,
+                   company_id: Optional[str] = None, limit: int = 100,
+                   q: Optional[str] = None, offset: int = 0,
+                   before_id: Optional[int] = None) -> Dict[str, Any]:
+    """Sayfa + toplam. Filtre query_logs ile aynıdır."""
+    count_sql, count_args = build_log_query(
+        category=category, event=event, user_email=user_email, level=level,
+        company_id=company_id, q=q, before_id=before_id, count=True,
+    )
+    sql, args = build_log_query(
+        category=category, event=event, user_email=user_email, level=level,
+        company_id=company_id, q=q, before_id=before_id, limit=limit, offset=offset,
+    )
+    conn = _mysql_log_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(count_sql, count_args)
+            total_row = cur.fetchone() or {}
+            cur.execute(sql, args)
+            rows = cur.fetchall()
+        total = int(total_row.get("n") or 0)
+        return {"items": _normalize_log_rows(rows), "total": total}
     finally:
         conn.close()
 
