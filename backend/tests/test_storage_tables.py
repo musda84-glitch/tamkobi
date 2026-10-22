@@ -887,9 +887,39 @@ _AMOUNT_ORDER = (
     ("e", 0.1),
     ("g", -3),
 )
-_NUMERIC_SORTS = (
-    ("orders", "total_amount", "order_number", "order_status", "order_date"),
-    ("invoices", "grand_total", "invoice_number", "status", "issue_date"),
+_SORT_COLS = (
+    ("orders", "total_amount", "order_date", "order_status"),
+    ("invoices", "grand_total", "issue_date", "status"),
+    ("stock_movements", "change", "date", "status"),
+    ("bank_transactions", "amount", "date", "match_status"),
+)
+_NULL_AMOUNTS = (
+    ("a", 5),
+    ("b", 12.5),
+    ("d", 100),
+    ("e", 0.1),
+    ("g", -3),
+    ("m", "missing"),
+    ("n", None),
+)
+_MULTI_ROWS = (
+    ("a", 5, "2024-03-01", "open"),
+    ("b", 12.5, "2024-01-01", "open"),
+    ("c", 12.5, "2024-06-01", "closed"),
+    ("d", 100, "2024-01-01", "open"),
+    ("e", 5, "2024-01-15", "closed"),
+    ("f", None, "2024-02-01", "open"),
+    ("g", -3, "2024-05-01", "draft"),
+    ("h", "missing", "2024-01-01", "open"),
+    ("i", 100, "2024-01-01", "open"),
+)
+_TIE_ROWS = (
+    ("a", 5, "2024-03-01", "open"),
+    ("b", 12.5, "2024-01-01", "open"),
+    ("c", 12.5, "2024-06-01", "open"),
+    ("d", 100, "2024-01-01", "closed"),
+    ("e", 5, "2024-01-15", "closed"),
+    ("i", 100, "2024-01-01", "closed"),
 )
 _TEXT_SORTS = (
     ("orders", "order_date", "order_status", "order_number"),
@@ -904,8 +934,15 @@ _TEXT_ORDER_ROWS = (
 )
 
 
-async def _sorted_ids(api, field, direction, skip=0, limit=None):
-    cursor = api.find({}).sort(field, direction)
+def _amount_body(doc_id, amount, amount_field, date_field, status_field, date_value, status):
+    body = {"_id": doc_id, date_field: date_value, status_field: status}
+    if amount != "missing":
+        body[amount_field] = amount
+    return body
+
+
+async def _sorted_ids(api, sort, skip=0, limit=None):
+    cursor = api.find({}).sort(sort)
     if skip:
         cursor = cursor.skip(skip)
     if limit is not None:
@@ -914,26 +951,27 @@ async def _sorted_ids(api, field, direction, skip=0, limit=None):
     return [doc["_id"] for doc in found]
 
 
+async def _one_id(api, sort):
+    doc = await api.find_one({}, sort=sort)
+    return None if doc is None else doc["_id"]
+
+
+def _pairs(docs_ids, real_ids):
+    return (docs_ids, real_ids)
+
+
 async def _numeric_sort_parity(company):
     report = {}
     store = storage_shared_v2.get_store()
-    for name, field, number_field, status_field, date_field in _NUMERIC_SORTS:
+    for name, field, date_field, status_field in _SORT_COLS:
         docs = storage_shared_v2.collection_for(company, name)
         real = storage_tables.collection_for(company, name)
+        gap = storage_tables.collection_for(company + "-gap", name)
+        await gap.insert_one(_amount_body("gap", "missing", field, date_field, status_field, "2024-01-01", "open"))
         for doc_id, amount in _AMOUNT_ORDER:
-            body = {
-                "_id": doc_id,
-                field: amount,
-                number_field: doc_id,
-                status_field: "open",
-                date_field: "2024-01-01",
-            }
+            body = _amount_body(doc_id, amount, field, date_field, status_field, "2024-01-01", "open")
             await docs.insert_one(dict(body))
             await real.insert_one(dict(body))
-
-        async def one(api, direction, field=field):
-            doc = await api.find_one({}, sort=[(field, direction)])
-            return None if doc is None else doc["_id"]
 
         sides = {}
         for label, direction, skip, limit in (
@@ -944,15 +982,16 @@ async def _numeric_sort_parity(company):
             ("asc_page", 1, 1, 2),
             ("desc_page", -1, 2, 2),
         ):
-            sides[label] = (
-                await _sorted_ids(docs, field, direction, skip, limit),
-                await _sorted_ids(real, field, direction, skip, limit),
+            spec = [(field, direction)]
+            sides[label] = _pairs(
+                await _sorted_ids(docs, spec, skip, limit),
+                await _sorted_ids(real, spec, skip, limit),
             )
         before = store.python_scans
-        real_desc = await _sorted_ids(real, field, -1, 0, 3)
+        real_desc = await _sorted_ids(real, [(field, -1)], 0, 3)
         scans = store.python_scans - before
-        sides["one_asc"] = (await one(docs, 1), await one(real, 1))
-        sides["one_desc"] = (await one(docs, -1), await one(real, -1))
+        sides["one_asc"] = _pairs(await _one_id(docs, [(field, 1)]), await _one_id(real, [(field, 1)]))
+        sides["one_desc"] = _pairs(await _one_id(docs, [(field, -1)]), await _one_id(real, [(field, -1)]))
         sides["sql_desc_limit"] = real_desc
         sides["scans"] = scans
         report[name] = sides
@@ -984,40 +1023,99 @@ def test_numeric_sort_matches_docs_v2(conn):
     _assert_numeric_sort(report)
 
 
-async def _numeric_null_placement(company):
+async def _legacy_sort_parity(company):
+    """Eksik/None tutar ve çok anahtar, sort_docs ile docs_v2'ye düşer."""
     report = {}
     store = storage_shared_v2.get_store()
-    for name, field, number_field, status_field, date_field in _NUMERIC_SORTS:
+    for name, field, date_field, status_field in _SORT_COLS:
+        docs = storage_shared_v2.collection_for(company, name)
         real = storage_tables.collection_for(company, name)
-        for doc_id, amount in (("a", 5), ("g", -3), ("n", None)):
-            body = {
-                "_id": doc_id,
-                number_field: doc_id,
-                status_field: "open",
-                date_field: "2024-01-01",
-            }
-            if amount is not None:
-                body[field] = amount
-            await real.insert_one(body)
-        before = store.python_scans
-        report[name] = (
-            await _sorted_ids(real, field, 1),
-            await _sorted_ids(real, field, -1),
-            store.python_scans - before,
+        for doc_id, amount in _NULL_AMOUNTS:
+            body = _amount_body(doc_id, amount, field, date_field, status_field, "2024-01-01", "open")
+            await docs.insert_one(dict(body))
+            await real.insert_one(dict(body))
+        multi_company = company + "-mix"
+        docs_mix = storage_shared_v2.collection_for(multi_company, name)
+        real_mix = storage_tables.collection_for(multi_company, name)
+        for doc_id, amount, date_value, status in _MULTI_ROWS:
+            body = _amount_body(doc_id, amount, field, date_field, status_field, date_value, status)
+            await docs_mix.insert_one(dict(body))
+            await real_mix.insert_one(dict(body))
+        tie_company = company + "-tie"
+        docs_tie = storage_shared_v2.collection_for(tie_company, name)
+        real_tie = storage_tables.collection_for(tie_company, name)
+        for doc_id, amount, date_value, status in _TIE_ROWS:
+            body = _amount_body(doc_id, amount, field, date_field, status_field, date_value, status)
+            await docs_tie.insert_one(dict(body))
+            await real_tie.insert_one(dict(body))
+
+        amount_date = [(field, 1), (date_field, -1)]
+        status_amount = [(status_field, 1), (field, -1)]
+        sides = {}
+        for label, spec, skip, limit, api_docs, api_real in (
+            ("null_asc", [(field, 1)], 0, None, docs, real),
+            ("null_desc", [(field, -1)], 0, None, docs, real),
+            ("null_limit", [(field, -1)], 0, 3, docs, real),
+            ("null_page", [(field, 1)], 1, 2, docs, real),
+            ("amount_date", amount_date, 0, None, docs_mix, real_mix),
+            ("amount_date_limit", amount_date, 0, 3, docs_mix, real_mix),
+            ("amount_date_page", amount_date, 2, 2, docs_mix, real_mix),
+            ("status_amount", status_amount, 0, None, docs_mix, real_mix),
+            ("status_amount_limit", status_amount, 0, 3, docs_mix, real_mix),
+            ("status_amount_page", status_amount, 1, 2, docs_mix, real_mix),
+            ("tie_amount_date", amount_date, 0, None, docs_tie, real_tie),
+            ("tie_status_amount", status_amount, 0, None, docs_tie, real_tie),
+            ("tie_page", status_amount, 1, 2, docs_tie, real_tie),
+        ):
+            sides[label] = _pairs(
+                await _sorted_ids(api_docs, spec, skip, limit),
+                await _sorted_ids(api_real, spec, skip, limit),
+            )
+        sides["null_one"] = _pairs(await _one_id(docs, [(field, -1)]), await _one_id(real, [(field, -1)]))
+        sides["amount_date_one"] = _pairs(
+            await _one_id(docs_mix, amount_date), await _one_id(real_mix, amount_date),
         )
+        sides["status_amount_one"] = _pairs(
+            await _one_id(docs_mix, status_amount), await _one_id(real_mix, status_amount),
+        )
+        sides["tie_one"] = _pairs(
+            await _one_id(docs_tie, status_amount), await _one_id(real_tie, status_amount),
+        )
+        before = store.python_scans
+        await _sorted_ids(real, [(field, 1)])
+        await _sorted_ids(real_mix, amount_date)
+        await _sorted_ids(real_mix, status_amount)
+        await _sorted_ids(real_tie, status_amount)
+        sides["scans"] = store.python_scans - before
+        report[name] = sides
     return report
 
 
-def _assert_numeric_null(report):
-    for name, (asc, desc, scans) in report.items():
-        assert asc == ["n", "g", "a"], (name, asc)
-        assert desc == ["a", "g", "n"], (name, desc)
-        assert scans == 0, name
+def _assert_legacy_sort(report):
+    null_asc = ["g", "e", "d", "b", "a", "m", "n"]
+    null_desc = ["m", "n", "a", "b", "d", "e", "g"]
+    for name, sides in report.items():
+        assert sides["null_asc"][0] == null_asc, (name, sides["null_asc"])
+        assert sides["null_desc"][0] == null_desc, (name, sides["null_desc"])
+        assert sides["null_limit"][0] == null_desc[:3], name
+        assert sides["null_page"][0] == null_asc[1:3], name
+        assert sides["null_one"][0] == null_desc[0], name
+        assert sides["amount_date"][0], name
+        assert sides["status_amount"][0], name
+        assert len(sides["amount_date"][0]) == len(_MULTI_ROWS), name
+        assert len(sides["status_amount"][0]) == len(_MULTI_ROWS), name
+        assert len(sides["tie_status_amount"][0]) == len(_TIE_ROWS), name
+        assert sides["tie_status_amount"][0] != sorted(sides["tie_status_amount"][0]), name
+        assert sides["scans"] >= 4, name
+        for label, pair in sides.items():
+            if label == "scans":
+                continue
+            assert pair[1] == pair[0], (name, label, pair)
 
 
-def test_numeric_nulls_sort_with_the_decimal_column(conn):
-    report = asyncio.run(_numeric_null_placement("co-nullsort"))
-    _assert_numeric_null(report)
+def test_legacy_amount_sort_matches_docs_v2(conn):
+    report = asyncio.run(_legacy_sort_parity("co-legacy"))
+    _assert_legacy_sort(report)
 
 
 async def _text_column_sort_parity(company):
@@ -1045,12 +1143,12 @@ async def _text_column_sort_parity(company):
             for direction, suffix in ((1, "asc"), (-1, "desc")):
                 key = f"{label}_{suffix}"
                 sides[key] = (
-                    await _sorted_ids(docs, field, direction),
-                    await _sorted_ids(real, field, direction),
+                    await _sorted_ids(docs, [(field, direction)]),
+                    await _sorted_ids(real, [(field, direction)]),
                 )
             sides[f"{label}_page"] = (
-                await _sorted_ids(docs, field, 1, 1, 2),
-                await _sorted_ids(real, field, 1, 1, 2),
+                await _sorted_ids(docs, [(field, 1)], 1, 2),
+                await _sorted_ids(real, [(field, 1)], 1, 2),
             )
         report[name] = sides
     return report
@@ -1288,7 +1386,7 @@ def test_mariadb_datetime_case_collation_and_amount_index():
         assert float(kept) == 10.5
         _assert_text_bounds(asyncio.run(_text_bound_parity("co-text")))
         _assert_numeric_sort(asyncio.run(_numeric_sort_parity("co-sort")))
-        _assert_numeric_null(asyncio.run(_numeric_null_placement("co-nullsort")))
+        _assert_legacy_sort(asyncio.run(_legacy_sort_parity("co-legacy")))
         _assert_text_column_sort(asyncio.run(_text_column_sort_parity("co-colsort")))
         other = pymysql.connect(
             host=parsed.hostname or "127.0.0.1",

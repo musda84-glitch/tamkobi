@@ -350,10 +350,34 @@ class TableCollection(SharedV2Collection):
         ).fetchone()
         return row is None
 
+    def _sort_sql(self, sort):
+        """Sayı sırası DECIMAL kolonda yalnız tek anahtar ve NULL'suzsa kalır.
+
+        sort_docs, anahtarlardan biri None/eksikse bütün anahtarları str() ile
+        sıralar ve son anahtarın yönünü hepsine uygular. Çok anahtar ya da
+        kolonda NULL varken SQL bu sonucu vermez; sorgu Python yoluna düşer.
+        NULL kontrolü her sorguda, firma kapsamında, tutar indeksinden okunur.
+        """
+        if sort:
+            pairs = storage_shared_v2._sort_pairs(sort)
+            numeric = [field for field, _direction in pairs if field in self.spec.numeric]
+            single = len(pairs) == 1 and len(numeric) == 1
+            if numeric and not (single and self._decimal_sort_ok(numeric[0])):
+                raise _NoPush("sort")
+        return super()._sort_sql(sort)
+
+    def _decimal_sort_ok(self, field) -> bool:
+        column = self.spec.columns[field][0]
+        scope, scope_params = self._scope()
+        row = self._run(
+            f"SELECT 1 FROM {self._data_table()} WHERE {scope} AND {column} IS NULL LIMIT 1",
+            tuple(scope_params),
+        ).fetchone()
+        return row is None
+
     def _order_expr(self, field, token):
         if field in self.spec.numeric:
-            # COALESCE sayıyı metne çevirir. DECIMAL kolon artan sırada NULL'u
-            # öne, azalan sırada sona alır; match_query ile aynıdır.
+            # Tek anahtar ve kolonda NULL yokken: COALESCE sayıyı metne çevirirdi.
             return self.spec.columns[field][0]
         return super()._order_expr(field, token)
 
