@@ -1,10 +1,12 @@
 """Personel GET listelerinde satır filtresi.
 
-RBAC middleware GET'te modül yetkisine bakmaz (yalnız fiyat maskeleme).
-Süper admin, admin ve /personnel en az "view" olan roller tam listeyi görür.
-İzin, prim, bordro, puantaj, mesai önizleme ve vardiya uçlarında diğer
-roller yalnız kendi kartının satırlarını görür. Kart yoksa veya başka
-firmadaysa o uçlar boş liste döner.
+İzin, prim, bordro, puantaj listesi, mesai önizleme ve vardiya GET'leri
+oturum açmış kullanıcıya açıktır. Modül view yoksa yalnız kendi kartı kalır;
+kart yoksa veya başka firmadaysa o uçlar boş liste döner. Tam liste: süper
+admin, admin ve /personnel en az "view".
+
+Bekleyen talepler, personel kartı ve cihaz uçları bu kapsama girmez.
+RBAC_GET_ENFORCE=enforce iken onlar /personnel view olmadan 403 verir.
 
 GET /personnel/employees seçim listesidir: aynı kapsamda firmadaki
 çalışanlar finansal alansız dizin olarak döner. Kendi kartı (scope ile

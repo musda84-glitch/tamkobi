@@ -197,6 +197,8 @@ PORTAL_API_RULES = (
     ("POST", "/api/production/work-orders/{id}/finish", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/shopfloor-next", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/shopfloor-filters", "portal_atolye", "/atolye"),
+    # Operatör seçici. Atölye ekranı listeyle birlikte bunu da okur.
+    ("GET", "/api/production/work-orders/shopfloor-operators", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/partial-count", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/undo-finish", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/{id}/drawing", "portal_atolye", "/atolye"),
@@ -911,6 +913,8 @@ GET_EXTRA_MODULE_MAP = (
     ("/api/integrations", "/settings"),
     ("/api/account", "/settings"),
     ("/api/label-templates", "/stock"),
+    # Demo kartı pano kabuğudur. Yükle/sil yazması /api/demo önekiyle /settings kalır.
+    ("/api/demo/status", "/"),
 )
 # Modül yetkisi (RBAC) kontrolü atlanır — yine de oturum gerekebilir.
 SKIP_PREFIXES = ("/api/auth", "/api/setup", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/version", "/api/mobile", "/api/system", "/api/platform", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/me", "/api/personnel/messages", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/reminder-prefs", "/api/personnel/attendance/geo", "/api/personnel/attendance/early-leave-request", "/api/personnel/attendance/intraday-leave-request", "/api/personnel/leaves/self", "/api/personnel/leaves/me", "/api/personnel/bonuses/self")
@@ -1331,6 +1335,7 @@ MUTATION_UNMAPPED_ALLOWLIST = (
     ("POST", "/api/desktop/kiosk-exit"),
     ("POST", "/api/storage/me/ensure"),
     ("POST", "/api/storage/me/folders"),
+    ("POST", "/api/storage/me/increase-request"),
 )
 _WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 
@@ -1460,8 +1465,9 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
 
 # Oturum açmış herkesin okuyabildiği GET'ler. Modül view aranmaz.
 # `{param}` tek yol parçasıdır (_portal_template_match). `...` kaydı kökün kendisi
-# ve alt yollarıdır. Uç içinde rol süzmeyen manager-summary, b2b-settings, privacy
-# ve print-templates burada değildir; / veya /settings modülünde kalır.
+# ve alt yollarıdır. Uç içinde rol süzmeyen manager-summary, ops-alerts, privacy
+# burada değildir. b2b-settings okuması /b2b-yonetim modülündedir.
+# print-templates paylaşılan listede değildir; belge modülü veya /settings view.
 # /api/logs diye bir uç yok; istemci logu /api/mobile/logs (SKIP_PREFIXES /api/mobile).
 # robots.txt ve sitemap.xml /api altında değil (seo_router kök); middleware /api
 # dışında erken çıkar. Kayıtlı yol yazılır, ölü /api/robots.txt satırı eklenmez.
@@ -1514,6 +1520,26 @@ READ_SHARED_GET_ALLOWLIST = (
     ("GET", "/robots.txt"),
     # Site kökü sitemap. /api öneki yok; middleware bu yola girmez.
     ("GET", "/sitemap.xml"),
+    # Üst çubuk kurları ve belgelerdeki kur sözlüğü. Yazma /settings kalır.
+    ("GET", "/api/fx/currencies"),
+    ("GET", "/api/fx/rates"),
+    ("GET", "/api/fx/quote"),
+    # Masraf kategorisi adları. Banka eşleme ve masraf formu birlikte okur.
+    ("GET", "/api/expenses/categories"),
+    # Kabuk: açık yönetim paneli oturumu. Kapatma yazması admin ucundadır.
+    ("GET", "/api/companies/{id}/support-session"),
+    # Personel listeleri handler'da kendi kartına iner (personnel_scope).
+    # Bekleyen talep, kart ve cihaz uçları bu listede değildir; /personnel view ister.
+    ("GET", "/api/personnel/leaves"),
+    ("GET", "/api/personnel/bonuses"),
+    ("GET", "/api/personnel/payrolls"),
+    ("GET", "/api/personnel/attendance"),
+    ("GET", "/api/personnel/overtime-preview"),
+    ("GET", "/api/personnel/shifts"),
+    # Pozisyon seçicisi. Uç, ayar yetkisi aramadığını söyler.
+    ("GET", "/api/personnel/role-options"),
+    # Vardiya şablon adları. Yazma /personnel kalır.
+    ("GET", "/api/personnel/shift-templates"),
 )
 
 # Ürün seçicisi. Personelde /stock FORCE ile none kaldığı için portal satırı şart.
@@ -1562,6 +1588,14 @@ CROSS_MODULE_VIEW = (
     ("GET", "/api/personnel/employees", _CROSS_EMPLOYEE_MODULES, (), True),
     # İstasyon listesi. portal_orders herhangi bir rolde yeter.
     ("GET", "/api/production/work-orders/stations", ("/atolye", "/production"), ("portal_orders",), False),
+    # Vergi no sözlüğü. Yerel cari yalnız bu modüllerde döner.
+    ("GET", "/api/gib/lookup", ("/invoices", "/contacts", "/edoc-inbox"), (), True),
+    # Mesai saati. Yazma /settings kalır; personel kartı ve puantaj okur.
+    ("GET", "/api/companies/{id}/work-schedule", ("/personnel", "/mesai", "/settings"), (), True),
+    # Yazdırma şablonu. Ayar yazması /settings; belge ekranları okur.
+    ("GET", "/api/companies/{id}/print-templates", ("/invoices", "/quotes", "/orders", "/settings"), (), True),
+    # Saha sipariş listesi. Ayrıntı /orders veya portal_orders. Yazma portal_saha.
+    ("GET", "/api/orders", ("/orders", "/saha"), (), True),
 )
 
 _RBAC_GET_ENFORCE_VALUES = ("off", "shadow", "enforce")
@@ -1571,10 +1605,13 @@ _RBAC_GET_DENY_LOG_INTERVAL = 60.0
 
 
 def rbac_get_enforce_mode() -> str:
-    """RBAC_GET_ENFORCE: off | shadow | enforce. Boş veya bilinmeyen değer shadow."""
-    raw = str(os.environ.get("RBAC_GET_ENFORCE", "shadow") or "shadow").strip().lower()
+    """RBAC_GET_ENFORCE: off | shadow | enforce. Boş veya bilinmeyen değer enforce.
+
+    shadow eski davranıştır: red loglanır, istek düşmez.
+    """
+    raw = str(os.environ.get("RBAC_GET_ENFORCE", "enforce") or "enforce").strip().lower()
     if raw not in _RBAC_GET_ENFORCE_VALUES:
-        return "shadow"
+        return "enforce"
     return raw
 
 
@@ -1642,10 +1679,13 @@ def cross_module_view_matches(path: str, method: str = "GET") -> bool:
 def module_for_get_path(path: str) -> Optional[str]:
     """GET/HEAD modülü. API_MODULE_MAP + GET_EXTRA; en uzun önek kazanır.
 
+    B2B ayar/erişim okuması yazmayla aynı modüldedir (/b2b-yonetim).
     Puantaj okuması /personnel kalır (yazma /mesai). Aynı uzunlukta GET_EXTRA,
     yazma eşlemesini ezer (etiket şablonları: yazma /settings, okuma /stock).
     """
     p = _portal_norm_path(path)
+    if _b2b_admin_path(p):
+        return "/b2b-yonetim"
     if _attendance_tree(p):
         return "/personnel"
     best = None
