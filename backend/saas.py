@@ -23,7 +23,7 @@ _current_user = None
 _cache: Dict[str, Any] = {}
 CACHE_TTL = 15
 
-CORE_MODULES = {"/", "/settings", "/trash"}
+CORE_MODULES = {"/", "/settings", "/trash", "/kontor", "/company-share"}
 # Etiketler frontend/src/navGroups.js NAV_GROUPS ile aynı kalmalı (ERP menü, paket editörü, web vitrin).
 # Sidebar pages that used to inherit a parent license key (LICENSE_KEY aliases).
 # Only self-service Personelim inherits Mesaim license/role; other panel modules are first-class.

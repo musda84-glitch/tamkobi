@@ -168,8 +168,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [cardBusy, setCardBusy] = useState(false);
   const navigate = useNavigate();
   const narrowPay = useIsNarrow(639);
-  const { activeCompany, can } = useAuth();
+  const { activeCompany, can, feature } = useAuth();
   const canIssueInv = can("/invoices", "edit");
+  const hidePrices = typeof feature === "function" && feature("view_prices") === false;
 
   useEscape(onClose);
   const onCloseRef = useRef(onClose);
@@ -1305,7 +1306,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         )}
                       </td>
                       <td className="py-2 font-mono text-slate-500">{o.cargo_tracking_number || "—"}</td>
-                      <td className="py-2 text-right font-bold">{fmt(o.grand_total ?? o.total_amount)}<div className="font-normal"><InvoiceOrderMismatchBadge ord={o} /></div></td>
+                      <td className="py-2 text-right font-bold">{fmt(o.grand_total ?? o.total_amount)}<div className="font-normal"><InvoiceOrderMismatchBadge ord={o} hideAmount={hidePrices} /></div></td>
                       <td className="py-2 text-right">
                         <div className="flex justify-end gap-1">
                           {isCart ? (
@@ -1966,7 +1967,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 const t = documentLineTotals((orderDetail.items || []).map((it) => withMarketplaceVatFlag(it, orderDetail.channel)));
                 const footer = orderFooterTotals(orderDetail, t);
                 return (
-              <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(footer.subtotal)}</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(footer.vat)}</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(footer.grandTotal)}</span></div><InvoiceOrderMismatchBadge ord={orderDetail} /></div>
+              <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(footer.subtotal)}</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(footer.vat)}</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(footer.grandTotal)}</span></div><InvoiceOrderMismatchBadge ord={orderDetail} hideAmount={hidePrices} /></div>
                 );
               })()}
               <div className="flex justify-between text-slate-500"><span>Fatura: {orderDetail.is_invoiced ? "Kesildi" : "Kesilmedi"}</span></div>
