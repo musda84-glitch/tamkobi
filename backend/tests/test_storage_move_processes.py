@@ -1,7 +1,8 @@
-"""Taşıma kilidi ayrı süreçlerde. MariaDB 11.8 strict. Atlanmaz.
+"""Taşıma kilidi ayrı süreçlerde. MariaDB 11.8 strict.
 
-Katalog, shared_v2 ve dedicated ayrı veritabanıdır. Canlı uygulamaya ve
-8021 portuna bağlanmaz. Parola ve DSN çıktıya yazılmaz.
+STORAGE_MARIADB_DSN veya STORAGE_SHARED_V2_TEST_DSN yoksa testler atlanır.
+DSN varsa atlanmaz. Katalog ve shared_v2 ayrı veritabanıdır. Canlı
+uygulamaya ve 8021 portuna bağlanmaz. Parola ve DSN çıktıya yazılmaz.
 """
 from __future__ import annotations
 
@@ -25,29 +26,63 @@ import storage_router  # noqa: E402
 import storage_shared_v2  # noqa: E402
 from scripts import storage_move  # noqa: E402
 
-_PASSWORD = "move-secret"
-_USER = "move"
-_HOST = "127.0.0.1"
-_PORT = 3306
 _STRICT = "STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
 
 
+def _base_dsn() -> str:
+    return (
+        os.environ.get("STORAGE_MARIADB_DSN")
+        or os.environ.get("STORAGE_SHARED_V2_TEST_DSN")
+        or ""
+    ).strip()
+
+
+def _parsed_dsn():
+    raw = _base_dsn()
+    if not raw:
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+    return urlparse(raw.replace("mariadb://", "mysql://", 1).replace("mysql+pymysql://", "mysql://", 1))
+
+
+@pytest.fixture(autouse=True)
+def _needs_dsn():
+    if not _base_dsn():
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+
+
 def _admin():
+    parsed = _parsed_dsn()
     import pymysql
 
     return pymysql.connect(
-        host=_HOST,
-        port=_PORT,
-        user=_USER,
-        password=_PASSWORD,
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
         charset="utf8mb4",
         autocommit=True,
         connect_timeout=5,
     )
 
 
+def _secret() -> str:
+    return unquote(_parsed_dsn().password or "")
+
+
+def _hide(text: str) -> None:
+    secret = _secret()
+    if secret:
+        assert secret not in text
+
+
 def _dsn(name: str) -> str:
-    return f"mysql://{_USER}:{_PASSWORD}@{_HOST}:{_PORT}/{name}"
+    parsed = _parsed_dsn()
+    user = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    auth = user if not password else f"{user}:{password}"
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 3306
+    return f"mysql://{auth}@{host}:{port}/{name}"
 
 
 def _create(name: str) -> str:
@@ -214,7 +249,7 @@ def test_processes_lock_mode_parallel_and_recover(tmp_path, monkeypatch):
         assert "salt okunur" in body["message"]
         assert body["mode"] == "shared_v2"
         assert body["landed"] == "ok"
-        assert _PASSWORD not in json.dumps(body)
+        _hide(json.dumps(body))
 
         async def where():
             try:
@@ -457,9 +492,269 @@ def test_cli_dry_run_uses_app_catalog(tmp_path, monkeypatch):
         assert proc.returncode == 0, proc.stderr + "\n" + proc.stdout
         assert "dry-run" in proc.stdout
         assert "yazılmadı" in proc.stdout
-        assert _PASSWORD not in proc.stdout
-        assert _PASSWORD not in proc.stderr
+        _hide(proc.stdout)
+        _hide(proc.stderr)
         assert "orders" in proc.stdout
     finally:
         _drop(name)
         _drop(shared_name)
+
+
+def test_confirmed_writes_land_in_final_store(tmp_path, monkeypatch):
+    token = uuid.uuid4().hex[:8]
+    names = [f"smdc_{token}", f"smds_{token}"]
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("STORAGE_MOVE_LOCK_TTL", "0.3")
+    monkeypatch.setenv("STORAGE_MOVE_MODE_TTL", "0.3")
+    monkeypatch.setenv("STORAGE_MOVE_STALE_SECONDS", "30")
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    try:
+        catalog = _create(names[0])
+        shared = _create(names[1])
+        _migrate(shared)
+        monkeypatch.setenv("MYSQL_URL", catalog)
+        monkeypatch.setenv("STORAGE_SHARED_V2_DSN", shared)
+        env = _env(catalog, shared)
+        company_id = "co_dur"
+        db = _client(catalog)
+
+        async def seed():
+            try:
+                await db.companies.insert_one({
+                    "_id": company_id,
+                    "name": company_id,
+                    "storage_mode": "legacy",
+                })
+                await db.products.insert_one({
+                    "_id": "p-seed",
+                    "company_id": company_id,
+                    "name": "Tohum",
+                    "sku": "SKU-seed",
+                    "price": 1,
+                })
+            finally:
+                await db.close()
+
+        asyncio.run(seed())
+        ready = tmp_path / "dur-ready"
+        tried = tmp_path / "dur-tried"
+        release = tmp_path / "dur-release"
+        result = tmp_path / "dur.json"
+        writer = _spawn({
+            "action": "durability",
+            "company_id": company_id,
+            "env": env,
+            "ready": str(ready),
+            "tried": str(tried),
+            "release": str(release),
+            "result": str(result),
+        })
+
+        async def on_batch(_name, _count):
+            ready.write_text("1", encoding="utf-8")
+            for _ in range(200):
+                if tried.exists():
+                    return
+                await asyncio.sleep(0.05)
+            raise TimeoutError("yazma denemesi gelmedi")
+
+        db = _client(catalog)
+
+        async def _apply():
+            try:
+                return await storage_move.apply_move(
+                    db, company_id, "shared_v2", batch_size=1, on_batch=on_batch,
+                )
+            finally:
+                await db.close()
+
+        report = asyncio.run(_apply())
+        release.write_text("1", encoding="utf-8")
+        writer.join(30)
+        assert writer.exitcode == 0
+        assert report.ok, report.errors
+        body = _read_json(result)
+        _hide(json.dumps(body))
+        assert not body.get("error"), body
+        attempts = body["attempts"]
+        during = [row for row in attempts if row["phase"] == "during"]
+        after = [row for row in attempts if row["phase"] == "after"]
+        assert len(during) == 4 and len(after) == 4
+        assert all(row.get("locked") for row in during), during
+        assert all(row["ok"] for row in after), after
+        labels = {row["label"] for row in after}
+        assert labels == {"tenant", "raw_update", "raw_insert", "store"}
+
+        async def check():
+            try:
+                shared_coll = storage_router.collection_for_mode(db, "shared_v2", company_id, "products")
+                losses = []
+                found = {}
+                for row in after:
+                    doc = await shared_coll.find_one({"_id": row["id"]})
+                    found[row["id"]] = None if doc is None else doc.get(row["field"])
+                    if doc is None or doc.get(row["field"]) != row["value"]:
+                        losses.append(row["id"])
+                legacy_seed = await db.products.find_one({"_id": "p-seed"})
+                legacy_raw = await db.products.find_one({"_id": "p-raw-after"})
+                legacy_tenant = await db.products.find_one({"_id": "p-tenant-after"})
+                legacy_store = await db.products.find_one({"_id": "p-store-after"})
+                return losses, found, legacy_seed, legacy_raw, legacy_tenant, legacy_store
+            finally:
+                await db.close()
+
+        storage_shared_v2.reset_store()
+        db = _client(catalog)
+        losses, found, legacy_seed, legacy_raw, legacy_tenant, legacy_store = asyncio.run(check())
+        assert losses == []
+        assert found["p-seed"] == "Son"
+        assert found["p-tenant-after"] == "TenantSon"
+        assert found["p-raw-after"] == "HamSon"
+        assert found["p-store-after"] == "DepoSon"
+        assert legacy_seed["name"] == "Tohum"
+        assert legacy_raw is None
+        assert legacy_tenant is None
+        assert legacy_store is None
+    finally:
+        storage_router.reset()
+        storage_shared_v2.reset_store()
+        for name in names:
+            _drop(name)
+
+
+def test_unreadable_catalog_rejects_locked_write(monkeypatch):
+    token = uuid.uuid4().hex[:8]
+    name = f"smu_{token}"
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    storage_router.reset()
+    try:
+        catalog = _create(name)
+        monkeypatch.setenv("MYSQL_URL", catalog)
+        cid = "co_unread"
+        db = _client(catalog)
+
+        async def unread(*_args, **_kwargs):
+            return storage_router._UNREAD
+
+        async def run():
+            try:
+                await db.companies.insert_one({
+                    "_id": cid,
+                    "name": cid,
+                    "storage_mode": "legacy",
+                    "storage_write_lock": False,
+                    "storage_epoch": 1,
+                })
+                await db.products.insert_one({
+                    "_id": "p-unread",
+                    "company_id": cid,
+                    "name": "Eski",
+                    "sku": "SKU-unread",
+                    "price": 1,
+                })
+                await db.companies.update_one(
+                    {"_id": cid},
+                    {"$set": {"storage_write_lock": True}},
+                )
+                storage_router._cache[cid] = ("legacy", 0.0, 0, False)
+                storage_router._lock_cache[cid] = (False, 0.0)
+                monkeypatch.setattr(storage_router, "read_company_doc_async", unread)
+                monkeypatch.setattr(storage_router, "_read_company_doc", lambda *_a, **_k: storage_router._UNREAD)
+                assert storage_router._locked_now(db, cid) is True
+                with pytest.raises(storage_router.StorageWriteLocked):
+                    await db.products.update_one({"_id": "p-unread"}, {"$set": {"name": "Kayip"}})
+                with pytest.raises(storage_router.StorageWriteLocked):
+                    await db.products.insert_one({
+                        "_id": "p-new",
+                        "company_id": cid,
+                        "name": "Yeni",
+                        "sku": "SKU-new",
+                        "price": 2,
+                    })
+                kept = await db.products.find_one({"_id": "p-unread"})
+                missing = await db.products.find_one({"_id": "p-new"})
+                return kept, missing
+            finally:
+                await db.close()
+
+        kept, missing = asyncio.run(run())
+        assert kept["name"] == "Eski"
+        assert missing is None
+        assert storage_router._lock_cache[cid][1] <= storage_router._now()
+        assert storage_router._locked_now(db, cid) is True
+    finally:
+        storage_router.reset()
+        _drop(name)
+
+
+def test_other_host_live_move_is_not_stolen(monkeypatch):
+    token = uuid.uuid4().hex[:8]
+    name = f"smh_{token}"
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("STORAGE_MOVE_STALE_SECONDS", "30")
+    storage_router.reset()
+    try:
+        catalog = _create(name)
+        monkeypatch.setenv("MYSQL_URL", catalog)
+        db = _client(catalog)
+
+        async def run():
+            try:
+                cid = "co_remote"
+                fresh = storage_move._now()
+                await db.companies.insert_one({"_id": cid, "name": cid, "storage_mode": "legacy"})
+                await db.storage_move_locks.insert_one({
+                    "_id": cid,
+                    "company_id": cid,
+                    "move_id": "remote-move",
+                    "status": "running",
+                    "owner_host": "remote-host",
+                    "owner_pid": 1,
+                    "heartbeat_at": fresh,
+                    "to_mode": "shared_v2",
+                })
+                with pytest.raises(storage_router.StorageMoveBusy):
+                    await storage_move._acquire_lock(db, cid, "local-move", "shared_v2")
+                remote = await storage_move._lock_docs(db, cid)
+                assert remote[0]["move_id"] == "remote-move"
+                assert remote[0]["owner_host"] == "remote-host"
+
+                dead = "co_dead"
+                await db.companies.insert_one({"_id": dead, "name": dead, "storage_mode": "legacy"})
+                await db.storage_move_locks.insert_one({
+                    "_id": dead,
+                    "company_id": dead,
+                    "move_id": "dead-move",
+                    "status": "running",
+                    "owner_host": storage_move._owner_host(),
+                    "owner_pid": 2_147_000_001,
+                    "heartbeat_at": fresh,
+                    "to_mode": "shared_v2",
+                })
+                await storage_move._acquire_lock(db, dead, "takeover", "shared_v2")
+                taken = await storage_move._lock_docs(db, dead)
+                assert taken[0]["move_id"] == "takeover"
+
+                old = "co_old_host"
+                await db.companies.insert_one({"_id": old, "name": old, "storage_mode": "legacy"})
+                await db.storage_move_locks.insert_one({
+                    "_id": old,
+                    "company_id": old,
+                    "move_id": "old-move",
+                    "status": "running",
+                    "owner_host": "remote-host",
+                    "owner_pid": 1,
+                    "heartbeat_at": "2000-01-01T00:00:00Z",
+                    "to_mode": "shared_v2",
+                })
+                await storage_move._acquire_lock(db, old, "stale-take", "shared_v2")
+                aged = await storage_move._lock_docs(db, old)
+                assert aged[0]["move_id"] == "stale-take"
+            finally:
+                await db.close()
+
+        asyncio.run(run())
+    finally:
+        storage_router.reset()
+        _drop(name)

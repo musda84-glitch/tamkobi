@@ -412,6 +412,7 @@ class SharedV2Collection:
         return _Cursor()
 
     async def insert_one(self, doc):
+        await self._touch_lock()
         _guard(self.name, "insert_one", doc=doc)
         body = self._prepare(doc)
 
@@ -431,6 +432,7 @@ class SharedV2Collection:
         return InsertOneResult(body["_id"])
 
     async def insert_many(self, docs, ordered: bool = True):
+        await self._touch_lock()
         _guard(self.name, "insert_many", doc=docs)
         ids = []
         for doc in docs or []:
@@ -438,6 +440,7 @@ class SharedV2Collection:
         return InsertManyResult(ids)
 
     async def update_one(self, query, update, upsert: bool = False):
+        await self._touch_lock()
         _guard(self.name, "update_one", query=query, update=update, upsert=upsert)
         old = await self._first(query)
         if old is None:
@@ -468,6 +471,7 @@ class SharedV2Collection:
         return UpdateResult(1, 1, None)
 
     async def update_one_atomic(self, query, update):
+        await self._touch_lock()
         _guard(self.name, "update_one_atomic", query=query, update=update)
         q = query or {}
         doc_id = q.get("_id")
@@ -508,6 +512,7 @@ class SharedV2Collection:
         return UpdateResult(1, 1 if changed else 0, None)
 
     async def update_many(self, query, update, upsert: bool = False):
+        await self._touch_lock()
         _guard(self.name, "update_many", query=query, update=update, upsert=upsert)
         docs = await self._match_docs(query)
         if not docs:
@@ -540,6 +545,7 @@ class SharedV2Collection:
         return UpdateResult(len(docs), len(changed), None)
 
     async def replace_one(self, query, replacement, upsert: bool = False):
+        await self._touch_lock()
         _guard(self.name, "replace_one", query=query, doc=replacement)
         old = await self._first(query)
         if old is None:
@@ -569,6 +575,7 @@ class SharedV2Collection:
     async def find_one_and_update(
         self, query, update, upsert: bool = False, return_document=True, projection=None,
     ):
+        await self._touch_lock()
         _guard(self.name, "find_one_and_update", query=query, update=update, upsert=upsert)
         old = await self._first(query)
         if old is None:
@@ -601,6 +608,7 @@ class SharedV2Collection:
         return project_doc(out, projection) if projection else copy.deepcopy(out)
 
     async def delete_one(self, query):
+        await self._touch_lock()
         _guard(self.name, "delete_one", query=query)
         old = await self._first(query)
         if old is None:
@@ -620,6 +628,7 @@ class SharedV2Collection:
         return DeleteResult(1)
 
     async def delete_many(self, query):
+        await self._touch_lock()
         _guard(self.name, "delete_many", query=query)
         where, reason = self._where_plan(query or {})
         if where is None:
@@ -1134,6 +1143,17 @@ class SharedV2Collection:
         if _is_duplicate(exc):
             raise DuplicateKeyError("duplicate key") from None
         raise exc
+
+    async def _touch_lock(self):
+        """Async yazma pymysql açmaz. Taze kilit önbelleğini doldurur."""
+        import storage_router
+
+        await storage_router.guard_pinned_write(
+            self.company_id,
+            db=getattr(self, "_catalog_db", None),
+            pinned_mode=getattr(self, "_pinned_mode", None),
+            pinned_epoch=getattr(self, "_pinned_epoch", None),
+        )
 
     def _run_write(self, work):
         """Deadlock ve kilit beklemesi işlemi geri alıp sınırlı tekrar dener."""

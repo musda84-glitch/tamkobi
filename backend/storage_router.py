@@ -4,12 +4,12 @@ STORAGE_ROUTER_ENABLED kapalıyken (varsayılan) bu modül okunmaz: TenantDB
 bugünkü koleksiyonu döner. Bayrak açıkken firma ayarı kısa TTL ile
 önbelleğe alınır; her istekte companies sorgusu yapılmaz.
 
-Kip, TenantDB kurulurken bir kez sabitlenir. TTL istek ortasında dolsa
-da aynı örnek yeniden okumaz. Önbellek hiç yoksa giriş noktası dışında
-gerçek sürücüye sorulmaz ve legacy sayılır; hata verilmez. Süresi
-dolmuş kayıt katalogdan yeniden okunur. Kip değişince storage_epoch
-artar. Yazma kilidi katalogdaki storage_write_lock alanındadır; her
-süreç kısa TTL ile bakar.
+Kip, TenantDB kurulurken okunur. Yazma, katalogdaki storage_epoch ile
+karşılaştırır; farklıysa yeni kipe yönlenir. Önbellek hiç yoksa giriş
+noktası dışında gerçek sürücüye sorulmaz ve legacy sayılır; hata verilmez.
+Süresi dolmuş kayıt katalogdan yeniden okunur; bayat değer kullanılmaz.
+Katalog okunamazsa bayrak açıkken yazma reddedilir. Yazma kilidi
+katalogdaki storage_write_lock alanındadır; her süreç kısa TTL ile bakar.
 
 Bu sürüm legacy, shared_v2 ve dedicated arka uçlarını tanır.
 shared_v2 kipinde orders, invoices, stock_movements ve bank_transactions
@@ -64,6 +64,8 @@ _cache: "OrderedDict[str, tuple]" = OrderedDict()
 _lock_cache: "OrderedDict[str, tuple[bool, float]]" = OrderedDict()
 read_count = 0
 _write_locks: set[str] = set()
+# (active, exp) — company_id çözülemeyen ham yazma
+_any_move: tuple[bool, float] = (False, 0.0)
 _move_owner: Optional[str] = None
 _move_guard = threading.Lock()
 _writer: "contextvars.ContextVar[str]" = contextvars.ContextVar(
@@ -112,9 +114,10 @@ def enabled() -> bool:
 
 def reset() -> None:
     """Testler önbelleği ve sayacı sıfırlar. Ortam bayrağına dokunmaz."""
-    global read_count, _move_owner
+    global read_count, _move_owner, _any_move
     _cache.clear()
     _lock_cache.clear()
+    _any_move = (False, 0.0)
     read_count = 0
     _write_locks.clear()
     _move_owner = None
@@ -318,7 +321,9 @@ def _sql_company(settings: dict, company_id: str):
             raw = json.loads(raw)
         except Exception:
             return _UNREAD
-    return raw if isinstance(raw, dict) else _UNREAD
+    if isinstance(raw, dict):
+        return raw
+    return _UNREAD
 
 
 def _read_company_doc(db, company_id: str):
@@ -438,29 +443,33 @@ def collection_for_mode(db, mode: str, company_id: str, name: str):
     dönmez.
     """
     if mode == LEGACY:
-        return _bind_catalog(db[name], db)
+        return _bind_catalog(db[name], db, mode, company_id)
     if mode == SHARED_V2:
         import storage_tables
 
         if name in storage_tables.REAL_COLLECTIONS:
-            return _bind_catalog(storage_tables.collection_for(company_id, name), db)
+            return _bind_catalog(storage_tables.collection_for(company_id, name), db, mode, company_id)
         import storage_shared_v2
 
-        return _bind_catalog(storage_shared_v2.collection_for(company_id, name), db)
+        return _bind_catalog(storage_shared_v2.collection_for(company_id, name), db, mode, company_id)
     if mode == DEDICATED:
         import storage_dedicated
 
-        return _bind_catalog(storage_dedicated.collection(db, company_id, name), db)
+        return _bind_catalog(storage_dedicated.collection(db, company_id, name), db, mode, company_id)
     reject_unless_legacy(mode, company_id)
-    return _bind_catalog(db[name], db)
+    return _bind_catalog(db[name], db, mode, company_id)
 
 
-def _bind_catalog(coll, db):
-    """Yazma yolu şirket kilidini bu katalogdan okur."""
+def _bind_catalog(coll, db, mode: str = "", company_id: str = ""):
+    """Yazma yolu şirket kilidini ve açılış epoch'unu bu katalogdan okur."""
     if coll is None or db is None:
         return coll
     try:
         setattr(coll, "_catalog_db", db)
+        if mode:
+            setattr(coll, "_pinned_mode", mode)
+            row = _cache.get(str(company_id or ""))
+            setattr(coll, "_pinned_epoch", row[2] if row else None)
     except Exception:
         return coll
     return coll
@@ -566,16 +575,20 @@ class CompanyStore:
     companies kataloğu burada değildir; iş şirket belgesini ana db'den okur.
     """
 
-    def __init__(self, db, company_id: str, mode: str):
+    def __init__(self, db, company_id: str, mode: str, epoch: int = 0):
         self.company_id = company_id
         self.mode = mode
+        self.epoch = int(epoch or 0)
         self._db = db
 
     def __repr__(self) -> str:
         return f"CompanyStore(company_id={self.company_id!r}, mode={self.mode!r})"
 
     def __getitem__(self, name: str):
-        return collection_for_mode(self._db, self.mode, self.company_id, str(name))
+        coll = collection_for_mode(self._db, self.mode, self.company_id, str(name))
+        if not enabled():
+            return coll
+        return BoundCollection(self, str(name), coll)
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
@@ -631,7 +644,7 @@ async def _catalog_companies(db, company_id: str = ""):
     only = str(company_id or "").strip()
     query = {"_id": only} if only else {}
     try:
-        cursor = coll.find(query, {"_id": 1, MODE_FIELD: 1, DSN_FIELD: 1})
+        cursor = coll.find(query, {"_id": 1, MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1, DSN_FIELD: 1})
     except TypeError:
         cursor = coll.find(query)
     return await _collect_docs(cursor, _COMPANY_LIST_LIMIT)
@@ -646,12 +659,14 @@ async def open_company_store(db, company_id: str) -> CompanyStore:
     if not cid:
         raise ValueError("company_id boş")
     if not enabled():
-        return CompanyStore(db, cid, LEGACY)
+        return CompanyStore(db, cid, LEGACY, 0)
     mode = await load_mode(db, cid)
     if mode == DEDICATED:
         await prepare_dedicated(db, cid, mode)
     _probe_store(db, cid, mode)
-    return CompanyStore(db, cid, mode)
+    row = _cache.get(cid)
+    epoch = int(row[2]) if row else 0
+    return CompanyStore(db, cid, mode, epoch)
 
 
 async def iter_company_stores(db, *, company_id: str = ""):
@@ -678,14 +693,14 @@ async def iter_company_stores(db, *, company_id: str = ""):
             continue
         seen.add(cid)
         try:
-            mode = _mode_from_doc(doc)
+            mode, epoch, locked = _view(doc)
             if mode == DEDICATED:
                 await prepare_dedicated(db, cid, mode)
             elif mode != LEGACY and mode != SHARED_V2:
                 reject_unless_legacy(mode, cid)
             _probe_store(db, cid, mode)
-            _store(cid, mode)
-            yield cid, CompanyStore(db, cid, mode)
+            _store(cid, mode, epoch, locked)
+            yield cid, CompanyStore(db, cid, mode, epoch)
         except Exception as exc:
             log_store_failure(cid, exc)
 
@@ -695,6 +710,17 @@ class StorageWriteLocked(StorageModeError):
 
     def __init__(self, message: str = "", *, company_id: str = ""):
         super().__init__(message or WRITE_LOCK_MESSAGE, company_id=company_id, mode="")
+
+
+class StorageEpochStale(StorageModeError):
+    """Açılış kipinin epoch'u katalogla uyuşmuyor. Yazma eski depoya gitmez."""
+
+    def __init__(self, message: str = "", *, company_id: str = "", mode: str = ""):
+        super().__init__(
+            message or "Depolama kipi değişti. Yazma eski depoya yapılmadı.",
+            company_id=company_id,
+            mode=mode,
+        )
 
 
 class StorageMoveBusy(RuntimeError):
@@ -724,24 +750,39 @@ def note_write_lock(company_id: str, locked: bool) -> None:
         _write_locks.discard(cid)
 
 
+def _on_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def _locked_now(db, company_id: str) -> bool:
+    """Taze önbellek. Süresi dolmuş değer kullanılmaz.
+
+    Katalog okunamazsa kilitli sayılır. Bellek kataloğu döngüde de okunur.
+    Gerçek sürücüde olay döngüsü pymysql açmaz; okuyamazsa yazma reddedilir.
+    """
     cid = str(company_id or "").strip()
     if not cid:
         return False
     row = _lock_cache.get(cid)
     if row is not None and _now() < row[1]:
         return bool(row[0])
+    if db is not None:
+        memory = _memory_doc(db, cid)
+        if memory is not _UNREAD:
+            mode, epoch, locked = _view(memory if isinstance(memory, dict) else None)
+            _store(cid, mode, epoch, locked)
+            return locked
+    if _on_loop():
+        return True
     doc = _read_company_doc(db, cid)
     if doc is _UNREAD:
-        if row is not None:
-            return bool(row[0])
-        return False
+        return True
     mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
-    if _cached(cid) is _MISS:
-        _store(cid, mode, epoch, locked)
-    else:
-        _lock_cache[cid] = (locked, _now() + lock_ttl())
-        _lock_cache.move_to_end(cid)
+    _store(cid, mode, epoch, locked)
     return locked
 
 
@@ -832,6 +873,425 @@ def forget_mode(company_id: str) -> None:
     cid = str(company_id or "")
     _cache.pop(cid, None)
     _lock_cache.pop(cid, None)
+
+
+def _view_cached(company_id: str):
+    """İkisi de tazeyse (mode, epoch, locked). Değilse None. Bayat değer dönmez."""
+    cid = str(company_id or "")
+    row = _cache.get(cid)
+    lock = _lock_cache.get(cid)
+    now = _now()
+    if not row or not lock or now >= row[1] or now >= lock[1]:
+        return None
+    return row[0], int(row[2]), bool(lock[0])
+
+
+def _remember_view(company_id: str, doc) -> tuple[str, int, bool]:
+    mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
+    _store(company_id, mode, epoch, locked)
+    _bump()
+    return mode, epoch, locked
+
+
+async def _sql_company_async(db, company_id: str):
+    """Havuzdaki async sürücü. Olay döngüsünde pymysql açılmaz."""
+    await db._ensure()
+    async with db._pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT doc FROM docs WHERE collection=%s AND id=%s",
+                ("companies", company_id),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return None
+    raw = row[0]
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return _UNREAD
+    if isinstance(raw, dict):
+        return raw
+    return _UNREAD
+
+
+async def read_company_doc_async(db, company_id: str):
+    """Şirket belgesi. Yoksa None. Okunamazsa _UNREAD. Döngüyü pymysql ile durdurmaz."""
+    if db is None:
+        return _UNREAD
+    memory = _memory_doc(db, company_id)
+    if memory is not _UNREAD:
+        return memory
+    if hasattr(db, "_ensure") and (getattr(db, "_pool", None) is not None or hasattr(db, "_settings")):
+        try:
+            return await _sql_company_async(db, company_id)
+        except Exception:
+            return _UNREAD
+    settings = getattr(db, "_settings", None)
+    if isinstance(settings, dict) and settings.get("host") and settings.get("db"):
+        try:
+            return await asyncio.to_thread(_sql_company, settings, company_id)
+        except Exception:
+            return _UNREAD
+    find_one = getattr(_companies(db), "find_one", None)
+    if find_one is None:
+        return _UNREAD
+    try:
+        result = find_one(
+            {"_id": company_id},
+            {MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1},
+        )
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception:
+        return _UNREAD
+    if result is None:
+        return None
+    return result if isinstance(result, dict) else _UNREAD
+
+
+async def load_view(db, company_id: str) -> tuple[str, int, bool]:
+    """Kip, epoch ve kilit. Taze önbellek sorgu atmaz.
+
+    Okunamazsa StorageWriteLocked. Süresi dolmuş önbellek kullanılmaz.
+    """
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise ValueError("company_id boş")
+    cached = _view_cached(cid)
+    if cached is not None:
+        return cached
+    doc = await read_company_doc_async(db, cid)
+    if doc is _UNREAD:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+    return _remember_view(cid, doc)
+
+
+def load_view_sync(db, company_id: str) -> tuple[str, int, bool]:
+    """Senkron yazma yolu. Olay döngüsünde pymysql açmaz; okuyamazsa reddeder."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise ValueError("company_id boş")
+    cached = _view_cached(cid)
+    if cached is not None:
+        return cached
+    if db is not None:
+        memory = _memory_doc(db, cid)
+        if memory is not _UNREAD:
+            return _remember_view(cid, memory)
+    if _on_loop():
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+    doc = _read_company_doc(db, cid)
+    if doc is _UNREAD:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+    return _remember_view(cid, doc)
+
+
+async def guard_pinned_write(company_id: str, db=None, pinned_mode=None, pinned_epoch=None) -> tuple[str, int, bool]:
+    """Yazmadan önce kilit ve epoch. Bayrak kapalıyken sorgu yok.
+
+    Epoch veya kip uyuşmazsa StorageEpochStale. Kilitli ya da okunamazsa
+    StorageWriteLocked. Taşımanın kendi yazısı geçer.
+    """
+    if not enabled():
+        return (LEGACY, 0, False)
+    cid = str(company_id or "").strip()
+    if not cid or _writer.get() == cid:
+        return (str(pinned_mode or LEGACY), int(pinned_epoch or 0), False)
+    mode, epoch, locked = await load_view(db, cid)
+    if locked:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+    if pinned_mode is not None and (mode != pinned_mode or (pinned_epoch is not None and int(pinned_epoch) != epoch)):
+        raise StorageEpochStale(company_id=cid, mode=mode)
+    return mode, epoch, locked
+
+
+def guard_pinned_write_sync(company_id: str, db=None, pinned_mode=None, pinned_epoch=None) -> tuple[str, int, bool]:
+    if not enabled():
+        return (LEGACY, 0, False)
+    cid = str(company_id or "").strip()
+    if not cid or _writer.get() == cid:
+        return (str(pinned_mode or LEGACY), int(pinned_epoch or 0), False)
+    mode, epoch, locked = load_view_sync(db, cid)
+    if locked:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=cid)
+    if pinned_mode is not None and (mode != pinned_mode or (pinned_epoch is not None and int(pinned_epoch) != epoch)):
+        raise StorageEpochStale(company_id=cid, mode=mode)
+    return mode, epoch, locked
+
+
+async def any_move_running(db) -> bool:
+    """Çözülemeyen ham yazma için. Okunamazsa kilitli sayılır. Bayrak kapalıyken çağrılmaz."""
+    global _any_move
+    now = _now()
+    if now < _any_move[1]:
+        return _any_move[0]
+    try:
+        from tenant_scope import unscoped
+
+        with unscoped("depolama taşıma kilidi"):
+            found = db["storage_move_locks"].find_one({"status": "running"})
+            if inspect.isawaitable(found):
+                found = await found
+    except Exception:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+    active = isinstance(found, dict)
+    _any_move = (active, now + lock_ttl())
+    return active
+
+
+def any_move_running_sync(db) -> bool:
+    global _any_move
+    now = _now()
+    if now < _any_move[1]:
+        return _any_move[0]
+    if _on_loop():
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+    try:
+        from tenant_scope import unscoped
+
+        with unscoped("depolama taşıma kilidi"):
+            found = db["storage_move_locks"].find_one({"status": "running"})
+    except Exception:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+    active = isinstance(found, dict)
+    _any_move = (active, now + lock_ttl())
+    return active
+
+
+_CONTROL_COLLECTIONS = frozenset({"companies", "storage_moves", "storage_move_locks"})
+
+
+def _payload_companies(op: str, doc, query, update, name: str = "") -> list[str]:
+    found: list[str] = []
+
+    def add(value) -> None:
+        text = str(value or "").strip()
+        if text and text not in found:
+            found.append(text)
+
+    if op == "insert_one" and isinstance(doc, dict):
+        add(doc.get("company_id"))
+        if name == "companies":
+            add(doc.get("_id"))
+    elif op == "insert_many" and isinstance(doc, (list, tuple)):
+        for item in doc:
+            if isinstance(item, dict):
+                add(item.get("company_id"))
+    elif op == "replace_one" and isinstance(doc, dict):
+        add(doc.get("company_id"))
+    if isinstance(query, dict):
+        if isinstance(query.get("company_id"), str):
+            add(query.get("company_id"))
+        if name == "companies" and query.get("_id") and not isinstance(query.get("_id"), dict):
+            add(query.get("_id"))
+    if isinstance(update, dict):
+        for key in ("$set", "$setOnInsert"):
+            body = update.get(key)
+            if isinstance(body, dict):
+                add(body.get("company_id"))
+    return found
+
+
+async def _matched_company_ids(coll, query, name: str) -> list[str]:
+    loader = getattr(coll, "_load_filtered", None)
+    rows = None
+    if loader is not None:
+        rows = loader(query)
+        if inspect.isawaitable(rows):
+            rows = await rows
+    if rows is None:
+        find = getattr(coll, "find", None)
+        if find is None:
+            return []
+        cursor = find(query, {"_id": 1, "company_id": 1})
+        if hasattr(cursor, "to_list"):
+            rows = cursor.to_list(None)
+            if inspect.isawaitable(rows):
+                rows = await rows
+        else:
+            rows = list(cursor or [])
+    found: list[str] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("company_id") or "").strip()
+        if not cid and name == "companies":
+            cid = str(row.get("_id") or "").strip()
+        if cid and cid not in found:
+            found.append(cid)
+    return found
+
+
+async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None):
+    """Ham legacy yazmayı kilit ve güncel kipe göre bırakır, yönlendirir veya reddeder.
+
+    Bayrak kapalıyken None döner ve katalog okunmaz. Dönüş None ise yazma
+    bu koleksiyonda sürer. Koleksiyon dönerse yazma oraya gider.
+    """
+    if not enabled():
+        return None
+    db = getattr(coll, "_db", None) or getattr(coll, "db", None)
+    name = str(getattr(coll, "name", "") or "")
+    known = _payload_companies(op, doc, query, update, name)
+    if name in _CONTROL_COLLECTIONS:
+        for cid in known:
+            if _writer.get() == cid:
+                continue
+            await guard_pinned_write(cid, db=db)
+        if not known and name != "companies":
+            if _writer.get():
+                return None
+            if await any_move_running(db):
+                raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+        return None
+    if not known and op not in ("insert_one", "insert_many"):
+        known = await _matched_company_ids(coll, query, name)
+    if not known:
+        if _writer.get():
+            return None
+        if await any_move_running(db):
+            raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+        return None
+    views = []
+    for cid in known:
+        if _writer.get() == cid:
+            continue
+        views.append((cid, await load_view(db, cid)))
+    if not views:
+        return None
+    if any(locked for _cid, (_mode, _epoch, locked) in views):
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=views[0][0])
+    modes = {mode for _cid, (mode, _epoch, _locked) in views}
+    if modes == {LEGACY}:
+        return None
+    if len(views) == 1 and views[0][1][0] != LEGACY:
+        cid, (mode, _epoch, _locked) = views[0]
+        return collection_for_mode(db, mode, cid, name)
+    raise StorageEpochStale("Yazma birden fazla şirketin kipine dağılmış. Eski depoya yazılmadı.")
+
+
+def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None):
+    """Senkron ham yazma. Olay döngüsünde katalog için pymysql açmaz."""
+    if not enabled():
+        return None
+    db = getattr(coll, "_db", None) or getattr(coll, "db", None)
+    name = str(getattr(coll, "name", "") or "")
+    known = _payload_companies(op, doc, query, update, name)
+    if name in _CONTROL_COLLECTIONS:
+        for cid in known:
+            if _writer.get() == cid:
+                continue
+            guard_pinned_write_sync(cid, db=db)
+        if not known and name != "companies":
+            if _writer.get():
+                return None
+            if any_move_running_sync(db):
+                raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+        return None
+    if not known and op not in ("insert_one", "insert_many"):
+        loader = getattr(coll, "_load_filtered", None)
+        rows = loader(query) if loader is not None else []
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("company_id"):
+                cid = str(row.get("company_id"))
+                if cid not in known:
+                    known.append(cid)
+    if not known:
+        if _writer.get():
+            return None
+        if any_move_running_sync(db):
+            raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
+        return None
+    views = []
+    for cid in known:
+        if _writer.get() == cid:
+            continue
+        views.append((cid, load_view_sync(db, cid)))
+    if not views:
+        return None
+    if any(locked for _cid, (_mode, _epoch, locked) in views):
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=views[0][0])
+    modes = {mode for _cid, (mode, _epoch, _locked) in views}
+    if modes == {LEGACY}:
+        return None
+    raise StorageEpochStale(
+        "Depolama kipi değişti. Senkron yazma eski depoya yapılmadı.",
+        company_id=views[0][0],
+        mode=views[0][1][0],
+    )
+
+
+class BoundCollection:
+    """Şirket deposu yazması kendi company_id kilidini ve epoch'unu bilir."""
+
+    def __init__(self, store: "CompanyStore", name: str, raw):
+        self._store = store
+        self._name = name
+        self._raw = raw
+        self.company_id = store.company_id
+        self.name = name
+
+    def __getattr__(self, item):
+        return getattr(self._raw, item)
+
+    async def _align(self):
+        if not enabled():
+            return self._raw
+        if _writer.get() == self._store.company_id:
+            return self._raw
+        mode, epoch, locked = await load_view(self._store._db, self._store.company_id)
+        if locked:
+            raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=self._store.company_id)
+        if mode != self._store.mode or epoch != self._store.epoch:
+            self._store.mode = mode
+            self._store.epoch = epoch
+            self._raw = collection_for_mode(self._store._db, mode, self._store.company_id, self._name)
+        return self._raw
+
+    async def insert_one(self, doc):
+        raw = await self._align()
+        return await raw.insert_one(doc)
+
+    async def insert_many(self, docs, ordered: bool = True):
+        raw = await self._align()
+        fn = raw.insert_many
+        if "ordered" in getattr(fn, "__code__", type("c", (), {"co_varnames": ()})).co_varnames:
+            return await fn(docs, ordered=ordered)
+        return await fn(docs)
+
+    async def update_one(self, query, update, upsert: bool = False):
+        raw = await self._align()
+        return await raw.update_one(query, update, upsert=upsert)
+
+    async def update_one_atomic(self, query, update):
+        raw = await self._align()
+        return await raw.update_one_atomic(query, update)
+
+    async def update_many(self, query, update, upsert: bool = False):
+        raw = await self._align()
+        return await raw.update_many(query, update, upsert=upsert)
+
+    async def replace_one(self, query, replacement, upsert: bool = False):
+        raw = await self._align()
+        return await raw.replace_one(query, replacement, upsert=upsert)
+
+    async def find_one_and_update(self, query, update, upsert: bool = False, return_document=True, projection=None):
+        raw = await self._align()
+        return await raw.find_one_and_update(
+            query, update, upsert=upsert, return_document=return_document, projection=projection,
+        )
+
+    async def delete_one(self, query):
+        raw = await self._align()
+        return await raw.delete_one(query)
+
+    async def delete_many(self, query):
+        raw = await self._align()
+        return await raw.delete_many(query)
 
 
 async def collect_company_rows(db, collection: str, query=None, limit: int = 500):

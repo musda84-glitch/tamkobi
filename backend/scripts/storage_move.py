@@ -25,6 +25,7 @@ import inspect
 import json
 import logging
 import os
+import socket
 import sys
 import time
 import uuid
@@ -190,12 +191,49 @@ def _seconds(env_name: str, default: float) -> float:
         return max(0.0, float(default))
 
 
-def _sleep_lock() -> None:
-    time.sleep(storage_router.lock_ttl())
+def _owner_host() -> str:
+    return socket.gethostname() or "unknown"
 
 
-def _sleep_mode() -> None:
-    time.sleep(storage_router.mode_ttl())
+async def _sleep_beat(db, company_id: str, move_id: str, seconds: float) -> None:
+    """Beklerken kalp atışını yeniler. Eşik 30 sn; adım en fazla 5 sn."""
+    await _beat(db, company_id, move_id)
+    left = max(0.0, float(seconds or 0))
+    while left > 0:
+        chunk = min(5.0, left)
+        time.sleep(chunk)
+        left -= chunk
+        await _beat(db, company_id, move_id)
+
+
+async def _sleep_lock(db, company_id: str, move_id: str) -> None:
+    await _sleep_beat(db, company_id, move_id, storage_router.lock_ttl())
+
+
+async def _sleep_mode(db, company_id: str, move_id: str) -> None:
+    await _sleep_beat(db, company_id, move_id, storage_router.mode_ttl())
+
+
+async def _pulse(db, company_id: str, move_id: str) -> None:
+    """Uzun okuma ve kopya sırasında kalp atışı. İptal edilince susar."""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            await _beat(db, company_id, move_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+
+
+async def _stop_pulse(task) -> None:
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 def _stale_seconds() -> float:
@@ -216,21 +254,30 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _lock_stale(row: dict) -> bool:
-    if not isinstance(row, dict):
-        return True
-    try:
-        pid = int(row.get("owner_pid") or 0)
-    except (TypeError, ValueError):
-        pid = 0
-    if pid and not _pid_alive(pid):
-        return True
+def _heartbeat_age(row: dict) -> float:
     try:
         stamp = datetime.strptime(str(row.get("heartbeat_at") or ""), "%Y-%m-%dT%H:%M:%SZ")
         stamp = stamp.replace(tzinfo=timezone.utc)
     except ValueError:
+        return 10**9
+    return time.time() - stamp.timestamp()
+
+
+def _lock_stale(row: dict) -> bool:
+    """Bayatlık kalp atışı eşiği veya aynı hostta ölü pid.
+
+    Başka hosttaki taze kalp atışı, pid bu makinede yok diye çalınmaz.
+    """
+    if not isinstance(row, dict):
         return True
-    return (time.time() - stamp.timestamp()) >= _stale_seconds()
+    host = str(row.get("owner_host") or "")
+    try:
+        pid = int(row.get("owner_pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if host and host == _owner_host() and pid and not _pid_alive(pid):
+        return True
+    return _heartbeat_age(row) >= _stale_seconds()
 
 
 def _is_duplicate(exc: BaseException) -> bool:
@@ -557,10 +604,11 @@ async def plan_move(db, company_id: str, to_mode: str) -> MoveReport:
 
 
 async def _flag(db, company_id: str, locked: bool) -> None:
-    await db.companies.update_one(
-        {"_id": company_id},
-        {"$set": {storage_router.WRITE_LOCK_FIELD: bool(locked)}},
-    )
+    with storage_router.bypass_write_lock(company_id):
+        await db.companies.update_one(
+            {"_id": company_id},
+            {"$set": {storage_router.WRITE_LOCK_FIELD: bool(locked)}},
+        )
 
 
 async def _save_move(db, company_id: str, doc: dict) -> None:
@@ -590,10 +638,11 @@ async def _load_move(db, move_id: str):
 
 
 async def _set_mode(db, company_id: str, mode: str) -> None:
-    await db.companies.update_one(
-        {"_id": company_id},
-        {"$set": {storage_router.MODE_FIELD: mode}, "$inc": {storage_router.EPOCH_FIELD: 1}},
-    )
+    with storage_router.bypass_write_lock(company_id):
+        await db.companies.update_one(
+            {"_id": company_id},
+            {"$set": {storage_router.MODE_FIELD: mode}, "$inc": {storage_router.EPOCH_FIELD: 1}},
+        )
     storage_router.forget_mode(company_id)
 
 
@@ -860,6 +909,7 @@ async def _acquire_lock(db, company_id: str, move_id: str, target: str) -> None:
         "status": "running",
         "heartbeat_at": _now(),
         "owner_pid": os.getpid(),
+        "owner_host": _owner_host(),
         "from_mode": "",
         "to_mode": target,
         "collections": [],
@@ -919,7 +969,11 @@ async def _beat(db, company_id: str, move_id: str) -> None:
         with storage_router.bypass_write_lock(company_id):
             await db[LOCKS].update_one(
                 {"_id": company_id, "move_id": move_id},
-                {"$set": {"heartbeat_at": _now(), "owner_pid": os.getpid()}},
+                {"$set": {
+                    "heartbeat_at": _now(),
+                    "owner_pid": os.getpid(),
+                    "owner_host": _owner_host(),
+                }},
             )
 
 
@@ -941,6 +995,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         return _empty(cid, mode, "company_id boş", dry_run=False)
     held = False
     opened = False
+    pulse = None
     started = time.monotonic()
     move_id = uuid.uuid4().hex
     copied: dict = {}
@@ -961,7 +1016,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         await _flag(db, cid, True)
         storage_router.note_write_lock(cid, True)
         opened = True
-        _sleep_lock()
+        await _sleep_lock(db, cid, move_id)
         await _save_move(db, cid, {
             "_id": move_id,
             "company_id": cid,
@@ -977,6 +1032,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
             "duration_ms": 0,
             "error": "",
         })
+        pulse = asyncio.create_task(_pulse(db, cid, move_id))
         try:
             counts, checksums, steps, collections = await _copy(
                 db, company, cid, source, mode, copied,
@@ -1000,7 +1056,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
             )
         steps.append({"name": "kip", "status": "tamam"})
         steps.append({"name": "bekle:kip", "status": "tamam"})
-        _sleep_mode()
+        await _sleep_mode(db, cid, move_id)
         duration = _elapsed(started)
         await _patch_move(db, cid, move_id, {
             "status": "completed",
@@ -1013,7 +1069,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         })
         await _clear_flag(db, cid)
         opened = False
-        _sleep_lock()
+        await _sleep_lock(db, cid, move_id)
         _logger().info("taşıma company=%s durum=completed", storage_router._safe_company(cid))
         return MoveReport(
             ok=True, wrote=True, dry_run=False, move_id=move_id, company_id=cid,
@@ -1021,9 +1077,10 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
             counts=counts, checksums=checksums, steps=steps, duration_ms=duration,
         )
     finally:
+        await _stop_pulse(pulse)
         if opened:
             await _clear_flag(db, cid)
-            _sleep_lock()
+            await _sleep_lock(db, cid, move_id)
         if held:
             try:
                 await _release_lock(db, cid, move_id)
@@ -1196,6 +1253,7 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         return report
     held = False
     opened = False
+    pulse = None
     started = time.monotonic()
     journal: list = []
     company = None
@@ -1221,7 +1279,8 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         await _flag(db, cid, True)
         storage_router.note_write_lock(cid, True)
         opened = True
-        _sleep_lock()
+        await _sleep_lock(db, cid, rollback_id)
+        pulse = asyncio.create_task(_pulse(db, cid, rollback_id))
         try:
             journal, new_counts, checksums, steps, collections = await _reverse(
                 db, company, cid, source, current, batch_size=batch_size, on_batch=on_batch,
@@ -1248,7 +1307,7 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         await _set_mode(db, cid, source)
         steps.append({"name": "kip", "status": "tamam"})
         steps.append({"name": "bekle:kip", "status": "tamam"})
-        _sleep_mode()
+        await _sleep_mode(db, cid, rollback_id)
         duration = _elapsed(started)
         previous_steps = list(record.get("steps") or [])
         await _patch_move(db, cid, mid, {
@@ -1261,7 +1320,7 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         })
         await _clear_flag(db, cid)
         opened = False
-        _sleep_lock()
+        await _sleep_lock(db, cid, rollback_id)
         _logger().info("taşıma company=%s durum=rolled_back", storage_router._safe_company(cid))
         return MoveReport(
             ok=True, wrote=True, dry_run=False, move_id=mid, company_id=cid,
@@ -1270,9 +1329,10 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
             steps=steps, duration_ms=duration,
         )
     finally:
+        await _stop_pulse(pulse)
         if opened:
             await _clear_flag(db, cid)
-            _sleep_lock()
+            await _sleep_lock(db, cid, rollback_id)
         if held:
             try:
                 await _release_lock(db, cid, rollback_id)
@@ -1363,7 +1423,7 @@ async def recover_move(db, move_id: str) -> MoveReport:
         except Exception as exc:
             return _empty(cid, source, _safe(exc), dry_run=False)
     await _clear_flag(db, cid)
-    _sleep_lock()
+    await _sleep_lock(db, cid, str((lock or {}).get("move_id") or mid))
     if lock:
         try:
             await _release_lock(db, cid, str(lock.get("move_id") or ""))
@@ -1670,6 +1730,92 @@ def _process_entry(spec: dict) -> None:
                         pass
 
             outcome.update(asyncio.run(_write_and_close()))
+        elif action == "durability":
+            async def _once(attempts, phase, label, doc_id, field, value, fn):
+                row = {
+                    "phase": phase,
+                    "label": label,
+                    "id": doc_id,
+                    "field": field,
+                    "value": value,
+                    "ok": False,
+                }
+                try:
+                    await fn()
+                    row["ok"] = True
+                except storage_router.StorageWriteLocked as exc:
+                    row["locked"] = True
+                    row["message"] = str(exc)
+                except Exception as exc:
+                    row["error"] = type(exc).__name__
+                    row["message"] = str(exc)[:180]
+                attempts.append(row)
+
+            async def _durability():
+                while ready and not os.path.exists(ready):
+                    await asyncio.sleep(0.02)
+                import tenant_db
+                from tenant_scope import TenantScope
+
+                scope = TenantScope(
+                    company_id=company_id,
+                    allowed=frozenset({company_id}),
+                    kind="user",
+                    actor_id="proc",
+                    reason="test",
+                )
+                handle = tenant_db.TenantDB(db, scope)
+                store = await storage_router.open_company_store(db, company_id)
+                attempts = []
+                await _once(attempts, "during", "tenant", "p-tenant-lock", "name", "Kilitli", lambda: handle.products.insert_one({
+                    "_id": "p-tenant-lock", "name": "Kilitli", "sku": "SKU-tenant-lock", "price": 1,
+                }))
+                await _once(attempts, "during", "raw_update", "p-seed", "name", "Ara", lambda: db.products.update_one(
+                    {"_id": "p-seed"}, {"$set": {"name": "Ara"}},
+                ))
+                await _once(attempts, "during", "raw_insert", "p-raw-lock", "name", "Ham", lambda: db.products.insert_one({
+                    "_id": "p-raw-lock", "company_id": company_id, "name": "Ham", "sku": "SKU-raw-lock", "price": 2,
+                }))
+                await _once(attempts, "during", "store", "p-store-lock", "name", "Depo", lambda: store.products.insert_one({
+                    "_id": "p-store-lock", "name": "Depo", "sku": "SKU-store-lock", "price": 3,
+                }))
+                if tried:
+                    with open(tried, "w", encoding="utf-8") as marker:
+                        marker.write("1")
+                while release and not os.path.exists(release):
+                    await asyncio.sleep(0.02)
+                await _once(attempts, "after", "tenant", "p-tenant-after", "name", "TenantSon", lambda: handle.products.insert_one({
+                    "_id": "p-tenant-after", "name": "TenantSon", "sku": "SKU-tenant-after", "price": 4,
+                }))
+                await _once(attempts, "after", "raw_update", "p-seed", "name", "Son", lambda: db.products.update_one(
+                    {"_id": "p-seed"}, {"$set": {"name": "Son"}},
+                ))
+                await _once(attempts, "after", "raw_insert", "p-raw-after", "name", "HamSon", lambda: db.products.insert_one({
+                    "_id": "p-raw-after", "company_id": company_id, "name": "HamSon", "sku": "SKU-raw-after", "price": 5,
+                }))
+                await _once(attempts, "after", "store", "p-store-after", "name", "DepoSon", lambda: store.products.insert_one({
+                    "_id": "p-store-after", "name": "DepoSon", "sku": "SKU-store-after", "price": 6,
+                }))
+                return {"attempts": attempts}
+
+            async def _durability_and_close():
+                try:
+                    return await _durability()
+                finally:
+                    closer = getattr(db, "close", None)
+                    if closer is not None:
+                        try:
+                            result = closer()
+                            if inspect.isawaitable(result):
+                                await result
+                        except Exception:
+                            pass
+                    try:
+                        storage_shared_v2.reset_store()
+                    except Exception:
+                        pass
+
+            outcome.update(asyncio.run(_durability_and_close()))
         else:
             outcome["error"] = "bilinmeyen"
     except Exception as exc:

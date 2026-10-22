@@ -446,8 +446,13 @@ class DedicatedCollection(StorageCollection):
     def __repr__(self) -> str:
         return f"DedicatedCollection(company_id={self.company_id!r}, name={self.name!r})"
 
-    def _reject_locked(self) -> None:
-        storage_router.assert_writable(self.company_id, db=getattr(self, "_catalog_db", None))
+    async def _reject_locked(self) -> None:
+        await storage_router.guard_pinned_write(
+            self.company_id,
+            db=getattr(self, "_catalog_db", None),
+            pinned_mode=getattr(self, "_pinned_mode", None),
+            pinned_epoch=getattr(self, "_pinned_epoch", None),
+        )
 
     def _guard(self, op: str, **kwargs) -> None:
         try:
@@ -572,7 +577,7 @@ class DedicatedCollection(StorageCollection):
         return ListCursor(load)
 
     async def insert_one(self, doc: dict):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("insert_one", doc=doc)
         body = copy.deepcopy(doc or {})
         if not body.get("_id"):
@@ -599,7 +604,7 @@ class DedicatedCollection(StorageCollection):
         return InsertOneResult(body["_id"])
 
     async def insert_many(self, docs, ordered: bool = True):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("insert_many", doc=docs)
         prepared = [copy.deepcopy(item or {}) for item in list(docs or [])]
         ids = []
@@ -616,7 +621,7 @@ class DedicatedCollection(StorageCollection):
         return InsertManyResult(ids)
 
     async def update_one(self, query: dict, update: dict, upsert: bool = False):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("update_one", query=query, update=update, upsert=upsert)
 
         def work(session):
@@ -639,7 +644,7 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def update_one_atomic(self, query: dict, update: dict):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("update_one_atomic", query=query, update=update)
         doc_id = (query or {}).get("_id")
         if doc_id is None or isinstance(doc_id, dict):
@@ -647,7 +652,7 @@ class DedicatedCollection(StorageCollection):
         return await self.update_one(query, update, upsert=False)
 
     async def update_many(self, query: dict, update: dict, upsert: bool = False):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("update_many", query=query, update=update, upsert=upsert)
 
         def work(session):
@@ -673,7 +678,7 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("replace_one", query=query, doc=replacement)
         body = copy.deepcopy(replacement or {})
 
@@ -703,7 +708,7 @@ class DedicatedCollection(StorageCollection):
         return_document=True,
         projection=None,
     ):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("find_one_and_update", query=query, update=update, upsert=upsert)
 
         def work(session):
@@ -726,7 +731,7 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def delete_one(self, query: dict):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("delete_one", query=query)
 
         def work(session):
@@ -740,7 +745,7 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def delete_many(self, query: dict):
-        self._reject_locked()
+        await self._reject_locked()
         self._guard("delete_many", query=query)
 
         def work(session):

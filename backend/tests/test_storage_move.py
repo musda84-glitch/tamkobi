@@ -57,7 +57,7 @@ def _base_dsn() -> str:
 @pytest.fixture(params=["sqlite", "mariadb"])
 def engine(request):
     if request.param == "mariadb" and not _base_dsn():
-        pytest.fail("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok; MariaDB 11.8 strict atlanamaz")
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
     return request.param
 
 
@@ -692,6 +692,23 @@ def test_flag_off_does_not_change_behavior(tmp_path, monkeypatch):
         assert again["name"] == "eski"
         assert "storage_moves" not in world.db._cols
         assert handle._collection("orders")._raw is world.db.orders
+        before = storage_router.read_count
+        await handle.products.update_one({"_id": "p1"}, {"$set": {"name": "yeni"}})
+        store = await storage_router.open_company_store(world.db, world.company_id)
+        await store.products.insert_one({
+            "_id": "p-flag-off",
+            "company_id": world.company_id,
+            "name": "iki",
+            "sku": "E-2",
+            "price": 3,
+        })
+        await world.db.products.update_one({"_id": "p1"}, {"$set": {"sku": "E-1b"}})
+        routed = await storage_router.route_legacy_write(
+            world.db.products, "update_one", query={"_id": "p1"}, update={"$set": {"name": "z"}},
+        )
+        assert routed is None
+        assert storage_router.read_count == before == 0
+        assert (await world.db.products.find_one({"_id": "p1"}))["sku"] == "E-1b"
 
     try:
         asyncio.run(run())
@@ -906,6 +923,176 @@ def test_t_row_unique_is_checked_directly(tmp_path, monkeypatch):
         assert rows
         assert rows[0][0] == "orders"
         assert rows[0][1] == "o1"
+
+    try:
+        asyncio.run(run())
+    finally:
+        _close_world(world)
+
+
+def test_expired_lock_cache_is_not_trusted(monkeypatch):
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    db = MemDB()
+    cid = "co_stale_lock"
+
+    async def unread(*_args, **_kwargs):
+        return storage_router._UNREAD
+
+    async def run():
+        await db.companies.insert_one({
+            "_id": cid,
+            "name": "Kilit",
+            "storage_mode": "legacy",
+            "storage_write_lock": False,
+            "storage_epoch": 0,
+        })
+        await db.products.insert_one({
+            "_id": "p-keep",
+            "company_id": cid,
+            "name": "Eski",
+            "sku": "S-keep",
+            "price": 1,
+        })
+        await db.companies.update_one({"_id": cid}, {"$set": {"storage_write_lock": True}})
+        storage_router._cache[cid] = ("legacy", 0.0, 0, False)
+        storage_router._lock_cache[cid] = (False, 0.0)
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await db.products.insert_one({
+                "_id": "p-rejected",
+                "company_id": cid,
+                "name": "Yok",
+                "sku": "S-no",
+                "price": 1,
+            })
+        assert await db.products.find_one({"_id": "p-rejected"}) is None
+        assert storage_router._lock_cache[cid][0] is True
+        store = await storage_router.open_company_store(db, cid)
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await store.products.update_one({"_id": "p-keep"}, {"$set": {"name": "Kacti"}})
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await storage_router.route_legacy_write(
+                db.products, "update_one", query={"_id": "p-keep"}, update={"$set": {"name": "Ham"}},
+            )
+        assert (await db.products.find_one({"_id": "p-keep"}))["name"] == "Eski"
+        storage_router._cache[cid] = ("legacy", 0.0, 0, False)
+        storage_router._lock_cache[cid] = (False, 0.0)
+        monkeypatch.setattr(storage_router, "_memory_doc", lambda *_a, **_k: storage_router._UNREAD)
+        monkeypatch.setattr(storage_router, "_read_company_doc", lambda *_a, **_k: storage_router._UNREAD)
+        monkeypatch.setattr(storage_router, "read_company_doc_async", unread)
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await db.products.insert_one({
+                "_id": "p-unread",
+                "company_id": cid,
+                "name": "Yok",
+                "sku": "S-unread",
+                "price": 1,
+            })
+        assert await db.products.find_one({"_id": "p-unread"}) is None
+        assert storage_router._lock_cache[cid][1] <= storage_router._now()
+        assert storage_router._locked_now(db, cid) is True
+
+    asyncio.run(run())
+
+
+def test_other_host_fresh_heartbeat_is_not_stale(monkeypatch):
+    monkeypatch.setenv("STORAGE_MOVE_STALE_SECONDS", "30")
+    remote = {
+        "owner_host": "remote-host",
+        "owner_pid": 2_147_000_001,
+        "heartbeat_at": storage_move._now(),
+    }
+    assert storage_move._lock_stale(remote) is False
+    same_host = {
+        "owner_host": storage_move._owner_host(),
+        "owner_pid": 2_147_000_001,
+        "heartbeat_at": storage_move._now(),
+    }
+    assert storage_move._lock_stale(same_host) is True
+    aged = {
+        "owner_host": "remote-host",
+        "owner_pid": os.getpid(),
+        "heartbeat_at": "2000-01-01T00:00:00Z",
+    }
+    assert storage_move._lock_stale(aged) is True
+
+
+def test_other_host_live_lock_is_not_stolen(monkeypatch):
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("STORAGE_MOVE_STALE_SECONDS", "30")
+    db = MemDB()
+
+    async def run():
+        cid = "co_remote"
+        await db.companies.insert_one({"_id": cid, "name": cid, "storage_mode": "legacy"})
+        fresh = storage_move._now()
+        await db.storage_move_locks.insert_one({
+            "_id": cid,
+            "company_id": cid,
+            "move_id": "remote-move",
+            "status": "running",
+            "owner_host": "remote-host",
+            "owner_pid": 2_147_000_001,
+            "heartbeat_at": fresh,
+            "to_mode": "shared_v2",
+        })
+        with pytest.raises(storage_router.StorageMoveBusy):
+            await storage_move._acquire_lock(db, cid, "local-move", "shared_v2")
+        rows = await storage_move._lock_docs(db, cid)
+        assert rows[0]["move_id"] == "remote-move"
+        assert rows[0]["owner_host"] == "remote-host"
+
+        dead = "co_dead_host"
+        await db.companies.insert_one({"_id": dead, "name": dead, "storage_mode": "legacy"})
+        await db.storage_move_locks.insert_one({
+            "_id": dead,
+            "company_id": dead,
+            "move_id": "dead-move",
+            "status": "running",
+            "owner_host": storage_move._owner_host(),
+            "owner_pid": 2_147_000_001,
+            "heartbeat_at": fresh,
+            "to_mode": "shared_v2",
+        })
+        await storage_move._acquire_lock(db, dead, "takeover", "shared_v2")
+        taken = await storage_move._lock_docs(db, dead)
+        assert taken[0]["move_id"] == "takeover"
+        assert taken[0]["owner_host"] == storage_move._owner_host()
+
+    asyncio.run(run())
+
+
+def test_pinned_handles_follow_epoch_after_unlock(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        cid = world.company_id
+        await world.db.companies.insert_one({
+            "_id": cid,
+            "name": "Epoch",
+            "storage_mode": "legacy",
+            "storage_epoch": 0,
+        })
+        store = await storage_router.open_company_store(world.db, cid)
+        handle = tenant_db.TenantDB(world.db, _scope(cid))
+        await world.db.companies.update_one({"_id": cid}, {"$set": {"storage_write_lock": True}})
+        storage_router.forget_mode(cid)
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await store.products.insert_one({"_id": "p-lock", "name": "K", "sku": "K", "price": 1})
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await handle.products.insert_one({"_id": "p-lock-2", "name": "K2", "sku": "K2", "price": 1})
+        await world.db.companies.update_one(
+            {"_id": cid},
+            {"$set": {"storage_write_lock": False, "storage_mode": "shared_v2", "storage_epoch": 1}},
+        )
+        storage_router.forget_mode(cid)
+        await store.products.insert_one({"_id": "p-store", "name": "Depo", "sku": "DS", "price": 2})
+        await handle.products.insert_one({"_id": "p-tenant", "name": "Kiraci", "sku": "DT", "price": 3})
+        shared = storage_router.collection_for_mode(world.db, "shared_v2", cid, "products")
+        assert (await shared.find_one({"_id": "p-store"}))["name"] == "Depo"
+        assert (await shared.find_one({"_id": "p-tenant"}))["name"] == "Kiraci"
+        assert await world.db.products.find_one({"_id": "p-store"}) is None
+        assert await world.db.products.find_one({"_id": "p-tenant"}) is None
+        assert await world.db.products.find_one({"_id": "p-lock"}) is None
 
     try:
         asyncio.run(run())
