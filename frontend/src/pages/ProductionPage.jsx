@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Factory, BookOpen, Plus, Pencil, Trash2, AlertTriangle, Package, MonitorPlay, BellRing, Loader2, Copy, X } from "lucide-react";
+import { Factory, BookOpen, Plus, Pencil, Play, CheckCircle2, XCircle, Trash2, AlertTriangle, Clock, Package, MonitorPlay, BellRing, Loader2, Copy, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { RecipeModal } from "../components/RecipeModal";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
@@ -12,6 +12,7 @@ import { filterMissingByOrder, missingLinesForOrder } from "../utils/missingOrde
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { ProductionOrderList } from "../components/production/ProductionOrderList";
+import RecipesPanel from "../components/production/recipes/RecipesPanel";
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
@@ -218,6 +219,23 @@ export default function ProductionPage() {
     return same.length ? [...same, ...all.filter((r) => r.finished_product_id !== o.finished_product_id)] : all;
   };
   const delRecipe = async (r) => { if (!window.confirm(`${r.name} reçetesi silinsin mi?`)) return; try { await axios.delete(`${API_URL}/production/recipes/${r.id}`); toast.success("Reçete silindi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
+  const openRecipeEditor = async (r) => {
+    try {
+      const res = await axios.get(`${API_URL}/production/recipes/${r.id}`);
+      setRecipeModal({ recipe: res.data });
+    } catch {
+      setRecipeModal({ recipe: r });
+    }
+  };
+  const archiveRecipe = async (r, active = false) => {
+    try {
+      await axios.put(`${API_URL}/production/recipes/${r.id}`, { is_active: active });
+      toast.success(active ? "Reçete arşivden çıkarıldı." : "Reçete arşivlendi.");
+      await loadRecipes();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Güncellenemedi.");
+    }
+  };
   const copyRecipe = async (r) => {
     try {
       const res = await axios.post(`${API_URL}/production/recipes/${r.id}/copy`);
@@ -494,51 +512,20 @@ export default function ProductionPage() {
       )}
 
       {tab === "recipes" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {recipes.length === 0 && <div className="col-span-full bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400"><BookOpen className="w-8 h-8 mx-auto mb-2 text-slate-300" />Henüz reçete yok. "Yeni Reçete" ile ürün ağacını tanımlayın.</div>}
-          {recipes.map((r) => { const fp = products.find((p) => p.id === r.finished_product_id); return (
-            <div key={r.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 text-xs hover:shadow-md transition" data-testid={`recipe-card-${r.code}`}>
-              <div className="flex justify-between items-start gap-2">
-                <div className="min-w-0">
-                  <div className="font-mono text-[10px] text-slate-400">{r.code}</div>
-                  <div className="font-bold text-slate-900 truncate flex items-center gap-1.5 flex-wrap">
-                    <span className="truncate">{r.name}</span>
-                    {r.one_time ? <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200" data-testid={`recipe-one-time-badge-${r.code}`}>Tek seferlik</span> : null}
-                  </div>
-                  <div className="text-slate-500 flex items-center gap-1"><Package className="w-3 h-3" /> {r.finished_product_name} • {r.target_quantity} {r.unit}</div>
-                  {(r.contact_name || r.job_file_name) ? (
-                    <div className="text-[11px] text-indigo-700 mt-0.5 space-y-0.5" data-testid={`recipe-customer-job-${r.code}`}>
-                      {r.contact_name ? <div>Müşteri: <span className="font-semibold">{r.contact_name}</span></div> : null}
-                      {r.job_file_name ? <div>İş dosyası: <span className="font-semibold">{r.job_file_name}</span></div> : null}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  <button type="button" onClick={() => copyRecipe(r)} className="p-1.5 border rounded-lg hover:bg-indigo-50 hover:border-indigo-200 text-slate-600 hover:text-indigo-700" title="Kopyala" data-testid={`recipe-copy-${r.code}`}><Copy className="w-3.5 h-3.5" /></button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      // Liste cache'i değil; kalem adımları dahil taze reçete
-                      try {
-                        const res = await axios.get(`${API_URL}/production/recipes/${r.id}`);
-                        setRecipeModal({ recipe: res.data });
-                      } catch {
-                        setRecipeModal({ recipe: r });
-                      }
-                    }}
-                    className="p-1.5 border rounded-lg hover:bg-slate-50"
-                    title="Düzenle"
-                    data-testid={`recipe-edit-${r.code}`}
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                  <button type="button" onClick={() => delRecipe(r)} className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50" title="Sil" data-testid={`recipe-delete-${r.code}`}><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              </div>
-              <div className="bg-slate-50 rounded-xl p-2 divide-y divide-slate-100">{(r.materials || []).map((m, i) => { const mp = products.find((p) => p.id === m.product_id); const low = mp && mp.stock_quantity < m.quantity; return <div key={i} className="flex justify-between py-1"><span className={low ? "text-rose-600 font-semibold" : "text-slate-700"}>{m.product_name}{m.wastage_percent > 0 && <span className="text-slate-400"> (+%{m.wastage_percent} fire)</span>}</span><span className="font-semibold">{m.quantity} {m.unit}{mp && <span className="text-slate-400 font-normal"> / stok {mp.stock_quantity}</span>}</span></div>; })}</div>
-              <div className="flex justify-between items-center pt-1"><div><div className="text-[10px] uppercase text-slate-400 font-semibold">Birim Maliyet</div><div className="font-black text-emerald-700 text-sm">{fmt(r.unit_cost || r.total_estimated_cost / (r.target_quantity || 1))} ₺</div>{fp?.sale_price > 0 && <div className="text-[10px] text-slate-500">Satış {fmt(fp.sale_price)} ₺</div>}</div><button onClick={() => setOrderModal(fp || { id: r.finished_product_id, name: r.finished_product_name })} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`recipe-produce-${r.code}`}><Factory className="w-3.5 h-3.5" /> Üret</button></div>
-            </div>); })}
-        </div>
+        <RecipesPanel
+          recipes={recipes}
+          products={products}
+          orders={orders}
+          can={can}
+          onProduce={(r) => {
+            const fp = products.find((p) => p.id === r.finished_product_id);
+            setOrderModal(fp || { id: r.finished_product_id, name: r.finished_product_name });
+          }}
+          onCopy={copyRecipe}
+          onEdit={openRecipeEditor}
+          onDelete={delRecipe}
+          onArchive={archiveRecipe}
+        />
       )}
 
       {recipeModal && (

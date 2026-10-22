@@ -1,13 +1,20 @@
 """schema_version üzerinden sıralı, kaldığı yerden süren uygulama."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .errors import ChecksumError, DryRunError, LegacyTargetError, MigrationError
-from .loader import Migration, load_migrations
+from .loader import Migration, load_migrations, steps_for
 from .masking import logger
 from .session import Session, schema_sql
+
+_INDEX = re.compile(
+    r"^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"[`\"]?([A-Za-z0-9_]+)[`\"]?\s+ON\s+[`\"]?([A-Za-z0-9_]+)[`\"]?",
+    re.IGNORECASE,
+)
 
 log = logger()
 
@@ -78,7 +85,7 @@ def _rows(session: Session, migrations: tuple[Migration, ...]) -> tuple[RowView,
     views = []
     for mig in migrations:
         row = current.get(mig.version)
-        total = len(mig.steps)
+        total = len(steps_for(mig, session.dialect))
         if row is None:
             views.append(RowView(mig.version, mig.name, "bekliyor", 0, total))
             continue
@@ -134,14 +141,16 @@ def _apply_one(session: Session, mig: Migration) -> bool:
         changed = True
     else:
         done = int(row["step_no"])
-    total = len(mig.steps)
+    plan_steps = steps_for(mig, session.dialect)
+    total = len(plan_steps)
     if done < 0 or done > total:
         raise MigrationError(f"{mig.version:04d} {mig.name} adım sayısı uyumsuz.")
-    for index, step in enumerate(mig.steps):
+    for index, step in enumerate(plan_steps):
         if index < done:
             continue
         try:
-            session.execute(step)
+            if not _index_already_there(session, step):
+                session.execute(step)
             session.execute(
                 "UPDATE schema_version SET step_no = ? WHERE version = ?",
                 (index + 1, mig.version),
@@ -167,6 +176,30 @@ def _apply_one(session: Session, mig: Migration) -> bool:
     )
     session.commit()
     return True
+
+
+def _index_already_there(session: Session, step: str) -> bool:
+    """CREATE INDEX yarım kalıp tekrar çalışırsa duplicate index vermesin.
+
+    MySQL DDL oturumu kendisi commit eder. Adım numarası yazılmadan süreç
+    düşerse index durur, ifade ikinci kez 1061 verir. Var olan index atlanır.
+    """
+    match = _INDEX.match(step.strip())
+    if match is None:
+        return False
+    name, table = match.group(1), match.group(2)
+    if session.dialect == "sqlite":
+        rows = session.fetchall(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ? AND tbl_name = ?",
+            (name, table),
+        )
+    else:
+        rows = session.fetchall(
+            "SELECT 1 FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1",
+            (table, name),
+        )
+    return bool(rows)
 
 
 def _quiet_rollback(session: Session) -> None:

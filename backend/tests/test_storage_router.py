@@ -1,7 +1,8 @@
-"""StorageRouter PR1. Canlı veritabanına bağlanmaz.
+"""StorageRouter. Canlı veritabanına bağlanmaz.
 
 Bayrak kapalıyken TenantDB bugünkü koleksiyonu döner. Bayrak açıkken
-legacy aynı arka uçtur; shared_v2, dedicated ve bilinmeyen kip açık hata verir.
+legacy aynı arka uçtur. shared_v2 docs_v2 koleksiyonuna gider; dedicated
+ve bilinmeyen kip açık hata verir. shared_v2 çözümü bağlantı açmaz.
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from dashboard_memdb import MemDB  # noqa: E402
 from models import Company  # noqa: E402
 from schema_catalog import COLLECTIONS  # noqa: E402
 import storage_router  # noqa: E402
+import storage_shared_v2  # noqa: E402
 import tenant_db  # noqa: E402
 from storage_router import StorageModeError  # noqa: E402
 from tenant_scope import TenantScope  # noqa: E402
@@ -36,9 +38,13 @@ CO_C = "co_c"
 
 @pytest.fixture(autouse=True)
 def _reset_router():
+    import storage_shared_v2
+
     storage_router.reset()
+    storage_shared_v2.reset_store()
     yield
     storage_router.reset()
+    storage_shared_v2.reset_store()
 
 
 def _scope(company_id=CO_A):
@@ -176,8 +182,11 @@ def test_router_selects_legacy_backend_per_company(monkeypatch):
         assert legacy._raw is db.products
         assert explicit._raw is db.orders
 
-        with pytest.raises(StorageModeError, match="henüz yok: shared_v2"):
-            tenant_db.TenantDB(db, _scope(CO_C))._collection("products")
+        shared = tenant_db.TenantDB(db, _scope(CO_C))._collection("products")
+        assert type(shared._raw).__name__ == "SharedV2Collection"
+        assert shared._raw.company_id == CO_C
+        assert shared._raw.name == "products"
+        assert storage_shared_v2.get_store().conn is None
         with pytest.raises(StorageModeError, match="henüz yok: dedicated"):
             storage_router.legacy_collection(db, "co_d", "products")
         with pytest.raises(StorageModeError, match="Bilinmeyen depolama kipi: glacier"):
@@ -207,8 +216,11 @@ def test_cache_refreshes_after_ttl(monkeypatch):
         clock["t"] += storage_router.TTL_SECONDS
         assert await storage_router.load_mode(db, CO_A) == "shared_v2"
         assert storage_router.read_count == 2
-        with pytest.raises(StorageModeError, match="henüz yok: shared_v2"):
-            storage_router.legacy_collection(db, CO_A, "products")
+        routed = storage_router.legacy_collection(db, CO_A, "products")
+        assert type(routed).__name__ == "SharedV2Collection"
+        assert routed.company_id == CO_A
+        assert routed.name == "products"
+        assert storage_shared_v2.get_store().conn is None
         assert storage_router.read_count == 2
 
     asyncio.run(run())
@@ -380,8 +392,10 @@ def test_expired_cache_outside_entry_does_not_sync_fail(monkeypatch):
     late = tenant_db.TenantDB(db, _scope(CO_A))
     assert late._collection("invoices")._raw is db["invoices"]
     assert db.companies.reads == 2
-    with pytest.raises(StorageModeError, match="henüz yok: shared_v2"):
-        tenant_db.TenantDB(db, _scope(CO_B))._collection("products")
+    shared = tenant_db.TenantDB(db, _scope(CO_B))._collection("products")
+    assert type(shared._raw).__name__ == "SharedV2Collection"
+    assert shared._raw.company_id == CO_B
+    assert storage_shared_v2.get_store().conn is None
     assert db.companies.reads == 2
 
     fresh = _RealishDB()

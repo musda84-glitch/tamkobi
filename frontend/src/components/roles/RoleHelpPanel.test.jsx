@@ -142,16 +142,26 @@ test("open panel renders every section and screenshot", async () => {
     expect(document.querySelector('[data-testid="role-help-levels"]').textContent).toContain(label);
   });
   [
+    "e-Fatura oluşturma, Faturalar yetkisinde Ekler/Düzenler ister",
+    "sunucu okuma isteklerini varsayılan olarak reddeder",
+    "masraf bütçeleri bu yetkiye bağlıdır",
+    "portal ayarları ve bayi şifresi bu yetkiyle yönetilir",
+    "kanal fiyat kuralları ve etiket şablonları",
+    "Başlat, duraklat ve bitir Ekler/Düzenler ister",
+    "İşNet kayıt ve test uçları Firma Ayarları seviyesine bakmaz",
+  ].forEach((snippet) => {
+    expect(panel.textContent).toContain(snippet);
+  });
+  [
     "RBAC_GET_ENFORCE",
     "/api/e-invoice/create",
     "/api/expense-budgets",
     "yalnızca menüyü etkiler",
     "/api/pricing/rules",
     "iş emri işletmeye izin verir",
-    "İşNet",
     "yalnızca okuma (GET)",
   ].forEach((snippet) => {
-    expect(panel.textContent).toContain(snippet);
+    expect(panel.textContent).not.toContain(snippet);
   });
   const images = collectRoleHelpImages();
   expect(images).toHaveLength(Object.keys(IMAGE_FILES).length);
