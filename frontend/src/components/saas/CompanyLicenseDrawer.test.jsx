@@ -105,11 +105,12 @@ const companyPayload = {
 const storagePayload = {
   company_id: "comp_matek",
   company_name: "MATEK DEKORASYON",
-  total_bytes: 1024,
+  total_bytes: 17436343,
+  used_bytes: 17436343,
   total_files: 2,
-  storage_limit_mb: 2048,
+  storage_limit_mb: 5120,
   folders: [
-    { id: "f1", area_key: "products", label: "Ürünler", path: "tamkobi/accounts/comp_matek/products", file_count: 2, bytes: 1024, is_system: true },
+    { id: "f1", area_key: "products", label: "Ürünler", path: "tamkobi/accounts/comp_matek/products", file_count: 2, bytes: 17436343, is_system: true },
   ],
 };
 
@@ -289,21 +290,43 @@ test("SMS tab is a read-only summary without operator secrets", async () => {
   expect(axios.put.mock.calls.some((c) => String(c[0]).includes("/comm/sms/"))).toBe(false);
 });
 
+const setControl = async (el, value) => {
+  await act(async () => {
+    const proto = el instanceof HTMLSelectElement ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+    el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+  });
+  await flush();
+};
+
 test("Depolama tab loads usage and saves storage limit via license API", async () => {
   await renderDrawer();
   await clickTab("storage");
   expect(host.querySelector('[data-testid="drawer-storage"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="drawer-storage-usage"]')?.textContent).toMatch(/MB|KB|B/);
+  expect(host.querySelector('[data-testid="storage-stat-used"]')?.textContent).toContain("16,6 MB");
+  expect(host.querySelector('[data-testid="storage-stat-limit"]')?.textContent).toContain("5 GB");
+  expect(host.querySelector('[data-testid="storage-stat-free"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="storage-usage-rate"]')?.textContent).toContain("Kullanım Oranı");
+  expect(host.querySelector('[data-testid="drawer-storage-usage"]')?.textContent).toContain("16,6 MB / 5 GB");
+  expect(host.textContent).toContain("Depolama limiti");
+  expect(host.textContent).toContain("Sınırsız");
+  expect(host.querySelector('[data-testid="drawer-storage-save"]')?.textContent).toContain("Kaydet");
+  expect(host.querySelector('[data-testid="drawer-storage-folders"]')?.textContent).toContain("Klasör");
+  expect(host.querySelector('[data-testid="drawer-storage-folders"]')?.textContent).toContain("Dosya sayısı");
+  expect(host.querySelector('[data-testid="drawer-storage-folders"]')?.textContent).toContain("Boyut");
+  expect(host.querySelector('[data-testid="drawer-storage-folders"]')?.textContent).toContain("Oran");
+  expect(host.querySelector('[data-testid="drawer-storage-folder-products"]')?.textContent).toContain("Ürünler");
+  expect(host.querySelector('[data-testid="storage-requests-empty"]')?.textContent).toContain("Henüz depolama artış talebi yok.");
   expect(axios.get.mock.calls.some((c) => String(c[0]).includes("/system/storage/comp_matek"))).toBe(true);
   const input = host.querySelector('[data-testid="drawer-storage-limit"]');
   expect(input).not.toBeNull();
   expect(input.value).toBe("2048");
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-    setter.call(input, "4096");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await flush();
+  const unit = host.querySelector('[data-testid="drawer-storage-unit"]');
+  await setControl(unit, "gb");
+  expect(host.querySelector('[data-testid="drawer-storage-limit"]').value).toBe("2");
+  await setControl(unit, "mb");
+  expect(host.querySelector('[data-testid="drawer-storage-limit"]').value).toBe("2048");
+  await setControl(host.querySelector('[data-testid="drawer-storage-limit"]'), "4096");
   expect(host.querySelector('[data-testid="drawer-storage-limit"]').value).toBe("4096");
   const saveBtn = host.querySelector('[data-testid="drawer-storage-save"]');
   await act(async () => { saveBtn.click(); });
@@ -311,6 +334,52 @@ test("Depolama tab loads usage and saves storage limit via license API", async (
   const put = axios.put.mock.calls.find((c) => String(c[0]).includes("/system/companies/comp_matek/license"));
   expect(put).toBeTruthy();
   expect(put[1]).toMatchObject({ storage_limit_mb: 4096 });
+});
+
+test("Artırma talepleri shows status badges and approve or reject on one line", async () => {
+  const pending = {
+    id: "sir_1",
+    status: "pending",
+    status_label: "Bekliyor",
+    requested_by_name: "Ayşe",
+    requested_by: "ayse@firma.test",
+    current_limit_mb: 5120,
+    requested_limit_mb: 10240,
+    message: "Arşiv büyüdü",
+    admin_note: "",
+    created_at: "2026-10-22T09:30:00Z",
+  };
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/system/storage/") && u.includes("/requests")) return Promise.resolve({ data: { items: [pending], total: 1 } });
+    if (u.includes("/system/storage/")) return Promise.resolve({ data: storagePayload });
+    if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: companyPayload });
+  });
+  await renderDrawer();
+  await clickTab("storage");
+  const row = host.querySelector('[data-testid="storage-request-sir_1"]');
+  expect(row).not.toBeNull();
+  expect(row.textContent).toContain("Bekliyor");
+  expect(row.textContent).toContain("Ayşe");
+  expect(row.textContent).toContain("5 GB");
+  expect(row.textContent).toContain("10 GB");
+  const actions = host.querySelector('[data-testid="storage-request-approve-sir_1"]').parentElement;
+  expect(actions.className).toContain("flex-nowrap");
+  expect(host.querySelector('[data-testid="storage-request-reject-sir_1"]')).not.toBeNull();
+  await act(async () => { host.querySelector('[data-testid="storage-request-approve-sir_1"]').click(); });
+  await flush();
+  const approved = axios.put.mock.calls.find((c) => String(c[0]).includes("/requests/sir_1"));
+  expect(approved[1]).toMatchObject({ status: "approved", note: "" });
+  window.prompt = jest.fn().mockReturnValueOnce(null);
+  await act(async () => { host.querySelector('[data-testid="storage-request-reject-sir_1"]').click(); });
+  await flush();
+  expect(axios.put.mock.calls.filter((c) => String(c[0]).includes("/requests/sir_1"))).toHaveLength(1);
+  window.prompt = jest.fn().mockReturnValueOnce("kota yetersiz");
+  await act(async () => { host.querySelector('[data-testid="storage-request-reject-sir_1"]').click(); });
+  await flush();
+  const rejected = axios.put.mock.calls.filter((c) => String(c[0]).includes("/requests/sir_1")).at(-1);
+  expect(rejected[1]).toMatchObject({ status: "rejected", note: "kota yetersiz" });
 });
 
 test("Bildirimler sekmesi paneli açar, limit/sayaç gösterir ve doğru URL'ye PUT eder", async () => {

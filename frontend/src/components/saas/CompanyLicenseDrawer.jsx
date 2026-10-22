@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2, KeyRound, Mail, IdCard, HardDrive, Bot, MessageSquare, RefreshCw } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2, KeyRound, Mail, IdCard, Bot, MessageSquare } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
-import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS, QuotaBar } from "./saasUi";
+import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+import { CompanyStoragePanel } from "./CompanyStoragePanel";
+import { storageMbFromForm, convertStorageAmount } from "../../utils/storageFormat";
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
 import { COMPANY_DETAIL_TABS, COMPANY_DETAIL_TAB_IDS } from "../../utils/companyDetailTabs";
@@ -73,6 +75,8 @@ export const CompanyLicenseDrawer = ({
   const [parentQ, setParentQ] = useState("");
   const [storageDetail, setStorageDetail] = useState(null);
   const [storageLimit, setStorageLimit] = useState("");
+  const [storageUnit, setStorageUnit] = useState("mb");
+  const [storageUnlimited, setStorageUnlimited] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
   const cleanRef = useRef({ license: "", ei: "", storage: "" });
   const load = useCallback(() => axios.get(`${API_URL}/system/companies/${companyId}`, cred).then((r) => {
@@ -84,9 +88,12 @@ export const CompanyLicenseDrawer = ({
     const nextEi = r.data.einvoice?.provider || "";
     setEiProvider(nextEi);
     const ov = l.quota_overrides?.storage_limit_mb;
-    const nextStorage = ov === 0 || ov ? String(ov) : "";
+    const nextUnlimited = ov === 0;
+    const nextStorage = ov ? String(ov) : "";
     setStorageLimit(nextStorage);
-    cleanRef.current = { license: snapLicense(nextF), ei: nextEi, storage: nextStorage };
+    setStorageUnit("mb");
+    setStorageUnlimited(nextUnlimited);
+    cleanRef.current = { license: snapLicense(nextF), ei: nextEi, storage: `${nextStorage}|mb|${nextUnlimited ? 1 : 0}` };
   }).catch(() => toast.error("Şirket bilgisi alınamadı.")), [companyId]);
   useEffect(() => {
     if (controlledTab != null) return;
@@ -94,10 +101,11 @@ export const CompanyLicenseDrawer = ({
   }, [companyId, initialTab, controlledTab]);
   const dirty = useMemo(() => {
     if (!f) return false;
+    const storageSnap = `${storageLimit}|${storageUnit}|${storageUnlimited ? 1 : 0}`;
     return snapLicense(f) !== cleanRef.current.license
       || String(eiProvider || "") !== String(cleanRef.current.ei || "")
-      || String(storageLimit || "") !== String(cleanRef.current.storage || "");
-  }, [f, eiProvider, storageLimit]);
+      || storageSnap !== String(cleanRef.current.storage || "");
+  }, [f, eiProvider, storageLimit, storageUnit, storageUnlimited]);
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
     load();
@@ -185,29 +193,37 @@ export const CompanyLicenseDrawer = ({
       onChanged();
     } catch (e) { toast.error(e.response?.data?.detail || "Varsayılana dönülemedi."); } finally { setBusy(""); }
   };
+  const changeStorageUnit = (next) => {
+    setStorageLimit((cur) => convertStorageAmount(cur, storageUnit, next));
+    setStorageUnit(next);
+  };
   const saveStorageLimit = async () => {
+    let storage_limit_mb = null;
+    if (storageUnlimited) storage_limit_mb = 0;
+    else if (String(storageLimit).trim() !== "") {
+      storage_limit_mb = storageMbFromForm(storageLimit, storageUnit);
+      if (!Number.isFinite(storage_limit_mb)) {
+        toast.error("Limit sayısal olmalıdır.");
+        return;
+      }
+    }
     setBusy("storage-save");
     try {
       const r = await axios.put(`${API_URL}/system/companies/${companyId}/license`, {
-        storage_limit_mb: storageLimit === "" ? null : Number(storageLimit),
+        storage_limit_mb,
       }, cred);
       setD((prev) => ({ ...prev, license: r.data }));
       const ov = r.data.quota_overrides?.storage_limit_mb;
-      const nextStorage = ov === 0 || ov ? String(ov) : "";
+      const nextUnlimited = ov === 0;
+      const nextStorage = ov ? String(ov) : "";
       setStorageLimit(nextStorage);
-      cleanRef.current = { ...cleanRef.current, storage: nextStorage };
-      toast.success("Depolama kotası güncellendi.");
+      setStorageUnit("mb");
+      setStorageUnlimited(nextUnlimited);
+      cleanRef.current = { ...cleanRef.current, storage: `${nextStorage}|mb|${nextUnlimited ? 1 : 0}` };
+      toast.success("Depolama limiti güncellendi.");
       await loadStorage();
       onChanged();
-    } catch (e) { toast.error(e.response?.data?.detail || "Kota kaydedilemedi."); } finally { setBusy(""); }
-  };
-  const ensureStorage = async () => {
-    setBusy("storage-ensure");
-    try {
-      const r = await axios.post(`${API_URL}/system/storage/${companyId}/ensure`, {}, cred);
-      toast.success(`${r.data.folder_count || 0} klasör hazır.`);
-      await loadStorage();
-    } catch (e) { toast.error(e.response?.data?.detail || "Klasörler oluşturulamadı."); } finally { setBusy(""); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Limit kaydedilemedi."); } finally { setBusy(""); }
   };
   const siblings = d.license_companies || [];
   const siblingTree = sortCompanyTree(siblings.map((c) => ({ ...c, created_at: c.created_at || "", is_primary: !!c.primary })));
@@ -584,51 +600,26 @@ export const CompanyLicenseDrawer = ({
           ) : null}
 
           {tab === "storage" ? (
-            <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4" data-testid="drawer-storage">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><HardDrive className="w-4 h-4 text-slate-400" /> Depolama</h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Kota, kullanım ve klasörler. Boş limit paketten gelir; 0 = sınırsız.</p>
-                </div>
-                <button type="button" onClick={ensureStorage} disabled={!!busy} className="px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 bg-slate-900 text-white disabled:opacity-60" data-testid="drawer-storage-ensure">
-                  {busy === "storage-ensure" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Klasörleri doğrula
-                </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Kullanım</div>
-                  <QuotaBar
-                    used={Number(((storageDetail?.total_bytes ?? mem.storage_bytes ?? d.usage?.storage_bytes ?? 0) / (1024 * 1024)).toFixed(1))}
-                    limit={storageDetail?.storage_limit_mb ?? lic.storage_limit_mb ?? 0}
-                    testId="drawer-storage-quota"
-                  />
-                  <div className="text-[11px] text-slate-600" data-testid="drawer-storage-usage">
-                    {fmtBytes(storageDetail?.total_bytes ?? mem.storage_bytes ?? d.usage?.storage_bytes ?? 0)}
-                    {(storageDetail?.storage_limit_mb ?? lic.storage_limit_mb) ? ` / ${storageDetail?.storage_limit_mb ?? lic.storage_limit_mb} MB` : " / sınırsız"}
-                    {storageDetail?.total_files != null ? ` · ${storageDetail.total_files} dosya` : ""}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-2">
-                  <label className="block text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Özel kota (MB)</label>
-                  <input type="number" min={0} value={storageLimit} onChange={(e) => setStorageLimit(e.target.value)} className={inputCls} placeholder={String(lic.plan_defaults?.storage_limit_mb || plan?.storage_limit_mb || "sınırsız")} data-testid="drawer-storage-limit" />
-                  <p className="text-[10px] text-slate-400">Paket: {lic.plan_defaults?.storage_limit_mb || plan?.storage_limit_mb || "∞"} MB</p>
-                  <button type="button" onClick={saveStorageLimit} disabled={busy === "storage-save"} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-bold inline-flex items-center gap-1 disabled:opacity-60" data-testid="drawer-storage-save">
-                    {busy === "storage-save" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Kotayı kaydet
-                  </button>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="drawer-storage-folders">
-                {(storageDetail?.folders || []).length === 0 && !busy ? (
-                  <p className="text-[11px] text-slate-400 sm:col-span-2">Klasör özeti yok. «Klasörleri doğrula» ile oluşturun.</p>
-                ) : (storageDetail?.folders || []).map((folder) => (
-                  <div key={folder.id || folder.area_key} className="border border-slate-100 rounded-xl p-3" data-testid={`drawer-storage-folder-${folder.area_key}`}>
-                    <div className="font-semibold text-slate-800">{folder.label}</div>
-                    <div className="text-[10px] text-slate-400 font-mono truncate">{folder.path}</div>
-                    <div className="text-[10px] text-slate-500 mt-1">{folder.file_count || 0} dosya · {fmtBytes(folder.bytes)}</div>
-                  </div>
-                ))}
-              </div>
-            </section>
+            <CompanyStoragePanel
+              companyId={companyId}
+              detail={storageDetail || {
+                used_bytes: mem.storage_bytes ?? d.usage?.storage_bytes ?? 0,
+                total_bytes: mem.storage_bytes ?? d.usage?.storage_bytes ?? 0,
+                storage_limit_mb: lic.storage_limit_mb || 0,
+                folders: [],
+              }}
+              limitAmount={storageLimit}
+              limitUnit={storageUnit}
+              unlimited={storageUnlimited}
+              onLimitAmount={setStorageLimit}
+              onLimitUnit={changeStorageUnit}
+              onUnlimited={setStorageUnlimited}
+              onSave={saveStorageLimit}
+              saving={busy === "storage-save"}
+              planLimitMb={lic.plan_defaults?.storage_limit_mb || plan?.storage_limit_mb || 0}
+              onReload={loadStorage}
+              onChanged={onChanged}
+            />
           ) : null}
 
           {tab === "notify" ? (
