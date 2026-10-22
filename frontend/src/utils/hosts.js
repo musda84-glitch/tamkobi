@@ -1,6 +1,9 @@
 /**
  * Subdomain host kind helpers (site | app | b2b | ik | ynt).
  * Dev/test override: ?__host=app|b2b|ik|site|ynt on localhost only.
+ *
+ * /moduller ve /urunler tamkobi.com pazarlama rotalarıdır
+ * (marketingSite.TAMKOBI_MARKETING_PATHS). app, b2b ve ik'de açılmaz.
  */
 
 export const ROOT_DOMAIN = (process.env.REACT_APP_ROOT_DOMAIN || "tamkobi.com").replace(/^\.+/, "");
@@ -110,6 +113,8 @@ export const HOST_ROUTE_RULES = {
     /^\/hizmetler(\/|$)/,
     /^\/referanslar(\/|$)/,
     /^\/iletisim(\/|$)/,
+    /^\/moduller(\/|$)/,
+    /^\/urunler(\/|$)/,
   ],
   app: [
     /^\/$/,
@@ -195,6 +200,12 @@ export function preferredHostForPath(pathname) {
   const p = pathname || "/";
   if (p.startsWith("/sistem")) {
     return yntRedirectEnabled() ? "ynt" : "site";
+  }
+  if (
+    p === "/moduller" || p.startsWith("/moduller/") ||
+    p === "/urunler" || p.startsWith("/urunler/")
+  ) {
+    return "site";
   }
   if (
     p.startsWith("/web") ||
