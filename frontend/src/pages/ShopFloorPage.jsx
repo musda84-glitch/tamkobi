@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useMesaimGate } from "../context/MesaimGateContext";
 import { bindMesaimLockedInterceptor } from "../utils/mesaimLockClient";
-import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, X, Loader2, FileText, Trash2, ArrowDownUp } from "lucide-react";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, Folder, Package, X, Loader2, FileText, Trash2, ArrowDownUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -14,6 +14,7 @@ import ShopfloorPinPad from "../components/ShopfloorPinPad";
 import { clearOperatorSession, isAtolyeAccount, isOperatorSessionError, isSessionExpired, isValidPin, loadOperatorSession, operatorHeaders, saveOperatorSession, unlockErrorMessage } from "../utils/shopfloorOperatorSession";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
+import { cardTags, cardTitle, matchesLinkFilter, normalizeShopfloorFilters, projectColor, projectFilterLabel, recipeFilterLabel, shopfloorFiltersQuery, stationBannerColor, stationColor, workOrderListQuery } from "../utils/shopFloorCardMeta";
 import { formatTrQty } from "../utils/money";
 import { QuantityInput } from "../components/MoneyInput";
 import { useLivePoll } from "../hooks/useLivePoll";
@@ -60,6 +61,9 @@ export default function ShopFloorPage() {
   const [operatorSession, setOperatorSession] = useState(null);
   const [linkedName, setLinkedName] = useState("");
   const [station, setStation] = useState(() => localStorage.getItem("nx_station") || "");
+  const [projectId, setProjectId] = useState("");
+  const [recipeId, setRecipeId] = useState("");
+  const [filterCatalog, setFilterCatalog] = useState({ projects: [], recipes: [] });
   const [groupSameStation, setGroupSameStation] = useState(() => localStorage.getItem("nx_group_same_station") === "1");
   const [groupBusy, setGroupBusy] = useState(false);
   const [pendingOp, setPendingOp] = useState(null);
@@ -108,8 +112,10 @@ export default function ShopFloorPage() {
     try {
       const bust = `_=${Date.now()}`;
       const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
-      const [w, lockRows, ops, s, parks, me] = await Promise.all([
-        axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}&${bust}`, {
+      const listQs = workOrderListQuery({ companyId, station, projectId, recipeId, bust });
+      const filterQs = shopfloorFiltersQuery({ companyId, station });
+      const [w, lockRows, ops, s, filters, parks, me] = await Promise.all([
+        axios.get(`${API_URL}/production/work-orders?${listQs}`, {
           headers,
         }),
         // Tablet istasyona kilitliyken başka istasyondaki in_progress'i de gör (UI kilidi)
@@ -120,6 +126,7 @@ export default function ShopFloorPage() {
           ? axios.get(`${API_URL}/production/work-orders/shopfloor-operators`, { params: { company_id: companyId } }).catch(() => ({ data: [] }))
           : Promise.resolve({ data: [] }),
         axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/production/work-orders/shopfloor-filters${filterQs ? `?${filterQs}` : ""}`).catch(() => ({ data: { projects: [], recipes: [] } })),
         axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
         axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
       ]);
@@ -128,15 +135,24 @@ export default function ShopFloorPage() {
       setLockWos(station ? (Array.isArray(lockRows?.data) ? lockRows.data : []) : list);
       setOperators(Array.isArray(ops?.data) ? ops.data : []);
       setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
+      setFilterCatalog(normalizeShopfloorFilters(filters?.data));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
       setLinkedName(String(me.data?.employee?.full_name || "").trim());
       setLoadError("");
     } catch {
       setLoadError("Yetkiniz yok / yüklenemedi");
     }
-  }, [companyId, station, atolye]);
+  }, [companyId, station, atolye, projectId, recipeId]);
   // Mobil bitişin tablete yansıması: 5 sn poll + sekme/focus'ta anında yenile
   useLivePoll(load, { intervalMs: 5000 });
+  const skipLinkReload = useRef(true);
+  useEffect(() => {
+    if (skipLinkReload.current) {
+      skipLinkReload.current = false;
+      return;
+    }
+    load();
+  }, [station, projectId, recipeId, load]);
   useEffect(() => {
     loadPausePolicy(operator);
     if (!operator) return undefined;
@@ -302,6 +318,7 @@ export default function ShopFloorPage() {
   const readyCount = wos.filter((w) => w.status === "ready").length;
   const activeCount = wos.filter((w) => w.status === "in_progress" || w.status === "paused").length;
   const passesFilter = (w) => {
+    if (!matchesLinkFilter(w, projectId, recipeId)) return false;
     if (statusFilter === "ready") return w.status === "ready";
     if (statusFilter === "active") return w.status === "in_progress" || w.status === "paused";
     if (statusFilter === "done") return false;
@@ -369,18 +386,26 @@ export default function ShopFloorPage() {
     return (
       <div className={`space-y-4 ${extraClass}`} data-testid="shopfloor-station-groups">
         {!companyId && <NoCompanyNotice />}
-        {sections.map((sec) => (
+        {sections.map((sec) => {
+          const banner = stationBannerColor(sec.label, sec.key);
+          return (
           <div key={sec.key} data-testid={`shopfloor-station-group-${sec.key}`}>
-            <div className="flex items-center gap-2 mb-2">
-              <ArrowDownUp className="w-3.5 h-3.5 text-slate-400" />
-              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{sec.label}</h3>
-              <span className="text-[10px] font-semibold text-slate-400" data-testid={`shopfloor-station-group-count-${sec.key}`}>{sec.items.length}</span>
+            <div
+              className={`flex items-center gap-2 mb-2 rounded-xl px-3 py-2 min-h-11 ${banner.className}`}
+              style={{ backgroundColor: banner.bg, color: banner.fg }}
+              data-testid={`shopfloor-station-banner-${sec.key}`}
+              data-station-color={banner.id}
+            >
+              <ArrowDownUp className="w-3.5 h-3.5 shrink-0" />
+              <h3 className="text-xs font-bold uppercase tracking-wide">{sec.label}</h3>
+              <span className="text-[10px] font-semibold">(<span data-testid={`shopfloor-station-group-count-${sec.key}`}>{sec.items.length}</span> iş)</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch">
               {sec.items.map((w) => <Card key={w.id} w={w} />)}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     );
   };
@@ -471,18 +496,59 @@ export default function ShopFloorPage() {
     const showDetail = !!detailOpen[detailId];
     const pausedLabel = w.status === "paused" ? pausedForLabel(w.paused_at, now) : "";
     const trashDisabled = needsOperator || !!w.trash_request_pending;
+    const title = cardTitle(w);
+    const tags = cardTags(w);
+    const projectTone = projectColor(w.project_id);
+    const stationName = String(w.station || "").trim();
+    const stationTone = stationName ? stationColor(stationName) : null;
+    const showProductLine = title.source !== "recipe" && title.product && title.product !== title.text;
     return (
-    <div className={`bg-white rounded-2xl border-2 p-4 h-full flex flex-col gap-3 ${shopFloorCardBorder(w.status)}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
-      <div className="flex justify-between items-start gap-2">
-        <div className="min-w-0">
-          <div className="font-mono text-xs text-slate-400">{w.order_code} • Adım {w.step_no}/{w.step_count}</div>
-          <div className="font-bold text-slate-900 text-base leading-tight line-clamp-2" title={w.step_name || ""}>{w.step_name}</div>
-          <div className="text-sm text-slate-600 flex items-start gap-1 min-w-0">
-            <Package className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span className="line-clamp-2" title={w.product_name || ""}>{w.product_name}</span>
-          </div>
+    <div
+      className={`min-w-0 bg-white rounded-2xl border-2 border-l-4 p-4 h-full flex flex-col gap-3 ${shopFloorCardBorder(w.status)} ${projectTone.className}`}
+      style={{ borderLeftColor: projectTone.stripe, borderLeftWidth: "4px" }}
+      data-testid={`wo-card-${w.order_code}-${w.step_no}`}
+      data-project-color={projectTone.id}
+    >
+      <div className="flex flex-wrap justify-between items-start gap-2">
+        <div className="min-w-0 flex-1 basis-48">
+          <div className="font-mono text-xs text-slate-400 break-all">{w.order_code} • Adım {w.step_no}/{w.step_count}</div>
+          <div
+            className={`font-bold text-slate-900 leading-tight line-clamp-2 break-words ${title.source === "recipe" ? "text-lg" : "text-base"}`}
+            title={title.text}
+            data-testid={`wo-title-${w.order_code}-${w.step_no}`}
+          >{title.text}</div>
+          {showProductLine ? (
+            <div className="text-sm text-slate-600 flex items-start gap-1 min-w-0">
+              <Package className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span className="line-clamp-2 break-words" title={title.product}>{title.product}</span>
+            </div>
+          ) : null}
+          {tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 mt-1.5" data-testid={`wo-tags-${w.order_code}-${w.step_no}`}>
+              {tags.map((tag) => (
+                <span
+                  key={tag.kind}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 break-words"
+                  data-testid={`wo-tag-${tag.kind}-${w.order_code}-${w.step_no}`}
+                >
+                  {tag.kind === "project" ? <Folder className="w-3 h-3 shrink-0" /> : null}
+                  {tag.kind === "order" ? <FileText className="w-3 h-3 shrink-0" /> : null}
+                  {tag.kind === "customer" ? <User className="w-3 h-3 shrink-0" /> : null}
+                  <span className="min-w-0 break-words">{tag.label}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-1 shrink-0 max-w-full">
+          {stationTone ? (
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ${stationTone.className}`}
+              style={{ backgroundColor: stationTone.bg, color: stationTone.fg }}
+              data-testid={`wo-station-tag-${w.order_code}-${w.step_no}`}
+              data-station-color={stationTone.id}
+            >{stationName}</span>
+          ) : null}
           {actions.pause && (
             <button
               type="button"
@@ -523,7 +589,6 @@ export default function ShopFloorPage() {
         </div>
       ) : null}
       <div className="text-xs bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 space-y-0.5" data-testid={`wo-meta-${w.order_code}-${w.step_no}`}>
-        <div className="flex items-center gap-1.5 text-slate-600"><MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span>İstasyon: <span className="font-semibold text-slate-900">{w.station || "—"}</span></span></div>
         <div className="flex flex-col gap-0.5 text-slate-600 min-w-0 max-w-full overflow-hidden">
           <div className="flex items-center gap-1.5 min-w-0"><FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="truncate">İş dosyası: <span className="font-semibold text-slate-900">{w.job_file_name || "—"}</span></span></div>
           {String(w.step_note || "").trim() ? (
@@ -624,7 +689,7 @@ export default function ShopFloorPage() {
             onClick={() => { if (!startBlocked) act(w, "start"); }}
             disabled={startBlocked}
             title={needsOperator ? "Önce operatör seçin" : (stationLockMsg || undefined)}
-            className={`col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base ${startBlocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            className={`col-span-2 w-full min-h-11 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base ${startBlocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
             data-testid={`wo-start-${w.order_code}-${w.step_no}`}
           >
             <Play className="w-5 h-5" /> Başla
@@ -636,7 +701,7 @@ export default function ShopFloorPage() {
             onClick={() => { if (pauseOn) act(w, "pause"); }}
             disabled={!pauseOn}
             title={pauseTitle}
-            className={`flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-base ${pauseOn ? "bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-500/30" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}
+            className={`min-h-11 flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-base ${pauseOn ? "bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-500/30" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}
             data-testid={`wo-pause-${w.order_code}-${w.step_no}`}
           >
             <Pause className="w-5 h-5" /> Duraklat
@@ -648,7 +713,7 @@ export default function ShopFloorPage() {
             onClick={() => { if (!startBlocked) act(w, "start"); }}
             disabled={startBlocked}
             title={needsOperator ? "Önce operatör seçin" : (stationLockMsg || undefined)}
-            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${startBlocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            className={`min-h-11 flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${startBlocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
             data-testid={`wo-resume-${w.order_code}-${w.step_no}`}
           >
             <Play className="w-5 h-5" /> Devam
@@ -660,7 +725,7 @@ export default function ShopFloorPage() {
             onClick={() => { if (!needsOperator) openFinish(w); }}
             disabled={needsOperator}
             title={needsOperator ? "Önce operatör seçin" : undefined}
-            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${needsOperator ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-slate-900 hover:bg-slate-800 text-white"}`}
+            className={`min-h-11 flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${needsOperator ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-slate-900 hover:bg-slate-800 text-white"}`}
             data-testid={`wo-finish-${w.order_code}-${w.step_no}`}
           >
             <CheckCircle2 className="w-5 h-5" /> Bitir
@@ -687,7 +752,7 @@ export default function ShopFloorPage() {
   const stationBadges = Array.isArray(user?.shopfloor_stations) ? user.shopfloor_stations.filter(Boolean) : [];
 
   return (
-    <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto p-4 sm:p-6" : "space-y-3"} data-testid="shopfloor-page">
+    <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto overflow-x-hidden p-4 sm:p-6" : "space-y-3 overflow-x-hidden"} data-testid="shopfloor-page">
       {atolye ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" data-testid="shopfloor-atolye-banner">
           <span className="font-semibold text-slate-900" data-testid="shopfloor-atolye-account">{user?.name || "Atölye"} · Atölye kullanıcısı</span>
@@ -698,9 +763,9 @@ export default function ShopFloorPage() {
       ) : null}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm max-w-full min-w-0">
           {(atolye ? !!operator : true) ? (
-            <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800" data-testid="shopfloor-operator-chip">
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 min-h-11 max-w-full text-sm font-semibold text-emerald-800" data-testid="shopfloor-operator-chip">
               <User className="w-4 h-4 shrink-0" />
               {atolye ? (
                 <>
@@ -711,13 +776,25 @@ export default function ShopFloorPage() {
                   <button type="button" onClick={logoutOperator} className="font-semibold underline underline-offset-2" data-testid="shopfloor-operator-logout">Çıkış</button>
                 </>
               ) : (
-                <span>Operatör: {operator || "—"} · Kendi oturumunuz — seçim gerekmez</span>
+                <span>Operatör: {operator || "—"}</span>
               )}
             </span>
           ) : null}
-          <select value={station} onChange={(e) => setStation(e.target.value)} className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-          <button onClick={load} className="p-2.5 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
-          <button onClick={() => setKiosk(!kiosk)} className="flex items-center gap-1 px-3 py-2.5 bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
+          <select value={station} onChange={(e) => setStation(e.target.value)} aria-label="İstasyon" className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 min-h-11 min-w-0 max-w-full w-[calc(50%-0.25rem)] sm:w-auto sm:max-w-xs font-semibold" data-testid="shopfloor-station"><option value="">Tüm istasyonlar</option>{stations.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+          <select value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Proje" className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 min-h-11 min-w-0 max-w-full w-[calc(50%-0.25rem)] sm:w-auto sm:max-w-xs font-semibold" data-testid="shopfloor-project">
+            <option value="">Proje: Tüm projeler</option>
+            {filterCatalog.projects.map((row) => (
+              <option key={row.project_id} value={String(row.project_id)}>{projectFilterLabel(row)}</option>
+            ))}
+          </select>
+          <select value={recipeId} onChange={(e) => setRecipeId(e.target.value)} aria-label="Reçete" className="bg-white border-2 border-slate-300 rounded-xl px-3 py-2.5 min-h-11 min-w-0 max-w-full w-[calc(50%-0.25rem)] sm:w-auto sm:max-w-xs font-semibold" data-testid="shopfloor-recipe">
+            <option value="">Reçete: Tüm reçeteler</option>
+            {filterCatalog.recipes.map((row) => (
+              <option key={row.recipe_id} value={String(row.recipe_id)}>{recipeFilterLabel(row)}</option>
+            ))}
+          </select>
+          <button onClick={load} className="p-2.5 min-h-11 min-w-11 shrink-0 bg-white border-2 border-slate-300 rounded-xl" title="Yenile" data-testid="shopfloor-refresh"><RefreshCw className="w-4 h-4" /></button>
+          <button onClick={() => setKiosk(!kiosk)} className="flex items-center justify-center gap-1 px-3 py-2.5 min-h-11 min-w-0 max-w-full w-[calc(50%-0.25rem)] sm:w-auto bg-slate-900 text-white rounded-xl font-semibold" data-testid="shopfloor-kiosk">{kiosk ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {kiosk ? "Çık" : "Tablet Modu"}</button>
         </div>
       </div>
       {atolye && !operator && (
