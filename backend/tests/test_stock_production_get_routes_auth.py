@@ -751,6 +751,10 @@ def test_own_company_returns_only_own_records(api, monkeypatch):
         "completed_this_month": 1,
         "recipes": 2,
         "missing_notifications": 1,
+        "late": 0,
+        "completed": 2,
+        "cancelled": 0,
+        "all": 4,
     }
     _no_foreign(kpis.text)
 

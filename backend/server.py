@@ -23356,13 +23356,29 @@ def _production_kpi_from_orders(rows: List[Dict[str, Any]], month: str) -> Dict[
 async def production_order_kpis(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Hafif sayaçlar — MySQL'de COUNT(*) (JSON yüklemeden); eksik bildirim Python filtresi."""
     cid = tenant_access.resolve_company_id(user, company_id)
-    month = _tr_now().strftime("%Y-%m")
-    open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
-        db.production_orders.count_documents({"company_id": cid, "status": {"$in": ["planned", "in_production"]}}),
+    now = _tr_now()
+    month = now.strftime("%Y-%m")
+    today = now.strftime("%Y-%m-%d")
+    open_status = {"$in": ["planned", "in_production"]}
+    # Çip sayıları kesik listeden değil. Geciken: açık ve plan tarihi bugünden önce; boş tarih gecikmez.
+    late_q = {
+        "company_id": cid,
+        "status": open_status,
+        "$and": [
+            {"planned_date": {"$gt": ""}},
+            {"planned_date": {"$lt": today}},
+        ],
+    }
+    open_n, in_prod, done_month, recipes_n, missing_n, late_n, completed_n, cancelled_n, all_n = await asyncio.gather(
+        db.production_orders.count_documents({"company_id": cid, "status": open_status}),
         db.production_orders.count_documents({"company_id": cid, "status": "in_production"}),
         db.production_orders.count_documents({"company_id": cid, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
         db.recipes.count_documents({"company_id": cid}),
         db.notifications.count_documents({"company_id": cid, "type": "order_pick_missing", "is_read": False}),
+        db.production_orders.count_documents(late_q),
+        db.production_orders.count_documents({"company_id": cid, "status": "completed"}),
+        db.production_orders.count_documents({"company_id": cid, "status": "cancelled"}),
+        db.production_orders.count_documents({"company_id": cid}),
     )
     return {
         "open": open_n,
@@ -23370,6 +23386,10 @@ async def production_order_kpis(company_id: Optional[str] = None, user: dict = D
         "completed_this_month": done_month,
         "recipes": recipes_n,
         "missing_notifications": missing_n,
+        "late": late_n,
+        "completed": completed_n,
+        "cancelled": cancelled_n,
+        "all": all_n,
     }
 
 def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -23390,6 +23410,13 @@ def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
             "done": is_done,
             "current": is_current,
             "operator_name": w.get("operator_name") or None,
+            "station": w.get("station") or None,
+            "started_at": w.get("started_at") or None,
+            "finished_at": w.get("finished_at") or None,
+            "material_name": w.get("material_name") or None,
+            "material_stock_deducted": bool(w.get("material_stock_deducted")),
+            "material_stock_qty": w.get("material_stock_qty") if w.get("material_stock_deducted") else None,
+            "finish_unit": w.get("finish_unit") or None,
         })
     return {
         "done": done,
@@ -23437,23 +23464,53 @@ async def list_production_orders(
     include_steps: bool = False,
     user: dict = Depends(get_current_user),
 ):
-    """status=open → planned + in_production. include_steps=1 → adım özeti (ayrı work-orders çağrısı gerekmez)."""
+    """status=open → planned + in_production, sınır yok.
+
+    Süzgeç yokken açık emirlerin tümü gelir; 300 sınırı yalnız kapalı emirlere uygulanır.
+    Böylece yeni tamamlananlar eski açık emri listeden düşürmez. include_steps=1 → adım özeti.
+    """
     cid = tenant_access.resolve_company_id(user, company_id)
-    q: Dict[str, Any] = {"company_id": cid}
+    product_clause = {"finished_product_id": product_id} if product_id else {}
+    open_status = {"$in": ["planned", "in_production"]}
     if status == "open":
-        q["status"] = {"$in": ["planned", "in_production"]}
+        rows = await db.production_orders.find(
+            {"status": open_status, **product_clause, "company_id": cid},
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(None)
     elif status:
-        q["status"] = {"$in": status.split(",")} if "," in status else status
-    if product_id:
-        q["finished_product_id"] = product_id
-    rows = await db.production_orders.find(q, _PO_LIST_PROJ).sort("created_at", -1).to_list(300)
+        rows = await db.production_orders.find(
+            {
+                "status": {"$in": status.split(",")} if "," in status else status,
+                **product_clause,
+                "company_id": cid,
+            },
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(300)
+    else:
+        opens = await db.production_orders.find(
+            {"status": open_status, **product_clause, "company_id": cid},
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(None)
+        closed = await db.production_orders.find(
+            {"status": {"$nin": ["planned", "in_production"]}, **product_clause, "company_id": cid},
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(300)
+        rows = sorted(
+            [*opens, *closed],
+            key=lambda row: str(row.get("created_at") or ""),
+            reverse=True,
+        )
     if include_steps and rows:
         oids = [r["_id"] for r in rows]
         # company_id ile daralt — MySQL idx_docs_coll_company + order_id $in
         wos = await db.work_orders.find(
             {"company_id": cid, "order_id": {"$in": oids}},
-            {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
-        ).to_list(2000)
+            {
+                "order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1,
+                "station": 1, "started_at": 1, "finished_at": 1, "material_name": 1,
+                "material_stock_deducted": 1, "material_stock_qty": 1, "finish_unit": 1,
+            },
+        ).to_list(None)
         by: Dict[str, list] = {}
         for w in wos:
             by.setdefault(w.get("order_id"), []).append(w)
