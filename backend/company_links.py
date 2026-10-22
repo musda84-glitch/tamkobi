@@ -322,7 +322,7 @@ async def _audit_shared(company_id: str, user: Optional[dict], kind: str, reques
     await keys._audit(company_id, user, "update", summary, request, record_id=viewer)
 
 
-async def _authorize_shared(request: Request, company_id: str, kind: str) -> None:
+async def _authorize_shared(request: Request, company_id: str, kind: str) -> dict:
     """API anahtarı veya oturum. Aktif bağlantı ve read kapsamı şart. Denetim yazar."""
     token = keys.bearer_token(request)
     if token.startswith(keys.KEY_PREFIX):
@@ -339,16 +339,17 @@ async def _authorize_shared(request: Request, company_id: str, kind: str) -> Non
             await _audit_shared(company_id, None, kind, request, f"Paylaşılan {kind} reddedildi", viewer)
             raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
         await _audit_shared(company_id, None, kind, request, f"Paylaşılan {kind} okundu", viewer)
-        return
+        return {"viewer": viewer, "user": None}
     user = await keys.optional_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     await keys.enforce_user_rate(str(user.get("_id") or user.get("id") or "user"))
     viewer = _session_viewer(user)
-    if not viewer or not await link_allows(viewer, company_id, kind):
+    if not viewer or not user_may_access_company(user, viewer) or not await link_allows(viewer, company_id, kind):
         await _audit_shared(company_id, user, kind, request, f"Paylaşılan {kind} reddedildi", viewer)
         raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
     await _audit_shared(company_id, user, kind, request, f"Paylaşılan {kind} okundu", viewer)
+    return {"viewer": viewer, "user": user}
 
 
 def require_shared_reader(kind: str):
@@ -357,8 +358,8 @@ def require_shared_reader(kind: str):
     async def dependency(company_id: str, request: Request) -> dict:
         if kind not in SCOPE_NAMES:
             raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
-        await _authorize_shared(request, company_id, kind)
-        return {"company_id": company_id, "kind": kind}
+        gate = await _authorize_shared(request, company_id, kind)
+        return {"company_id": company_id, "kind": kind, **gate}
 
     dependency.__name__ = f"require_shared_{kind}"
     return dependency
@@ -378,6 +379,8 @@ async def shared_cari(
     limit: int = 100,
     access: dict = Depends(require_shared_reader("cari")),
 ):
+    if access.get("user") is not None and not user_may_access_company(access.get("user"), access.get("viewer")):
+        raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
     return await _shared_read(access["company_id"], access["kind"], limit)
 
 
@@ -387,6 +390,8 @@ async def shared_stok(
     limit: int = 100,
     access: dict = Depends(require_shared_reader("stok")),
 ):
+    if access.get("user") is not None and not user_may_access_company(access.get("user"), access.get("viewer")):
+        raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
     return await _shared_read(access["company_id"], access["kind"], limit)
 
 
@@ -396,6 +401,8 @@ async def shared_fiyat(
     limit: int = 100,
     access: dict = Depends(require_shared_reader("fiyat")),
 ):
+    if access.get("user") is not None and not user_may_access_company(access.get("user"), access.get("viewer")):
+        raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
     return await _shared_read(access["company_id"], access["kind"], limit)
 
 
@@ -405,6 +412,8 @@ async def shared_fatura(
     limit: int = 100,
     access: dict = Depends(require_shared_reader("fatura")),
 ):
+    if access.get("user") is not None and not user_may_access_company(access.get("user"), access.get("viewer")):
+        raise HTTPException(status_code=403, detail="Bu veri paylaşımına izniniz yok.")
     return await _shared_read(access["company_id"], access["kind"], limit)
 
 
