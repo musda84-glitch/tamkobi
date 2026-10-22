@@ -480,7 +480,7 @@ export const MyStoragePanel = () => {
           </button>
         </div>
         <QuotaBar
-          used={Number(((data.used_bytes ?? data.total_bytes || 0) / (1024 * 1024)).toFixed(1))}
+          used={Number(((data.used_bytes ?? (data.total_bytes || 0)) / (1024 * 1024)).toFixed(1))}
           limit={data.storage_limit_mb || 0}
           testId="my-storage-quota"
         />
