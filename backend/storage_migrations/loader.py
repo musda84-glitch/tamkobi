@@ -21,6 +21,14 @@ class Migration:
     name: str
     checksum: str
     steps: tuple[str, ...]
+    mysql_steps: tuple[str, ...] = ()
+
+
+def steps_for(migration: Migration, dialect: str) -> tuple[str, ...]:
+    """MySQL/MariaDB adımları ayrıysa onları, değilse ortak adımları verir."""
+    if dialect == "mysql" and migration.mysql_steps:
+        return migration.mysql_steps
+    return migration.steps
 
 
 def migrations_dir() -> Path:
@@ -83,7 +91,13 @@ def _load_py(path: Path, version: int, name: str) -> Migration:
     if not isinstance(raw, (list, tuple)) or not raw:
         raise MigrationError(f"{path.name} STEPS boş.")
     steps = tuple(_require_step(part, path.name) for part in raw)
-    return Migration(version, name, _checksum(path), steps)
+    mysql_raw = getattr(module, "MYSQL_STEPS", None)
+    mysql_steps: tuple[str, ...] = ()
+    if mysql_raw is not None:
+        if not isinstance(mysql_raw, (list, tuple)) or not mysql_raw:
+            raise MigrationError(f"{path.name} MYSQL_STEPS boş.")
+        mysql_steps = tuple(_require_step(part, path.name) for part in mysql_raw)
+    return Migration(version, name, _checksum(path), steps, mysql_steps)
 
 
 def _require_step(step, filename: str) -> str:
