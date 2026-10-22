@@ -2100,7 +2100,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
                   </div>
                   <div className="text-right shrink-0 font-bold text-slate-900">
                     {showPrices ? `${formatTrAmount(ord.grand_total ?? ord.total_amount)} ₺` : (staffMode ? null : "—")}
-                    {!staffMode || showPrices ? <InvoiceOrderMismatchBadge ord={ord} /> : null}
+                    <InvoiceOrderMismatchBadge ord={ord} hideAmount={!showPrices} />
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100" data-testid={`order-actions-mobile-${ord.order_number}`}>
@@ -2343,7 +2343,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
                           {Number(ord.vat_total) > 0 && <div className="text-[10px] font-semibold text-slate-400">KDV dahil</div>}
                         </>
                       ) : (staffMode ? null : "—")}
-                      {!staffMode || showPrices ? <InvoiceOrderMismatchBadge ord={ord} /> : null}
+                      <InvoiceOrderMismatchBadge ord={ord} hideAmount={!showPrices} />
                     </td>
                     <td className="px-4 py-3">
                       {staffMode ? (
