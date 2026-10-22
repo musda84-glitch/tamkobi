@@ -26,10 +26,101 @@ function detector(): DetectorCtor | null {
   return typeof Ctor === "function" ? Ctor : null;
 }
 
+type ZoomCaps = { min?: number; max?: number; step?: number };
+type TrackCaps = MediaTrackCapabilities & {
+  torch?: boolean;
+  focusMode?: string[];
+  exposureMode?: string[];
+  whiteBalanceMode?: string[];
+  zoom?: ZoomCaps;
+};
+
+function isFrontLabel(label: string) {
+  const text = label.toLowerCase();
+  if (/facing[\s_-]*(front|user)/.test(text)) return true;
+  if (/\b(front|user|selfie)\b/.test(text)) return true;
+  return text.includes("ön");
+}
+
+function pickBackCamera(devices: MediaDeviceInfo[]) {
+  const labeled = devices.filter((device) => device.label?.trim());
+  if (!labeled.length) return null;
+  const virtual = [/back\s+triple\s+camera/, /back\s+dual\s+wide\s+camera/, /back\s+dual\s+camera/];
+  for (const pattern of virtual) {
+    const found = labeled.find((device) => pattern.test(device.label.toLowerCase()));
+    if (found) return found.deviceId;
+  }
+  const plain = labeled.find((device) => {
+    const text = device.label.toLowerCase();
+    return /back|rear|arka|environment/.test(text) && !isFrontLabel(text) && !/ultra|macro|\btele\b|depth|desk|\bwide\b/.test(text);
+  });
+  if (plain) return plain.deviceId;
+  const anyBack = labeled.find((device) => /back|rear|arka|environment/.test(device.label.toLowerCase()) && !isFrontLabel(device.label));
+  return anyBack?.deviceId || null;
+}
+
+function videoAttempts(deviceId: string | null): Array<MediaTrackConstraints | boolean> {
+  const sized = (id: string | null, width: number, height: number): MediaTrackConstraints => {
+    const video: MediaTrackConstraints = {
+      width: { ideal: width },
+      height: { ideal: height },
+      frameRate: { ideal: 30 },
+      aspectRatio: { ideal: 16 / 9 },
+    };
+    if (id) video.deviceId = { exact: id };
+    else video.facingMode = { ideal: "environment" };
+    return video;
+  };
+  const attempts: Array<MediaTrackConstraints | boolean> = [];
+  if (deviceId) {
+    attempts.push(sized(deviceId, 1920, 1080));
+    attempts.push(sized(deviceId, 1280, 720));
+  }
+  attempts.push(sized(null, 1920, 1080));
+  attempts.push(sized(null, 1280, 720));
+  attempts.push({ facingMode: { ideal: "environment" } });
+  attempts.push(true);
+  return attempts;
+}
+
+async function openStream(deviceId: string | null) {
+  let last: unknown;
+  for (const video of videoAttempts(deviceId)) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: false, video });
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last instanceof Error ? last : new Error("Kamera açılamadı");
+}
+
+function applyFocusTuning(track: MediaStreamTrack | undefined) {
+  if (!track || typeof track.getCapabilities !== "function" || typeof track.applyConstraints !== "function") return;
+  let caps: TrackCaps = {};
+  try {
+    caps = track.getCapabilities() as TrackCaps;
+  } catch {
+    return;
+  }
+  const advanced: Record<string, unknown> = {};
+  if (Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) advanced.focusMode = "continuous";
+  if (caps.zoom && typeof caps.zoom.min === "number" && typeof caps.zoom.max === "number") {
+    const start = Math.min(Math.max(caps.zoom.min, 1.5), caps.zoom.max);
+    if (start >= 1) advanced.zoom = start;
+  }
+  if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes("continuous")) advanced.exposureMode = "continuous";
+  if (Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes("continuous")) {
+    advanced.whiteBalanceMode = "continuous";
+  }
+  if (!Object.keys(advanced).length) return;
+  track.applyConstraints({ advanced: [advanced] } as unknown as MediaTrackConstraints).catch(() => undefined);
+}
+
 function applyTorch(stream: MediaStream | null, torch: boolean) {
   const track = stream?.getVideoTracks?.()?.[0];
   if (!track || typeof track.applyConstraints !== "function" || typeof track.getCapabilities !== "function") return;
-  const caps = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
+  const caps = track.getCapabilities() as TrackCaps;
   if (!caps.torch) return;
   track.applyConstraints({ advanced: [{ torch }] } as unknown as MediaTrackConstraints).catch(() => undefined);
 }
@@ -55,10 +146,24 @@ export function WebBarcodeCamera({
   onScanRef.current = onScan;
   torchRef.current = torch;
   const [hint, setHint] = useState("Kamera açılıyor…");
+  const [resumeKey, setResumeKey] = useState(0);
 
   useEffect(() => {
     applyTorch(streamRef.current, torch);
   }, [torch]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      setResumeKey((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   useEffect(() => {
     if (!active || typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
@@ -105,15 +210,40 @@ export function WebBarcodeCamera({
       timer = window.setTimeout(() => tick(det), 180);
     };
 
+    const play = () => {
+      video.play().catch(() => setHint("Görüntü için ekrana dokunun."));
+    };
+    video.addEventListener("click", play);
+
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
+        let deviceId: string | null = null;
+        try {
+          const listed = await navigator.mediaDevices.enumerateDevices();
+          deviceId = pickBackCamera(listed);
+        } catch { /* etiket için önce akış */ }
+        stream = await openStream(deviceId);
         streamRef.current = stream;
         video.srcObject = stream;
-        await video.play();
+        if (!deviceId) {
+          try {
+            const listed = await navigator.mediaDevices.enumerateDevices();
+            const picked = pickBackCamera(listed);
+            const current = stream.getVideoTracks()[0]?.getSettings?.().deviceId;
+            if (picked && picked !== current) {
+              stream.getTracks().forEach((track) => track.stop());
+              stream = await openStream(picked);
+              streamRef.current = stream;
+              video.srcObject = stream;
+            }
+          } catch { /* mevcut akış kalsın */ }
+        }
+        applyFocusTuning(stream.getVideoTracks()[0]);
+        try {
+          await video.play();
+        } catch {
+          setHint("Görüntü için ekrana dokunun.");
+        }
         applyTorch(stream, torchRef.current);
         if (!Ctor) {
           setHint("Bu tarayıcı canlı barkod okumuyor. Chrome / Edge kullanın veya kodu yazın.");
@@ -134,9 +264,10 @@ export function WebBarcodeCamera({
       stream?.getTracks().forEach((t) => t.stop());
       if (streamRef.current === stream) streamRef.current = null;
       video.srcObject = null;
+      video.removeEventListener("click", play);
       host.replaceChildren();
     };
-  }, [active]);
+  }, [active, resumeKey]);
 
   return (
     <View style={{ flex: 1, minHeight: 240 }}>

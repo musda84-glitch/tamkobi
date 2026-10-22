@@ -2,6 +2,21 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { Camera, X, Loader2, FlipHorizontal, Zap, Check } from "lucide-react";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import {
+  applyFocusTuning,
+  applyTapFocus,
+  html5CameraConfig,
+  html5VideoConstraints,
+  openVideoStream,
+  orderCamerasForSwitch,
+  playVideoElement,
+  prepareVideoElement,
+  preferredZoom,
+  resolveCameraDevices,
+  selectBackCamera,
+  stopStream,
+  trackFromScanner,
+} from "./cameraSelect";
 
 /** Basılı tutma eşiği, tek okuma penceresi ve aynı kodun tekrar sayılmama süresi. */
 export const SHUTTER_HOLD_MS = 400;
@@ -30,11 +45,6 @@ const NATIVE_FORMATS = [
   "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "code_93",
   "codabar", "itf", "qr_code", "data_matrix", "pdf417", "aztec",
 ];
-
-const VIDEO_BASE = {
-  width: { ideal: 1920, min: 640 },
-  height: { ideal: 1080, min: 480 },
-};
 
 export const normalizeScanText = (raw) => {
   if (raw == null) return "";
@@ -67,20 +77,6 @@ const beep = () => {
   } catch { /* sessiz */ }
 };
 
-const pickBackCamera = (devices) => {
-  if (!devices?.length) return null;
-  const scored = devices.map((d, i) => {
-    const label = (d.label || "").toLowerCase();
-    let score = i;
-    if (/back|rear|environment|arka|world/.test(label)) score += 100;
-    if (/ultra.?wide|tele/.test(label)) score -= 20;
-    if (/front|user|ön|selfie|face/.test(label)) score -= 100;
-    return { d, score };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0].d;
-};
-
 /**
  * Kamera ile barkod/QR okuyucu — deklanşör.
  * Önce native BarcodeDetector (tam kare), yoksa html5-qrcode (yüksek çözünürlük + geniş alan).
@@ -104,6 +100,12 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   const holdTimerRef = useRef(0);
   const searchTimerRef = useRef(0);
   const flashTimerRef = useRef(0);
+  const focusTimerRef = useRef(0);
+  const trackRef = useRef(null);
+  const manualCodeRef = useRef("");
+  const manualInputRef = useRef(null);
+  const hiddenRef = useRef(false);
+  const torchRef = useRef(false);
 
   const [status, setStatus] = useState("starting");
   const [error, setError] = useState("");
@@ -113,10 +115,17 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   const [count, setCount] = useState(0);
   const [recent, setRecent] = useState([]);
   const [torch, setTorch] = useState(false);
+  const [torchCapable, setTorchCapable] = useState(false);
+  const [zoomRange, setZoomRange] = useState(null);
+  const [zoomValue, setZoomValue] = useState(1);
+  const [needGesture, setNeedGesture] = useState(false);
+  const [manualCode, setManualCode] = useState("");
+  const [visTick, setVisTick] = useState(0);
   const [mode, setMode] = useState("idle");
   const [notFound, setNotFound] = useState(false);
   const [hit, setHit] = useState(null);
   const [flash, setFlash] = useState(false);
+  torchRef.current = torch;
 
   const clearTimer = (ref) => {
     if (ref.current) {
@@ -131,6 +140,10 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   };
 
   const stopAll = useCallback(async () => {
+    if (focusTimerRef.current) {
+      clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = 0;
+    }
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
@@ -143,7 +156,13 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     }
     const stream = streamRef.current;
     streamRef.current = null;
-    if (stream) stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+    stopStream(stream);
+    trackRef.current = null;
+    const host = typeof document !== "undefined" ? document.getElementById(hostIdRef.current) : null;
+    host?.querySelectorAll?.("video")?.forEach((video) => {
+      stopStream(video.srcObject);
+      try { video.srcObject = null; } catch { /* ignore */ }
+    });
     if (videoRef.current) {
       try { videoRef.current.srcObject = null; } catch { /* ignore */ }
     }
@@ -295,8 +314,32 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     };
   });
 
+  const publishCaps = useCallback((caps) => {
+    const zoom = caps?.zoom;
+    const hasZoom = !!zoom && typeof zoom.min === "number" && typeof zoom.max === "number" && zoom.max > zoom.min;
+    setZoomRange(hasZoom ? { min: zoom.min, max: zoom.max, step: zoom.step || 0.1 } : null);
+    const start = preferredZoom(zoom);
+    if (start != null) setZoomValue(start);
+    setTorchCapable(caps?.torch === true);
+  }, []);
+
+  const bindTrack = useCallback(async (scanner, video) => {
+    prepareVideoElement(video);
+    const tunable = trackFromScanner(scanner) || video?.srcObject?.getVideoTracks?.()?.[0] || null;
+    trackRef.current = tunable;
+    const caps = tunable ? (await applyFocusTuning(tunable)) || {} : {};
+    publishCaps(caps);
+    if (video) {
+      const playing = await playVideoElement(video);
+      if (!playing) setNeedGesture(true);
+    }
+    return caps;
+  }, [publishCaps]);
+
   const startNative = useCallback(async (deviceId) => {
     if (!supportsNativeDetector() || !videoRef.current) return false;
+    const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+    if (typeof getUserMedia !== "function") return false;
 
     let detector;
     try {
@@ -305,35 +348,20 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
       try { detector = new window.BarcodeDetector(); } catch { return false; }
     }
 
-    const attempts = [];
-    if (deviceId) attempts.push({ deviceId: { exact: deviceId }, ...VIDEO_BASE });
-    attempts.push({ facingMode: { ideal: "environment" }, ...VIDEO_BASE });
-    attempts.push({ facingMode: { exact: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } });
-    attempts.push({ facingMode: "environment" });
-    attempts.push(true);
-
-    let stream = null;
-    let lastErr;
-    for (const c of attempts) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: c });
-        break;
-      } catch (e) {
-        lastErr = e;
-      }
-    }
-    if (!stream) throw lastErr || new Error("Kamera açılamadı");
-    if (!aliveRef.current) {
-      stream.getTracks().forEach((t) => t.stop());
+    const stream = await openVideoStream(getUserMedia, deviceId);
+    if (!aliveRef.current || hiddenRef.current) {
+      stopStream(stream);
       return false;
     }
 
     streamRef.current = stream;
     const video = videoRef.current;
     video.srcObject = stream;
-    video.setAttribute("playsinline", "true");
-    video.muted = true;
-    await video.play();
+    await bindTrack(null, video);
+    if (hiddenRef.current) {
+      await stopAll();
+      return false;
+    }
 
     setEngine("native");
     setStatus("scanning");
@@ -360,7 +388,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     };
     rafRef.current = requestAnimationFrame(tick);
     return true;
-  }, [emitScan]);
+  }, [bindTrack, emitScan, stopAll]);
 
   const startHtml5 = useCallback(async (deviceId, devices) => {
     const elId = hostIdRef.current;
@@ -377,9 +405,12 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
     scannerRef.current = scanner;
 
     const qrbox = (viewW, viewH) => {
-      const width = Math.floor(Math.min(viewW * 0.92, viewW - 16));
-      const height = Math.floor(Math.min(Math.max(viewH * 0.45, 240), viewH * 0.72, 420));
-      return { width: Math.max(200, width), height: Math.max(160, height) };
+      const width = Math.floor(viewW * 0.88);
+      const height = Math.floor(viewH * 0.38);
+      return {
+        width: Math.max(1, Math.min(width, viewW - 2)),
+        height: Math.max(1, Math.min(height, viewH - 2)),
+      };
     };
 
     const onOk = (text) => emitScan(text);
@@ -389,70 +420,102 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
       await scanner.start(cameraConfig, config, onOk, onFail);
     };
 
-    const rich = {
-      fps: 24,
+    const scanConfig = (id, quality) => ({
+      fps: 15,
       qrbox,
       aspectRatio: 1.777,
       disableFlip: false,
-      videoConstraints: {
-        ...VIDEO_BASE,
-        facingMode: { ideal: "environment" },
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-      },
-    };
-    const soft = { fps: 20, qrbox, disableFlip: false };
+      videoConstraints: html5VideoConstraints(id, quality),
+    });
 
-    try {
-      if (deviceId) await tryStart({ deviceId: { exact: deviceId } }, rich);
-      else await tryStart({ facingMode: "environment" }, rich);
-    } catch {
-      try { await scanner.stop().catch(() => {}); } catch { /* ignore */ }
+    const startWith = async (id, quality) => {
+      await tryStart(html5CameraConfig(id), scanConfig(id, quality));
+    };
+
+    const startRelaxed = async (id) => {
+      await tryStart(html5CameraConfig(id), {
+        fps: 15,
+        qrbox,
+        aspectRatio: 1.777,
+        disableFlip: false,
+        videoConstraints: id
+          ? { deviceId: { exact: id }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          : { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+    };
+
+    const attempts = [
+      () => startWith(deviceId, "high"),
+      () => startRelaxed(deviceId),
+    ];
+    const fallbackId = devices?.map((d) => d.id).find((id) => id && id !== deviceId) || null;
+    if (fallbackId) attempts.push(() => startRelaxed(fallbackId));
+    if (deviceId) attempts.push(() => startRelaxed(null));
+
+    let started = false;
+    let lastErr;
+    for (const attempt of attempts) {
       try {
-        if (deviceId) await tryStart(deviceId, soft);
-        else await tryStart({ facingMode: "environment" }, soft);
-      } catch (e2) {
-        const fallbackId = devices?.find((d) => d.id !== deviceId)?.id || devices?.[0]?.id;
-        if (fallbackId) await tryStart(fallbackId, soft);
-        else throw e2;
+        await attempt();
+        started = true;
+        break;
+      } catch (err) {
+        lastErr = err;
+        try { await scanner.stop().catch(() => {}); } catch { /* ignore */ }
       }
     }
+    if (!started) throw lastErr || new Error("Kamera açılamadı");
 
-    if (!aliveRef.current) {
+    if (!aliveRef.current || hiddenRef.current) {
+      await stopAll();
+      return false;
+    }
+    await bindTrack(scanner, host.querySelector("video"));
+    if (!aliveRef.current || hiddenRef.current) {
       await stopAll();
       return false;
     }
     setEngine("html5");
     setStatus("scanning");
     return true;
-  }, [emitScan, stopAll]);
+  }, [bindTrack, emitScan, stopAll]);
 
   useEffect(() => {
     aliveRef.current = true;
     let cancelled = false;
 
     const boot = async () => {
+      if (hiddenRef.current) return;
       setStatus("starting");
       setError("");
       setEngine("");
       setTorch(false);
+      setTorchCapable(false);
+      setZoomRange(null);
+      setNeedGesture(false);
       await stopAll();
-      if (cancelled || !aliveRef.current) return;
+      if (cancelled || !aliveRef.current || hiddenRef.current) return;
 
       try {
-        let devices = [];
-        try {
-          devices = await Html5Qrcode.getCameras();
-        } catch {
-          devices = [];
-        }
-        if (cancelled || !aliveRef.current) return;
+        const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+        let devices = await resolveCameraDevices(() => Html5Qrcode.getCameras(), getUserMedia);
+        if (cancelled || !aliveRef.current || hiddenRef.current) return;
+        devices = orderCamerasForSwitch(devices);
         setCams(devices);
 
         let idx = camIdx;
         if (idx < 0 || idx >= devices.length) {
-          const back = pickBackCamera(devices);
+          const back = await selectBackCamera(devices, getUserMedia);
+          if (cancelled || !aliveRef.current || hiddenRef.current) return;
           idx = back ? Math.max(0, devices.findIndex((d) => d.id === back.id)) : 0;
-          setCamIdx(idx);
+          if (devices.length && idx !== camIdx) {
+            setCamIdx(idx);
+            return;
+          }
+          if (!devices.length && camIdx !== 0) {
+            setCamIdx(0);
+            return;
+          }
         }
         const deviceId = devices[idx]?.id || null;
 
@@ -465,13 +528,15 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
             await stopAll();
           }
         }
-        if (!ok && aliveRef.current && !cancelled) {
+        if (!ok && aliveRef.current && !cancelled && !hiddenRef.current) {
           await startHtml5(deviceId, devices);
         }
       } catch (e) {
         if (cancelled || !aliveRef.current) return;
+        await stopAll();
+        if (cancelled || !aliveRef.current) return;
         setStatus("error");
-        const msg = String(e?.message || e || "");
+        const msg = String(e?.name || "") + " " + String(e?.message || e || "");
         setError(
           /NotAllowed|Permission|izin|Denied/i.test(msg)
             ? "Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamera iznini açın."
@@ -492,34 +557,109 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
       clearTimer(holdTimerRef);
       clearTimer(searchTimerRef);
       clearTimer(flashTimerRef);
+      clearTimer(focusTimerRef);
       stopAll();
     };
-  }, [camIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [camIdx, visTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onVis = () => {
+      const hidden = document.visibilityState === "hidden";
+      hiddenRef.current = hidden;
+      if (hidden) {
+        stopAll();
+        return;
+      }
+      setVisTick((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [stopAll]);
+
+  useEffect(() => {
+    if (status !== "error") return undefined;
+    try { manualInputRef.current?.focus(); } catch { /* ignore */ }
+    return undefined;
+  }, [status]);
 
   const toggleTorch = async () => {
+    if (!torchCapable) return;
+    const next = !torch;
     try {
+      const track = trackRef.current;
+      if (track?.applyConstraints) {
+        await track.applyConstraints({ advanced: [{ torch: next }] });
+        setTorch(next);
+        return;
+      }
       if (scannerRef.current?.applyVideoConstraints) {
-        await scannerRef.current.applyVideoConstraints({ advanced: [{ torch: !torch }] });
-        setTorch(!torch);
+        await scannerRef.current.applyVideoConstraints({ advanced: [{ torch: next }] });
+        setTorch(next);
         return;
       }
       const vt = streamRef.current?.getVideoTracks?.()?.[0];
       if (vt?.getCapabilities?.()?.torch) {
-        await vt.applyConstraints({ advanced: [{ torch: !torch }] });
-        setTorch(!torch);
-        return;
+        await vt.applyConstraints({ advanced: [{ torch: next }] });
+        setTorch(next);
       }
-      setError("Bu kamerada flaş desteklenmiyor.");
-      setTimeout(() => setError(""), 2000);
-    } catch {
-      setError("Bu kamerada flaş desteklenmiyor.");
-      setTimeout(() => setError(""), 2000);
-    }
+    } catch { /* flaş yoksa sessiz */ }
   };
 
   const switchCam = () => {
     if (cams.length < 2) return;
     setCamIdx((i) => (Math.max(0, i) + 1) % cams.length);
+  };
+
+  const submitManual = (event) => {
+    event?.preventDefault?.();
+    const text = normalizeScanText(manualCodeRef.current);
+    if (!text || !aliveRef.current) return;
+    manualCodeRef.current = "";
+    setManualCode("");
+    onScanRef.current?.(text);
+    beep();
+    buzz();
+  };
+
+  const changeZoom = async (raw) => {
+    if (!zoomRange) return;
+    const next = Math.min(zoomRange.max, Math.max(zoomRange.min, Number(raw)));
+    if (Number.isNaN(next)) return;
+    setZoomValue(next);
+    const track = trackRef.current;
+    if (!track?.applyConstraints) return;
+    try {
+      const caps = track.getCapabilities?.() || {};
+      const advanced = { zoom: next };
+      if (Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) advanced.focusMode = "continuous";
+      if (caps.torch && torchRef.current) advanced.torch = true;
+      await track.applyConstraints({ advanced: [advanced] });
+    } catch { /* sessiz */ }
+  };
+
+  const onPreviewPointerDown = async (event) => {
+    const tag = event.target?.closest?.("button, input, textarea, a, label");
+    if (tag) return;
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = event.currentTarget.getBoundingClientRect?.();
+    if (!rect?.width || !rect?.height) return;
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    const result = await applyTapFocus(track, x, y);
+    if (result?.revert) {
+      clearTimer(focusTimerRef);
+      focusTimerRef.current = setTimeout(() => {
+        focusTimerRef.current = 0;
+        result.revert();
+      }, result.revertMs || 1000);
+    }
+  };
+
+  const resumePlayback = async () => {
+    const video = videoRef.current || document.getElementById(hostIdRef.current)?.querySelector("video");
+    const ok = await playVideoElement(video);
+    if (ok) setNeedGesture(false);
   };
 
   const qtyN = qtyEnabled ? parseScanQtyInput(qty) : 1;
@@ -530,7 +670,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
   ) : null;
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" data-testid="camera-scanner" data-mode={mode} role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col" style={{ height: "100dvh", maxHeight: "100dvh" }} data-testid="camera-scanner" data-mode={mode} role="dialog" aria-modal="true">
       <div className="flex items-center justify-between px-4 py-3 text-white shrink-0">
         <div className="font-bold flex items-center gap-2 min-w-0">
           <Camera className={`w-5 h-5 shrink-0 ${serial ? "text-rose-400" : "text-emerald-400"}`} />
@@ -541,7 +681,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {status === "scanning" && (
-            <button type="button" onClick={toggleTorch} className={`p-2 rounded-lg ${torch ? "bg-amber-500 text-black" : "bg-white/10"}`} title="Flaş" data-testid="camera-scanner-torch">
+            <button type="button" onClick={toggleTorch} disabled={!torchCapable} className={`p-2 rounded-lg disabled:opacity-40 ${torch ? "bg-amber-500 text-black" : "bg-white/10"}`} title={torchCapable ? "Flaş" : "Flaş desteklenmiyor"} data-testid="camera-scanner-torch">
               <Zap className="w-5 h-5" />
             </button>
           )}
@@ -557,9 +697,12 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
       </div>
 
       <div className="flex-1 flex items-center justify-center px-3 min-h-0 relative">
-        <div className="w-full max-w-2xl relative">
+        <div className="w-full max-w-2xl relative" onPointerDown={onPreviewPointerDown}>
           <video
-            ref={videoRef}
+            ref={(node) => {
+              videoRef.current = node;
+              prepareVideoElement(node);
+            }}
             className={`w-full rounded-2xl bg-black object-cover max-h-[70vh] ${engine === "native" && status === "scanning" ? "block" : "hidden"}`}
             playsInline
             muted
@@ -568,7 +711,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
           />
           <div
             id={hostIdRef.current}
-            className={`w-full rounded-2xl overflow-hidden bg-black [&_video]:w-full [&_video]:rounded-2xl [&_video]:max-h-[70vh] [&_img]:hidden ${engine === "html5" ? "block" : engine ? "hidden" : "block"}`}
+            className={`w-full rounded-2xl overflow-hidden bg-black [&_video]:w-full [&_video]:object-cover [&_video]:rounded-2xl [&_video]:max-h-[70vh] [&_img]:hidden ${engine === "html5" ? "block" : engine ? "hidden" : "block"}`}
             data-testid="camera-scanner-view"
           />
 
@@ -608,7 +751,50 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
           {status === "scanning" && error && (
             <div className="text-center text-amber-200 text-xs mt-2">{error}</div>
           )}
+          {needGesture && (
+            <button type="button" onClick={resumePlayback} className="mt-3 px-3 py-2 rounded-lg bg-white/10 text-white text-xs font-semibold" data-testid="camera-scanner-play">
+              Kamerayı başlat
+            </button>
+          )}
         </div>
+      </div>
+
+      <div className="px-4 pt-2 text-slate-300 text-xs shrink-0 flex flex-col items-center">
+        <form className="flex items-center justify-center gap-2 text-white text-xs mb-3" onSubmit={submitManual} data-testid="camera-scanner-manual">
+          <span className="font-bold">Kodu elle gir</span>
+          <input
+            ref={manualInputRef}
+            value={manualCode}
+            onChange={(e) => {
+              manualCodeRef.current = e.target.value;
+              setManualCode(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitManual(e);
+            }}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            className="w-40 rounded-lg px-2 py-1 text-slate-900 font-black text-center text-sm"
+            aria-label="Kodu elle gir"
+            data-testid="camera-scanner-manual-input"
+          />
+        </form>
+        {zoomRange ? (
+          <label className="flex items-center justify-center gap-2 text-white text-xs mb-3">
+            <span className="font-bold">Yakınlaştır</span>
+            <input
+              type="range"
+              min={zoomRange.min}
+              max={zoomRange.max}
+              step={zoomRange.step || 0.1}
+              value={zoomValue}
+              onChange={(e) => changeZoom(e.target.value)}
+              className="w-40"
+              data-testid="camera-scanner-zoom"
+            />
+          </label>
+        ) : null}
       </div>
 
       <div className="px-4 pb-6 pt-2 text-center text-slate-300 text-xs shrink-0 flex flex-col items-center" style={shutterStyle}>

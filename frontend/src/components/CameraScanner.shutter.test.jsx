@@ -21,12 +21,22 @@ jest.mock("html5-qrcode", () => {
       this.isScanning = false;
       scanners.push(this);
     }
-    async start(_camera, _config, onOk) {
+    async start(camera, config, onOk) {
+      if (globalThis.__qrStartError) throw globalThis.__qrStartError;
       this.isScanning = true;
+      this.camera = camera;
+      this.config = config;
       this.onOk = onOk;
     }
     async stop() { this.isScanning = false; }
     clear() {}
+    getRunningTrackCapabilities() {
+      return globalThis.__qrCaps || {};
+    }
+    applyVideoConstraints(constraints) {
+      this.applied = constraints;
+      return Promise.resolve();
+    }
     static getCameras() {
       return Promise.resolve([{ id: "back-cam", label: "Back Camera" }]);
     }
@@ -71,6 +81,8 @@ beforeEach(() => {
   root = createRoot(host);
   globalThis.__qrScanners.length = 0;
   delete window.BarcodeDetector;
+  delete globalThis.__qrStartError;
+  delete globalThis.__qrCaps;
   navigator.vibrate = jest.fn();
 });
 
@@ -339,6 +351,60 @@ test("mobil deklanşör en az 72px, kaydırma ve seçim engelli, titreşim güve
   decode("V4");
   expect(onScan).toHaveBeenCalledWith("V4");
   expect(host.querySelector('[data-testid="camera-scanner"]')).not.toBeNull();
+});
+
+test("html5 başlatma 1920 ideal kullanır, min koymaz", async () => {
+  await renderScanner();
+  const scanner = [...globalThis.__qrScanners].reverse().find((s) => s.config);
+  expect(scanner).toBeTruthy();
+  expect(scanner.camera).toEqual({ deviceId: { exact: "back-cam" } });
+  expect(scanner.config.fps).toBeGreaterThanOrEqual(15);
+  expect(scanner.config.fps).toBeLessThanOrEqual(20);
+  expect(scanner.config.aspectRatio).toBeCloseTo(1.777);
+  const video = scanner.config.videoConstraints;
+  expect(video.width.ideal).toBe(1920);
+  expect(video.height.ideal).toBe(1080);
+  expect(video.width.min).toBeUndefined();
+  expect(video.height.min).toBeUndefined();
+  expect(video.deviceId).toEqual({ exact: "back-cam" });
+  expect(video.facingMode).toBeUndefined();
+  expect(JSON.stringify(video)).not.toContain("min");
+});
+
+test("flaş caps.torch yoksa devre dışıdır", async () => {
+  await renderScanner();
+  const torch = host.querySelector('[data-testid="camera-scanner-torch"]');
+  expect(torch).not.toBeNull();
+  expect(torch.disabled).toBe(true);
+});
+
+test("elle giriş Enter ile normalize edilmiş kodu onScan'a verir", async () => {
+  const { onScan } = await renderScanner();
+  const input = host.querySelector('[data-testid="camera-scanner-manual-input"]');
+  expect(input).not.toBeNull();
+  const props = reactProps(input);
+  await act(async () => {
+    props.onChange({ target: { value: "  ]C18690123456789  " } });
+  });
+  await act(async () => {
+    props.onKeyDown({ key: "Enter", preventDefault() {} });
+  });
+  expect(onScan).toHaveBeenCalledTimes(1);
+  expect(onScan).toHaveBeenCalledWith("8690123456789");
+});
+
+test("izin hatasında elle giriş görünür", async () => {
+  globalThis.__qrStartError = new Error("NotAllowedError: Permission denied");
+  await renderScanner();
+  for (let i = 0; i < 8; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await advance(50);
+  }
+  const error = host.querySelector('[data-testid="camera-scanner-error"]');
+  expect(error).not.toBeNull();
+  expect(error.textContent.toLowerCase()).toMatch(/izni/);
+  expect(host.querySelector('[data-testid="camera-scanner-manual-input"]')).not.toBeNull();
+  expect(host.textContent).toContain("Kodu elle gir");
 });
 
 test("adet çarpan yalnızca qtyEnabled iken görünür; continuous metni kalkar", async () => {
