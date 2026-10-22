@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+import applog
 from build_stamp import read_stamp
 import company_sms
 import event_notify
@@ -250,6 +251,56 @@ async def admin_v1_system_health(request: Request):
         "status": "healthy",
         "version": stamp.get("version"),
         "git_sha": stamp.get("git_sha"),
+    })
+
+
+def _log_filter(value: Optional[str], field: str, limit: int = 200) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) > limit:
+        raise HTTPException(status_code=400, detail=f"{field} en çok {limit} karakter olabilir.")
+    return text
+
+
+@router.get("/platform/admin-v1/system/logs")
+async def admin_v1_system_logs(
+    request: Request,
+    category: Optional[str] = Query(None),
+    event: Optional[str] = Query(None),
+    email: Optional[str] = Query(None),
+    level: Optional[str] = Query(None),
+    company_id: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    before_id: Optional[int] = Query(None, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=100_000),
+):
+    """Sistem logu. Yeniden eskiye; offset sayfa, before_id daha eski kuyruk.
+
+    applog.query_log_page (/system/logs ile aynı sorgu). Yazma yok.
+    """
+    await _auth(request, store.SCOPE_ADMIN_SYSTEM_READ)
+    page = applog.query_log_page(
+        category=_log_filter(category, "category"),
+        event=_log_filter(event, "event"),
+        user_email=_log_filter(email, "email"),
+        level=_log_filter(level, "level", 32),
+        company_id=_log_filter(company_id, "company_id"),
+        q=_log_filter(q, "q"),
+        before_id=before_id,
+        limit=limit,
+        offset=offset,
+    )
+    items = page["items"]
+    next_before_id = items[-1].get("id") if len(items) == limit and items[-1].get("id") is not None else None
+    return _redact({
+        "items": items,
+        "limit": limit,
+        "offset": offset,
+        "total": page["total"],
+        "before_id": before_id,
+        "next_before_id": next_before_id,
     })
 
 
