@@ -331,6 +331,51 @@ def test_pool_lru_idle_and_open_failure(monkeypatch, tmp_path, caplog):
     assert not storage_dedicated.is_open("co_bad")
 
 
+def test_overlong_doc_id_and_company_id_name_the_field(monkeypatch, tmp_path):
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    try:
+        path = tmp_path / "uzun.db"
+        dsn = f"sqlite:///{path}"
+        _migrate(dsn)
+        db = MemDB()
+
+        async def run():
+            await db.companies.insert_one({
+                "_id": CO_A,
+                "storage_mode": "dedicated",
+                "dedicated_dsn_ref": storage_router.seal_dedicated_dsn(dsn),
+            })
+            coll = storage_dedicated.collection(db, CO_A, "products")
+            with pytest.raises(ValueError, match="doc_id") as long_id:
+                await coll.insert_one({"_id": "x" * 192, "company_id": CO_A, "name": "uzun"})
+            assert "191" in str(long_id.value)
+            assert "kesildi" not in str(long_id.value)
+            with pytest.raises(ValueError, match="company_id") as long_co:
+                await coll.insert_one({"_id": "p1", "company_id": "c" * 65, "name": "uzun"})
+            assert "64" in str(long_co.value)
+            assert "kesildi" not in str(long_co.value)
+            exact = "y" * 191
+            await coll.insert_one({"_id": exact, "company_id": "c" * 64, "name": "tam"})
+            with pytest.raises(ValueError, match="company_id") as updated:
+                await coll.update_one({"_id": exact}, {"$set": {"company_id": "c" * 65}})
+            assert "kesildi" not in str(updated.value)
+            found = await coll.find_one({"_id": exact})
+            assert found["name"] == "tam"
+            assert found["company_id"] == "c" * 64
+            assert await coll.find_one({"_id": "p1"}) is None
+
+        asyncio.run(run())
+        conn = sqlite3.connect(path)
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM storage_records").fetchone()[0]
+        finally:
+            conn.close()
+        assert count == 1
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
 def test_flag_off_keeps_legacy_collection(monkeypatch, tmp_path):
     previous, comm_service = _seal(monkeypatch, tmp_path)
     monkeypatch.delenv("STORAGE_ROUTER_ENABLED", raising=False)

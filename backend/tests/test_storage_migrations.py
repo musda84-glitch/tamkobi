@@ -239,6 +239,40 @@ def test_create_index_rerun_skips_existing_index():
         )
 
 
+def test_0003_and_0004_do_not_depend_on_each_other():
+    """0003 docs_v2 ve 0004 storage_records birbirinin tablosuna bakmaz.
+
+    Biri olmadan diğeri uygulanır. Sıra fark etmez; eksik olan sonra gelir.
+    """
+    pack = load_migrations()
+    by_version = _by_version(pack)
+    earlier = tuple(item for item in pack if item.version < 3)
+    v3 = by_version[3]
+    v4 = by_version[4]
+    text3 = "\n".join(v3.steps + v3.mysql_steps).lower()
+    text4 = "\n".join(steps_for(v4, "sqlite") + steps_for(v4, "mysql")).lower()
+    assert "storage_records" not in text3
+    assert "docs_v2" not in text4
+
+    only_v3 = _memory()
+    apply(only_v3, earlier + (v3,), confirm=True, dry_run=False)
+    assert "docs_v2" in only_v3.tables()
+    assert "storage_records" not in only_v3.tables()
+    added_v4 = apply(only_v3, confirm=True, dry_run=False)
+    assert added_v4.advanced == len(pack) - (len(earlier) + 1)
+    assert _view(added_v4.rows, 4).state == "uygulandı"
+    assert "storage_records" in only_v3.tables()
+
+    only_v4 = _memory()
+    apply(only_v4, earlier + (v4,), confirm=True, dry_run=False)
+    assert "storage_records" in only_v4.tables()
+    assert "docs_v2" not in only_v4.tables()
+    added_v3 = apply(only_v4, confirm=True, dry_run=False)
+    assert added_v3.advanced == len(pack) - (len(earlier) + 1)
+    assert _view(added_v3.rows, 3).state == "uygulandı"
+    assert "docs_v2" in only_v4.tables()
+
+
 def test_later_0003_applies_after_0004():
     session = _memory()
     pack = load_migrations()

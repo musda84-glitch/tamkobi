@@ -54,8 +54,10 @@ _POOL_MAX = "STORAGE_DEDICATED_POOL_MAX"
 _POOL_IDLE = "STORAGE_DEDICATED_POOL_IDLE_SECONDS"
 _MEMORY_ONLY = "Firma kipleri yalnız bellek kataloğundan okunur."
 _SEALED_MAX = 1024
-# 0004_storage_records. 0003 paralel shared_v2 paketinin numarasıdır.
+# 0004_storage_records. 0003 docs_v2 paketinden bağımsızdır.
 STORAGE_RECORDS_VERSION = 4
+_DOC_ID_MAX = 191
+_COMPANY_ID_MAX = 64
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
@@ -378,6 +380,36 @@ def _duplicate(exc: Exception) -> bool:
     return "duplicate" in text or "unique" in text
 
 
+def _stored_company_id(value):
+    """Üretilmiş company_id kolonuna yazılacak metin. Yoksa None."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(value)
+    try:
+        return dumps(value)
+    except Exception:
+        return str(value)
+
+
+def _reject_field_lengths(doc_id, doc) -> None:
+    """Strict modda VARCHAR taşması 1406 olur. Yazmadan önce alan adıyla reddet."""
+    ident = "" if doc_id is None else str(doc_id)
+    if len(ident) > _DOC_ID_MAX:
+        raise ValueError(f"doc_id en fazla {_DOC_ID_MAX} karakter olabilir.")
+    if not isinstance(doc, dict):
+        return
+    stored = _stored_company_id(doc.get("company_id"))
+    if stored is not None and len(stored) > _COMPANY_ID_MAX:
+        raise ValueError(f"company_id en fazla {_COMPANY_ID_MAX} karakter olabilir.")
+
+
 def _upsert_sql(dialect: str) -> str:
     if dialect == "mysql":
         return "REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
@@ -417,6 +449,10 @@ class DedicatedCollection(StorageCollection):
                     pass
                 raise
             except (DuplicateKeyError, ValueError):
+                try:
+                    session.rollback()
+                except Exception:
+                    pass
                 raise
             except Exception as exc:
                 try:
@@ -447,6 +483,7 @@ class DedicatedCollection(StorageCollection):
         body = dict(doc)
         if not body.get("_id"):
             body["_id"] = str(uuid.uuid4())
+        _reject_field_lengths(body["_id"], body)
         session.execute(
             _upsert_sql(session.dialect),
             (self.name, str(body["_id"]), dumps(body)),
@@ -515,6 +552,7 @@ class DedicatedCollection(StorageCollection):
         body = copy.deepcopy(doc or {})
         if not body.get("_id"):
             body["_id"] = str(uuid.uuid4())
+        _reject_field_lengths(body["_id"], body)
 
         def work(session):
             try:

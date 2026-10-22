@@ -1,4 +1,5 @@
--- Dedicated belge deposu. İndeksli kolonlar VARCHAR, belge LONGTEXT.
+-- Dedicated belge deposu. 0003 ile tablo paylaşmaz; sıra bağımsızdır.
+-- İndeksli kolonlar VARCHAR, belge LONGTEXT. doc_id 191, company_id 64.
 CREATE TABLE IF NOT EXISTS storage_records (
   collection VARCHAR(128) NOT NULL,
   doc_id VARCHAR(191) NOT NULL,
