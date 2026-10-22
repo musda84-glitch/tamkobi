@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 
+import storage_router
 import tenant_access
 from tenant_scope import (
     TenantScope,
@@ -371,8 +372,12 @@ class TenantDB:
         self.scope = scope
 
     def _collection(self, name: str):
+        # Bayrak kapalıyken (varsayılan) bugünkü yol: doğrudan self._db[name].
+        if storage_router.enabled():
+            raw = storage_router.legacy_collection(self._db, self.scope.company_id, name)
+        else:
+            raw = self._db[name]
         kind = collection_kind(name)
-        raw = self._db[name]
         if kind in ("tenant", "unknown"):
             return ScopedCollection(raw, self.scope)
         if kind == "membership":
@@ -426,6 +431,8 @@ async def get_tenant_db(request: Request):
     user = await _load_user(request)
     requested = request.query_params.get("company_id") if request is not None else None
     scope = _scope_for_user(user, requested)
+    if storage_router.enabled():
+        await storage_router.load_mode(_db, scope.company_id)
     token = bind(scope)
     try:
         yield TenantDB(_db, scope)
@@ -449,6 +456,8 @@ async def for_company(cid: str, reason: str):
         actor_id="",
         reason=why,
     )
+    if storage_router.enabled():
+        await storage_router.load_mode(_db, text)
     token = bind(scope)
     try:
         yield TenantDB(_db, scope)
@@ -471,6 +480,8 @@ async def from_b2b_contact(contact: Optional[dict]):
         reason="b2b",
         contact_id=contact_id,
     )
+    if storage_router.enabled():
+        await storage_router.load_mode(_db, cid)
     token = bind(scope)
     try:
         yield TenantDB(_db, scope)
