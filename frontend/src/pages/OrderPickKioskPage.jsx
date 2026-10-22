@@ -433,7 +433,7 @@ export default function OrderPickKioskPage() {
           className="w-16 text-lg font-black text-center border-2 border-slate-300 rounded-xl px-2 py-3"
           data-testid="pick-scan-qty"
         />
-        <ScanButton onScan={(t) => scan(t)} continuous title="Sipariş barkodu" label="Kamera" className="!py-3" />
+        <ScanButton onScan={(t) => scan(t)} title="Barkod okut" label="Kamera" className="!py-3" />
         <button type="submit" disabled={busy} className="px-4 bg-emerald-600 text-white rounded-xl font-bold" data-testid="pick-scan-btn">Okut</button>
       </form>
       ) : (

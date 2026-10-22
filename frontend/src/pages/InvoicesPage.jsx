@@ -2750,7 +2750,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               )}
               <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
                 <span className="font-bold text-slate-900">Kalemler</span>
-                <ScanButton size="sm" onScan={handleScanAddItem} continuous title="Barkodla Kalem Ekle" label="Barkodla Ekle" />
+                <ScanButton size="sm" onScan={handleScanAddItem} title="Barkod okut" label="Barkodla Ekle" />
               </div>
             </div>
             </div>

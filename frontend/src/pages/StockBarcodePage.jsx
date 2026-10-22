@@ -1248,8 +1248,8 @@ export default function StockBarcodePage() {
 
               <p className="text-slate-500">
                 {scanSaleMode === "retail"
-                  ? "Barkodu okutun; peşin perakende satış faturası oluşturulur (stok düşer). Seri okumada adet çarpan veya 5*barkod kullanın."
-                  : "Barkodu okutun; seçilen cariye satış faturası işlenir (stok + bakiye). Seri okumada adet çarpan veya 5*barkod kullanın."}
+                  ? "Barkodu okutun; peşin perakende satış faturası oluşturulur (stok düşer). Dokununca tek, basılı tutunca seri okunur; adet çarpan veya 5*barkod kullanın."
+                  : "Barkodu okutun; seçilen cariye satış faturası işlenir (stok + bakiye). Dokununca tek, basılı tutunca seri okunur; adet çarpan veya 5*barkod kullanın."}
               </p>
 
               <div className="flex flex-wrap gap-2 items-end">
@@ -1287,13 +1287,12 @@ export default function StockBarcodePage() {
                   Sorgula
                 </button>
                 <ScanButton
-                  continuous
                   qtyEnabled
                   qty={scanMult}
                   onQtyChange={setScanMult}
                   onScan={(code) => { setScannedBarcode(code); handleScanBarcode(code); }}
-                  title="Seri kamera okuma — adet çarpan"
-                  label="Seri"
+                  title="Barkod okut"
+                  label="Okut"
                 />
               </div>
 

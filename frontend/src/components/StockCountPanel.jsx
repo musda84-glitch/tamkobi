@@ -121,8 +121,7 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
                     data-testid="stock-count-scan-qty"
                   />
                   <button type="submit" className="px-4 py-2 bg-violet-600 text-white rounded-xl text-xs font-semibold" data-testid="stock-count-scan-btn">Okut (+{qty})</button>
-                  <ScanButton onScan={scanCode} continuous qtyEnabled qty={scanQty} onQtyChange={setScanQty} title="Sayım: Seri kamera okuma" label="Seri" />
-                  <ScanButton onScan={scanCode} qtyEnabled qty={scanQty} onQtyChange={setScanQty} title="Sayım: Tek kamera okuma" label="Kamera" />
+                  <ScanButton onScan={scanCode} qtyEnabled qty={scanQty} onQtyChange={setScanQty} title="Sayım — barkod okut" label="Okut" />
                 </form>
               )}
               <div className="flex gap-1 text-[11px]">{[["all", "Tümü"], ["scanned", "Sayılan"], ["pending", "Sayılmayan"], ["diff", "Farklı"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-2.5 py-1 rounded-lg font-semibold ${filter === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`count-filter-${k}`}>{l}</button>)}</div>
