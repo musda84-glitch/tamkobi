@@ -72,7 +72,9 @@ describe("platformNotices", () => {
     expect(isUpdateTransportError({ response: { status: 503 } })).toBe(true);
     expect(isUpdateTransportError({ response: { status: 502 } })).toBe(true);
     expect(isUpdateTransportError({ code: "ERR_NETWORK", message: "Network Error" })).toBe(true);
+    expect(isUpdateTransportError({ message: "Failed to fetch" })).toBe(true);
     expect(isUpdateTransportError({ response: { status: 400 } })).toBe(false);
+    expect(isUpdateTransportError({ code: "ERR_CANCELED", name: "CanceledError", message: "Network Error", __CANCEL__: true })).toBe(false);
   });
 
   test("countdown helpers and transport/done notices", () => {

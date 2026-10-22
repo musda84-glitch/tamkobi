@@ -20,6 +20,7 @@ import platform_store as store
 import public_sites
 import rbac
 import saas
+import saas_billing
 import storage_service
 import support_tickets
 from platform_admin_v1 import _auth, _item, _redact
@@ -39,7 +40,7 @@ _HELP_FIELDS = (
     "status", "featured", "sort", "assistant",
 )
 _SITE_FIELDS = ("brand_name", "active", "theme")
-_SITE_CONTENT_FIELDS = ("pages", "services", "references", "products")
+_SITE_CONTENT_FIELDS = ("pages", "services", "references", "products", "faq", "demo_video", "features")
 _MAINT_FIELDS = (
     "enabled", "notify_popup", "notify_sms", "title", "body", "starts_at", "ends_at",
     "support_email", "support_phone", "audience", "company_ids",
@@ -209,6 +210,30 @@ async def admin_v1_site_content(slug: str, request: Request):
 async def admin_v1_site_inquiries(slug: str, request: Request):
     await _auth(request, store.SCOPE_ADMIN_CMS_READ)
     return _redact(await public_sites.list_inquiries(slug, {}))
+
+
+@router.post("/platform/admin-v1/reminders/run")
+async def admin_v1_reminders_run(request: Request):
+    """Eski /system/reminders/run. Lisans bitiş hatırlatmalarını şimdi çalıştırır."""
+
+    async def prepare(payload: Dict[str, Any]) -> List[str]:
+        _reject_unknown(payload, ())
+        return ["run"]
+
+    async def apply(payload: Dict[str, Any], key_doc: dict):
+        result = await saas_billing.run_reminders()
+        count = int(result.get("count") or 0)
+        item = {
+            "count": count,
+            "checked_at": result.get("checked_at"),
+            "sent": result.get("sent") or [],
+        }
+        return _item(item), {"fields": ["run"], "idempotency": True, "count": count}
+
+    return await _write(
+        request, store.SCOPE_ADMIN_REMINDERS_WRITE, "platform", "reminders",
+        apply, op="reminders.run", action="admin_v1.write.reminders.run", prepare=prepare,
+    )
 
 
 @router.get("/platform/admin-v1/help/articles")

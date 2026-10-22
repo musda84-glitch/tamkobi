@@ -5,10 +5,10 @@ import { useAuth } from "../context/AuthContext";
 import { PlatformNoticeModal } from "./PlatformNoticeModal";
 import {
   dismissNotice,
-  isUpdateTransportError,
   makeTransportNotice,
   pickVisibleNotice,
 } from "../utils/platformNotices";
+import { considerTransportFailure } from "../utils/transportOutage";
 import { activeCompanyId } from "../utils/activeCompanyId";
 
 const POLL_MS = 60_000;
@@ -37,6 +37,13 @@ export function PlatformNoticesHost({ disabled = false }) {
     setTransportNotice(null);
   }, []);
 
+  const reportTransport = useCallback((err) => {
+    if (transportRef.current) return;
+    considerTransportFailure(err, () => {
+      if (!transportRef.current) showTransport(makeTransportNotice());
+    });
+  }, [showTransport]);
+
   const refresh = useCallback(async () => {
     if (disabled) return;
     try {
@@ -47,11 +54,9 @@ export function PlatformNoticesHost({ disabled = false }) {
       clearTransport();
       setPayload(r.data);
     } catch (err) {
-      if (isUpdateTransportError(err)) {
-        if (!transportRef.current) showTransport(makeTransportNotice());
-      }
+      reportTransport(err);
     }
-  }, [disabled, companyId, clearTransport, showTransport]);
+  }, [disabled, companyId, clearTransport, reportTransport]);
 
   const fromApi = pickVisibleNotice(payload);
   const showingActive = !!(transportNotice || (fromApi && fromApi.activeUpdate));
@@ -67,10 +72,7 @@ export function PlatformNoticesHost({ disabled = false }) {
   useEffect(() => {
     if (disabled) return undefined;
     const onErr = (ev) => {
-      const err = ev?.detail || ev;
-      if (isUpdateTransportError(err)) {
-        if (!transportRef.current) showTransport(makeTransportNotice());
-      }
+      reportTransport(ev?.detail || ev);
     };
     // ChunkLoadError: sessizce yenile — "Güncelleme Tamamlandı" popup’ı açma
     const onChunk = (ev) => {
@@ -93,7 +95,7 @@ export function PlatformNoticesHost({ disabled = false }) {
       window.removeEventListener("tamkobi:api-error", onErr);
       window.removeEventListener("unhandledrejection", onChunk);
     };
-  }, [disabled, showTransport]);
+  }, [disabled, reportTransport]);
 
   if (disabled) return null;
 

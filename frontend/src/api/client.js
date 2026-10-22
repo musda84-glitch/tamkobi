@@ -2,11 +2,13 @@
 /** Shared API origin. Import this module once from index.js so every axios call sends cookies. */
 import axios from "axios";
 import { isUpdateTransportError } from "../utils/platformNotices";
+import { installPageUnloadGuard, shouldIgnoreTransportError } from "../utils/transportOutage";
 
 export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 export const API_URL = `${BACKEND_URL}/api`;
 
 axios.defaults.withCredentials = true;
+installPageUnloadGuard();
 
 /** 502/503/ağ hatalarında hata sayfası yerine güncelleme bilgisini tetikle. */
 if (typeof window !== "undefined" && !axios.__tamkobiNoticeInterceptor) {
@@ -15,7 +17,8 @@ if (typeof window !== "undefined" && !axios.__tamkobiNoticeInterceptor) {
     (res) => res,
     (err) => {
       try {
-        if (isUpdateTransportError(err)) {
+        // Kapanış ve iptal: olay yok. Modal kararı host'ta, ağ hatasında /api/version sorulur.
+        if (!shouldIgnoreTransportError(err) && isUpdateTransportError(err)) {
           window.dispatchEvent(new CustomEvent("tamkobi:api-error", { detail: err }));
         }
       } catch {

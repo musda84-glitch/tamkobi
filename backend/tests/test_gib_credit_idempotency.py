@@ -65,10 +65,12 @@ class _Rows:
 
 
 class _Ledger:
-    def __init__(self, docs=None, *, blind_find=False):
+    def __init__(self, docs=None, *, blind_find=False, unique_consume=True):
         self.docs = [dict(row) for row in (docs or [])]
         self.blind_find = blind_find
+        self.unique_consume = unique_consume
         self.index = None
+        self.deleted = []
 
     def find(self, query=None, projection=None):
         query = query or {}
@@ -88,7 +90,7 @@ class _Ledger:
     async def insert_one(self, doc):
         if any(row.get("_id") == doc.get("_id") for row in self.docs):
             raise DuplicateKeyError("duplicate id")
-        if doc.get("type") == "consume" and str(doc.get("invoice_id") or "").strip():
+        if self.unique_consume and doc.get("type") == "consume" and str(doc.get("invoice_id") or "").strip():
             for row in self.docs:
                 if (
                     row.get("type") == "consume"
@@ -98,14 +100,53 @@ class _Ledger:
                     raise DuplicateKeyError("duplicate consume")
         self.docs.append(dict(doc))
 
+    async def delete_one(self, query):
+        query = query or {}
+        kept = []
+        removed = 0
+        for row in self.docs:
+            if query and all(row.get(key) == value for key, value in query.items()):
+                self.deleted.append(dict(row))
+                removed += 1
+                continue
+            kept.append(row)
+        self.docs = kept
+        return type("Del", (), {"deleted_count": removed})()
+
     async def create_index(self, keys, unique=False, **kwargs):
         self.index = {"keys": keys, "unique": unique, **kwargs}
+
+
+class _ArriveLedger(_Ledger):
+    """İkinci yazıcı gelene kadar ilk insert bekler; aynı fatura yarışını zorlar."""
+
+    def __init__(self, docs=None, *, parties=2, **kwargs):
+        super().__init__(docs, **kwargs)
+        self.parties = parties
+        self.arrived = 0
+        self._gate = asyncio.Event()
+
+    async def insert_one(self, doc):
+        self.arrived += 1
+        if self.arrived < self.parties:
+            await self._gate.wait()
+        else:
+            self._gate.set()
+            await asyncio.sleep(0)
+        return await super().insert_one(doc)
+
+
+class _WriteResult:
+    def __init__(self, matched_count):
+        self.matched_count = matched_count
+        self.modified_count = matched_count
 
 
 class _Wallets:
     def __init__(self, doc):
         self.doc = dict(doc)
         self.updates = []
+        self.low = int(doc.get("balance") or 0)
 
     async def find_one(self, query=None):
         if (query or {}).get("_id") == self.doc.get("_id"):
@@ -117,21 +158,54 @@ class _Wallets:
 
     async def update_one(self, query, update, upsert=False):
         if (query or {}).get("_id") != self.doc.get("_id"):
-            return
+            return _WriteResult(0)
+        balance_cond = (query or {}).get("balance")
+        if isinstance(balance_cond, dict) and "$gte" in balance_cond:
+            if int(self.doc.get("balance") or 0) < int(balance_cond["$gte"]):
+                return _WriteResult(0)
         inc = int(((update or {}).get("$inc") or {}).get("balance") or 0)
         self.doc["balance"] = int(self.doc.get("balance") or 0) + inc
+        self.low = min(self.low, int(self.doc["balance"]))
         self.updates.append(update)
+        return _WriteResult(1)
+
+
+class _ArriveWallets(_Wallets):
+    """Düşüm güncellemesi iki çağrı da ledger yazdıktan sonra sıraya girer."""
+
+    def __init__(self, doc, *, parties=2):
+        super().__init__(doc)
+        self.parties = parties
+        self.arrived = 0
+        self._gate = asyncio.Event()
+
+    async def update_one(self, query, update, upsert=False):
+        inc = int(((update or {}).get("$inc") or {}).get("balance") or 0)
+        if inc < 0:
+            self.arrived += 1
+            if self.arrived < self.parties:
+                await self._gate.wait()
+            else:
+                self._gate.set()
+                await asyncio.sleep(0)
+        return await super().update_one(query, update, upsert)
+
+
+class _PlatformSettings:
+    async def find_one(self, query=None):
+        return {}
 
 
 class _DB:
     def __init__(self, wallet, ledger):
         self.gib_wallets = wallet
         self.gib_credit_ledger = ledger
+        self.platform_settings = _PlatformSettings()
 
 
-def _bind_wallet(balance=5, *, blind_find=False, ledger_docs=None):
+def _bind_wallet(balance=5, *, blind_find=False, ledger_docs=None, unique_consume=True):
     wallet = _Wallets({"_id": WALLET, "balance": balance})
-    ledger = _Ledger(ledger_docs, blind_find=blind_find)
+    ledger = _Ledger(ledger_docs, blind_find=blind_find, unique_consume=unique_consume)
     db = _DB(wallet, ledger)
     gib_credits.init(db)
     return db
@@ -177,6 +251,7 @@ def test_consume_same_invoice_drops_balance_once():
     assert first == 4
     assert second == 4
     assert len(consumes) == 1
+    assert consumes[0]["_id"] == gib_credits._bounded_id("consume", f"{COMP}|{INV}")
     assert db.gib_wallets.doc["balance"] == 4
     assert len(db.gib_wallets.updates) == 1
     assert db.gib_credit_ledger.index["unique"] is True
@@ -198,6 +273,85 @@ def test_consume_duplicate_key_does_not_decrement_again():
     assert second == 4
     assert len(consumes) == 1
     assert db.gib_wallets.doc["balance"] == 4
+
+
+def test_concurrent_resend_of_same_invoice_drops_once():
+    wallet = _Wallets({"_id": WALLET, "balance": 5})
+    ledger = _ArriveLedger(unique_consume=False)
+    gib_credits.init(_DB(wallet, ledger))
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            return await asyncio.wait_for(
+                asyncio.gather(
+                    gib_credits.consume(COMP, 1, invoice_id=INV, note="resend"),
+                    gib_credits.consume(COMP, 1, invoice_id=INV, note="resend"),
+                ),
+                timeout=2,
+            )
+
+    first, second = _run(go())
+    consumes = [row for row in ledger.docs if row.get("type") == "consume"]
+    assert first == 4
+    assert second == 4
+    assert len(consumes) == 1
+    assert consumes[0]["_id"] == gib_credits._bounded_id("consume", f"{COMP}|{INV}")
+    assert wallet.doc["balance"] == 4
+    assert wallet.low >= 0
+    assert len(wallet.updates) == 1
+
+
+def test_concurrent_different_invoices_do_not_go_negative():
+    wallet = _ArriveWallets({"_id": WALLET, "balance": 1})
+    ledger = _Ledger(unique_consume=False)
+    gib_credits.init(_DB(wallet, ledger))
+    inv_a = "inv_race_a_3a32"
+    inv_b = "inv_race_b_3a32"
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            return await asyncio.wait_for(
+                asyncio.gather(
+                    gib_credits.consume(COMP, 1, invoice_id=inv_a),
+                    gib_credits.consume(COMP, 1, invoice_id=inv_b),
+                    return_exceptions=True,
+                ),
+                timeout=2,
+            )
+
+    left, right = _run(go())
+    errors = [item for item in (left, right) if isinstance(item, HTTPException)]
+    oks = [item for item in (left, right) if not isinstance(item, Exception)]
+    consumes = [row for row in ledger.docs if row.get("type") == "consume"]
+    assert oks == [0]
+    assert len(errors) == 1
+    assert errors[0].status_code == 402
+    assert "yetersiz" in errors[0].detail
+    assert len(consumes) == 1
+    assert wallet.doc["balance"] == 0
+    assert wallet.low >= 0
+    assert len(ledger.deleted) == 1
+    assert ledger.deleted[0]["invoice_id"] != consumes[0]["invoice_id"]
+
+
+def test_same_invoice_not_double_charged_without_unique_index():
+    db = _bind_wallet(5, blind_find=True, unique_consume=False)
+
+    async def go():
+        with patch.object(saas, "license_id_of", new=AsyncMock(return_value=WALLET)):
+            first = await gib_credits.consume(COMP, 1, invoice_id=INV)
+            second = await gib_credits.consume(COMP, 1, invoice_id=INV)
+            return first, second
+
+    first, second = _run(go())
+    consumes = [row for row in db.gib_credit_ledger.docs if row.get("type") == "consume"]
+    assert first == 4
+    assert second == 4
+    assert len(consumes) == 1
+    assert consumes[0]["_id"] == gib_credits._bounded_id("consume", f"{COMP}|{INV}")
+    assert db.gib_wallets.doc["balance"] == 4
+    assert db.gib_wallets.low >= 0
+    assert len(db.gib_wallets.updates) == 1
 
 
 def _issue_db(inv, settings):

@@ -393,6 +393,24 @@ async def _existing_consume(company_id: str, invoice_id: str):
     return row if isinstance(row, dict) else None
 
 
+async def _insufficient_credits(bal: int, credits: int) -> HTTPException:
+    if await sales_enabled():
+        hint = "Hesap → GİB Kontör ekranından paket satın alın."
+    else:
+        hint = "Platform yöneticinizden kontör yüklemesi isteyin."
+    return HTTPException(
+        status_code=402,
+        detail=f"GİB kontörünüz yetersiz ({bal} kalan, {credits} gerekli). {hint}",
+    )
+
+
+async def _rollback_consume_ledger(ledger_id: str) -> None:
+    try:
+        await _db.gib_credit_ledger.delete_one({"_id": ledger_id})
+    except Exception:
+        logger.exception("consume ledger rollback failed")
+
+
 async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str] = None, note: str = "") -> int:
     if credits <= 0:
         return 0
@@ -403,16 +421,9 @@ async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str
     if invoice_key and await _existing_consume(company_id, invoice_key):
         return bal
     if bal < credits:
-        if await sales_enabled():
-            hint = "Hesap → GİB Kontör ekranından paket satın alın."
-        else:
-            hint = "Platform yöneticinizden kontör yüklemesi isteyin."
-        raise HTTPException(
-            status_code=402,
-            detail=f"GİB kontörünüz yetersiz ({bal} kalan, {credits} gerekli). {hint}",
-        )
+        raise await _insufficient_credits(bal, credits)
     ledger = {
-        "_id": str(uuid.uuid4()),
+        "_id": _bounded_id("consume", f"{company_id}|{invoice_key}") if invoice_key else str(uuid.uuid4()),
         "wallet_id": w["_id"],
         "company_id": company_id,
         "type": "consume",
@@ -427,11 +438,16 @@ async def consume(company_id: str, credits: int = 1, *, invoice_id: Optional[str
     except _DUP_ERRORS:
         fresh = await get_wallet(company_id)
         return int(fresh.get("balance") or 0)
-    await _db.gib_wallets.update_one(
-        {"_id": w["_id"]},
+    wrote = await _db.gib_wallets.update_one(
+        {"_id": w["_id"], "balance": {"$gte": credits}},
         {"$inc": {"balance": -credits}, "$set": {"updated_at": _now()}},
     )
-    remaining = bal - credits
+    if int(getattr(wrote, "matched_count", 0) or 0) < 1:
+        await _rollback_consume_ledger(ledger["_id"])
+        fresh = await get_wallet(company_id)
+        raise await _insufficient_credits(int((fresh or {}).get("balance") or 0), credits)
+    fresh = await _db.gib_wallets.find_one({"_id": w["_id"]}) or {}
+    remaining = int(fresh.get("balance") or 0)
     try:
         import event_notify
         await event_notify.maybe_gib_credits_low(company_id, remaining)

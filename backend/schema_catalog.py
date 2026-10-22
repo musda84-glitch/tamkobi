@@ -118,8 +118,8 @@ COLLECTIONS = {
     },
     "site_content": {
         "scope": SCOPE_PLATFORM,
-        "description": "Kurumsal site metinleri, hizmet kartları, referanslar ve iletişim bilgisi.",
-        "keys": ("_id", "site_id", "pages", "services", "references", "products"),
+        "description": "tamkobi ve tai site metinleri: sayfalar, kartlar, SSS, demo videosu ve özellik satırları.",
+        "keys": ("_id", "site_id", "pages", "services", "references", "products", "faq", "demo_video", "features"),
         "refs": ("sites._id",),
     },
     "site_inquiries": {
@@ -731,7 +731,7 @@ COLLECTIONS = {
     },
     "whatsapp_settings": {
         "scope": SCOPE_TENANT,
-        "description": "WhatsApp Cloud API ayarları.",
+        "description": "WhatsApp Cloud API ayarları. phone_number_id boş olmayan string için kısmi tekil indeks; boş kayıtlar indekse girmez.",
         "keys": ("_id", "company_id", "phone_number_id", "verify_token"),
         "refs": ("companies._id",),
     },
@@ -950,7 +950,7 @@ COLLECTIONS = {
     "personnel_receipts": {
         "scope": SCOPE_TENANT,
         "description": "Personel ödeme fişi: satır toplamı ve kalan.",
-        "keys": ("_id", "company_id", "employee_id", "period", "date", "lines", "total", "status"),
+        "keys": ("_id", "company_id", "employee_id", "receipt_no", "period", "date", "lines", "total", "status"),
         "refs": ("companies._id", "employees._id"),
     },
     "shopfloor_pin_attempts": {

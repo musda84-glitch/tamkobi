@@ -116,6 +116,96 @@ def test_soap_url_follows_mode():
     assert isnet.soap_url({"mode": "live"}) == isnet.LIVE_SOAP
 
 
+def test_empty_stored_urls_keep_official_isnet_endpoints():
+    """Boş api/e-Fatura/e-Arşiv alanları resmi SOAP adresinin yerine geçmez."""
+    settings = {"mode": "live", "api_url": "", "efatura_url": "", "earsiv_url": "   "}
+    assert isnet.soap_url(settings) == (
+        "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
+    )
+    assert isnet.address_book_url(settings) == (
+        "https://einvoiceservice.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
+    )
+    assert isnet.api_base(settings) == isnet.LIVE_API
+
+
+def test_einvoice_source_ip_from_env(monkeypatch):
+    monkeypatch.delenv("EINVOICE_SOURCE_IP", raising=False)
+    monkeypatch.delenv("ISNET_SOURCE_IP", raising=False)
+    assert isnet.einvoice_source_ip() == ""
+
+    monkeypatch.setenv("ISNET_SOURCE_IP", "85.95.240.184")
+    assert isnet.einvoice_source_ip() == "85.95.240.184"
+
+    monkeypatch.setenv("EINVOICE_SOURCE_IP", "85.95.240.184")
+    monkeypatch.setenv("ISNET_SOURCE_IP", "85.95.240.136")
+    assert isnet.einvoice_source_ip() == "85.95.240.184"
+
+    monkeypatch.setenv("EINVOICE_SOURCE_IP", "not-an-ip")
+    assert isnet.einvoice_source_ip() == ""
+
+    monkeypatch.setenv("EINVOICE_SOURCE_IP", "85.95.240.999")
+    assert isnet.einvoice_source_ip() == ""
+
+
+def _soap_client_mock():
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
+    return client
+
+
+def test_soap_call_binds_configured_source_ip(monkeypatch):
+    monkeypatch.setenv("EINVOICE_SOURCE_IP", "85.95.240.184")
+    monkeypatch.delenv("ISNET_SOURCE_IP", raising=False)
+    transport_kwargs = {}
+
+    def _transport(**kwargs):
+        transport_kwargs.update(kwargs)
+        return MagicMock(name="transport")
+
+    client = _soap_client_mock()
+    with patch("isnet.httpx.AsyncHTTPTransport", side_effect=_transport), patch(
+        "isnet.httpx.AsyncClient", return_value=client
+    ) as ctor:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                isnet._soap_call(
+                    {"mode": "live"},
+                    endpoint=isnet.LIVE_ADDRESS_BOOK,
+                    action="GetTaxPayer",
+                    service_interface="IAddressBookService",
+                    request={"TaxPayerTaxCode": "3680486408"},
+                )
+            )
+    assert exc.value.status_code == 502
+    assert exc.value.detail == "Entegratör SOAP'a ulaşılamadı."
+    assert transport_kwargs["local_address"] == "85.95.240.184"
+    assert ctor.call_args.kwargs["transport"] is not None
+    assert client.post.await_args.args[0] == isnet.LIVE_ADDRESS_BOOK
+
+
+def test_soap_call_uses_default_route_without_source_ip(monkeypatch):
+    monkeypatch.delenv("EINVOICE_SOURCE_IP", raising=False)
+    monkeypatch.delenv("ISNET_SOURCE_IP", raising=False)
+    client = _soap_client_mock()
+    with patch("isnet.httpx.AsyncHTTPTransport") as transport, patch(
+        "isnet.httpx.AsyncClient", return_value=client
+    ) as ctor:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                isnet._soap_call(
+                    {"mode": "live"},
+                    endpoint=isnet.LIVE_SOAP,
+                    action="HealthCheck",
+                    service_interface="IInvoiceService",
+                )
+            )
+    assert exc.value.detail == "Entegratör SOAP'a ulaşılamadı."
+    transport.assert_not_called()
+    assert "transport" not in ctor.call_args.kwargs
+
+
 def test_connection_requires_vkn_and_alias():
     with pytest.raises(HTTPException) as e:
         asyncio.get_event_loop().run_until_complete(
@@ -1686,7 +1776,9 @@ def test_endpoints_match_official_isnet_docs():
     assert isnet.TEST_ADDRESS_BOOK == (
         "https://einvoiceservicetest.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
     )
-    assert "AddressBookService" in isnet.LIVE_ADDRESS_BOOK
+    assert isnet.LIVE_ADDRESS_BOOK == (
+        "https://einvoiceservice.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
+    )
     assert isnet.TEST_API == "https://einvoiceapitest.isnet.net.tr"
     assert isnet.LIVE_API == "https://einvoiceapi.isnet.net.tr"
     assert isnet.TEST_PORTAL == "https://efatura.isnet.net.tr"

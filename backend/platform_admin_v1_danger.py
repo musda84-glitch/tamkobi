@@ -68,17 +68,56 @@ def _ttl_minutes(payload: Dict[str, Any]) -> int:
     return value
 
 
+def _email_key(value: Any) -> str:
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+_USER_BY_LOWER_EMAIL_SQL = (
+    "SELECT doc FROM docs "
+    "WHERE collection=%s "
+    "AND LOWER(TRIM(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.email')))) = %s "
+    "LIMIT 1"
+)
+
+
+async def _find_user_by_email(raw: str):
+    """Login ve kullanıcı oluşturma strip().lower() yazar.
+
+    Tek sorgu: LOWER(TRIM(email)) = strip().lower(). Belgedeki e-posta
+    olduğu gibi döner; sonraki OTP sorgusu onu birebir arar.
+    """
+    lowered = _email_key(raw)
+    if not lowered:
+        return None
+    coll = saas._db.users
+    from mysql_store import MySQLCollection
+
+    if isinstance(coll, MySQLCollection):
+        rows = await coll._load_sql(_USER_BY_LOWER_EMAIL_SQL, ["users", lowered])
+        return rows[0] if rows else None
+    docs = getattr(coll, "docs", None)
+    if isinstance(docs, dict):
+        for row in docs.values():
+            if isinstance(row, dict) and _email_key(row.get("email")) == lowered:
+                return row
+        return None
+    return await coll.find_one({"email": lowered})
+
+
 async def _operator_or_403(payload: Dict[str, Any]) -> str:
     if "operator_email" not in payload:
         raise HTTPException(status_code=400, detail="operator_email zorunlu.")
     email = payload["operator_email"]
     if not isinstance(email, str) or not email.strip():
         raise HTTPException(status_code=400, detail="operator_email zorunlu.")
-    cleaned = email.strip()
-    user = await saas._db.users.find_one({"email": cleaned})
-    if not user or user.get("is_super_admin") is not True or user.get("is_active") is False:
+    user = await _find_user_by_email(email)
+    # is_super_admin eski kayıtlarda 1 olabilir; yalnız açık False pasif sayılır.
+    if not user or not user.get("is_super_admin") or user.get("is_active") is False:
         raise HTTPException(status_code=403, detail="Operatör yetkili değil.")
-    return cleaned
+    stored = user.get("email")
+    if not isinstance(stored, str) or not stored.strip():
+        raise HTTPException(status_code=403, detail="Operatör yetkili değil.")
+    return stored
 
 
 def _session_ttl_minutes(doc: dict) -> Optional[int]:

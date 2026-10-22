@@ -9,9 +9,9 @@ import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { serializeModuleKeys } from "../utils/modulePack";
 import { LegalFooterLinks } from "../components/LegalConsent";
 import { Seo, buildFaqJsonLd, buildOrgSoftwareJsonLd } from "../components/Seo";
-import { buildSiteFaq } from "../utils/siteFaq";
 import { billableCatalog, highlightModules } from "../utils/pricingHighlights";
 import { announceVitrinPreview } from "../utils/vitrinPreview";
+import { demoVideoEmbed, resolveVitrinContent } from "../utils/vitrinContent";
 
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 const lim = (n, unit) => (Number(n) > 0 ? `${tl(n)} ${unit}` : `Sınırsız ${unit}`);
@@ -40,11 +40,15 @@ export default function PricingPage() {
   const [picked, setPicked] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
+  const [siteContent, setSiteContent] = useState(null);
 
   useEffect(() => {
     axios.get(`${API_URL}/public/plans`)
       .then((r) => setD(r.data))
       .catch(() => setD({ plans: [], catalog: [], trial_days: 14, brand_name: "TamKobi" }));
+    axios.get(`${API_URL}/public/site?slug=tamkobi`)
+      .then((r) => setSiteContent(r.data?.slug === "tamkobi" ? (r.data.content || null) : null))
+      .catch(() => setSiteContent(null));
   }, []);
 
   useEffect(() => {
@@ -55,7 +59,9 @@ export default function PricingPage() {
   const plans = d?.plans || [];
   const catalog = d?.catalog || [];
   const trialDays = Number(d?.trial_days) > 0 ? Number(d.trial_days) : 14;
-  const faq = useMemo(() => buildSiteFaq(trialDays), [trialDays]);
+  const copy = useMemo(() => resolveVitrinContent(siteContent, trialDays), [siteContent, trialDays]);
+  const faq = copy.faq;
+  const video = useMemo(() => demoVideoEmbed(copy.videoUrl), [copy.videoUrl]);
   const billable = useMemo(() => billableCatalog(catalog), [catalog]);
   const wa = waDigits(d?.support_whatsapp || "");
   const publicUrl = (d?.public_url || "https://tamkobi.com").replace(/\/$/, "");
@@ -103,13 +109,20 @@ export default function PricingPage() {
       <section className="max-w-6xl mx-auto px-6 pt-10 pb-6">
         <div className="max-w-2xl">
           <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">{brand.toLocaleUpperCase("tr-TR")} · Bulut ERP</div>
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3">İşletmenizi tek panelden yönetin, <span className="text-emerald-400">ihtiyacınız kadar</span> ödeyin.</h1>
-          <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Hazır paketlerden birini seçin veya modülleri tek tek işaretleyerek kendi paketini oluşturun. {trialDays} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
+          {copy.useDefaultHero ? (
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3">İşletmenizi tek panelden yönetin, <span className="text-emerald-400">ihtiyacınız kadar</span> ödeyin.</h1>
+          ) : (
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3" data-testid="vitrin-hero-title">{copy.heroTitle}</h1>
+          )}
+          <p className="text-slate-400 text-sm sm:text-base mt-4" data-testid="vitrin-hero-text">{copy.heroText}</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-8 text-xs">
-          {[[FileText, "e-Fatura & cari"], [Warehouse, "Stok ve depo"], [Factory, "Üretim & e-ticaret"]].map(([I, t]) => (
-            <div key={t} className="flex items-center gap-2.5 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-slate-300"><I className="w-4 h-4 text-emerald-400" />{t}</div>
-          ))}
+          {copy.lines.map((t, i) => {
+            const I = [FileText, Warehouse, Factory][i % 3];
+            return (
+              <div key={`${t}-${i}`} className="flex items-center gap-2.5 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-slate-300"><I className="w-4 h-4 text-emerald-400" />{t}</div>
+            );
+          })}
         </div>
         <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-xl p-1 w-fit mt-8 text-xs">
           {[[false, "Aylık"], [true, "Yıllık · 2 ay hediye"]].map(([v, l]) => (
@@ -121,16 +134,36 @@ export default function PricingPage() {
       {/* Ürün görselleri / demo yer tutucuları — sahte müşteri yorumu yok */}
       <section className="max-w-6xl mx-auto px-6 pb-10" data-testid="media-placeholders">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="rounded-3xl border border-dashed border-white/20 bg-white/[0.03] p-8 min-h-[180px] flex flex-col items-center justify-center text-center" data-testid="screenshot-placeholder">
-            <ImageIcon className="w-8 h-8 text-slate-500 mb-2" />
-            <div className="text-sm font-bold text-slate-300">Ürün ekran görüntüsü</div>
-            <p className="text-[11px] text-slate-500 mt-1 max-w-xs">Buraya panel / fatura / stok ekran görüntüsü ekleyin (ör. public/brand/screenshots/).</p>
-          </div>
-          <div className="rounded-3xl border border-dashed border-white/20 bg-white/[0.03] p-8 min-h-[180px] flex flex-col items-center justify-center text-center" data-testid="demo-video-placeholder">
-            <PlayCircle className="w-8 h-8 text-slate-500 mb-2" />
-            <div className="text-sm font-bold text-slate-300">Demo videosu</div>
-            <p className="text-[11px] text-slate-500 mt-1 max-w-xs">YouTube / Vimeo bağlantısı veya gömülü oynatıcı için yer tutucu.</p>
-          </div>
+          {copy.image ? (
+            <div className="rounded-3xl border border-white/10 bg-white/[0.03] overflow-hidden min-h-[180px]" data-testid="screenshot-image">
+              <img src={copy.image} alt="" className="w-full h-full min-h-[180px] object-cover" />
+            </div>
+          ) : (
+            <div className="rounded-3xl border border-dashed border-white/20 bg-white/[0.03] p-8 min-h-[180px] flex flex-col items-center justify-center text-center" data-testid="screenshot-placeholder">
+              <ImageIcon className="w-8 h-8 text-slate-500 mb-2" />
+              <div className="text-sm font-bold text-slate-300">Ürün ekran görüntüsü</div>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-xs">Buraya panel / fatura / stok ekran görüntüsü ekleyin (ör. public/brand/screenshots/).</p>
+            </div>
+          )}
+          {video ? (
+            <div className="rounded-3xl border border-white/10 bg-white/[0.03] overflow-hidden min-h-[180px]" data-testid="demo-video">
+              {video.kind === "iframe" ? (
+                <iframe title="Demo videosu" src={video.src} className="w-full min-h-[180px] aspect-video border-0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+              ) : video.kind === "video" ? (
+                <video src={video.src} controls className="w-full min-h-[180px]" />
+              ) : (
+                <a href={video.href} target="_blank" rel="noopener noreferrer" className="min-h-[180px] flex flex-col items-center justify-center text-center p-8 text-sm font-bold text-emerald-300">
+                  <PlayCircle className="w-8 h-8 mb-2" /> Demo videosunu aç
+                </a>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-3xl border border-dashed border-white/20 bg-white/[0.03] p-8 min-h-[180px] flex flex-col items-center justify-center text-center" data-testid="demo-video-placeholder">
+              <PlayCircle className="w-8 h-8 text-slate-500 mb-2" />
+              <div className="text-sm font-bold text-slate-300">Demo videosu</div>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-xs">YouTube / Vimeo bağlantısı veya gömülü oynatıcı için yer tutucu.</p>
+            </div>
+          )}
         </div>
       </section>
 
