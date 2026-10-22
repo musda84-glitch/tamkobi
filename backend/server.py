@@ -20293,8 +20293,9 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
                     except HTTPException:
                         pass
                     except Exception as exc:
-                        if storage_router.enabled():
-                            storage_router.log_store_failure(cfg.get("company_id"), exc)
+                        if not storage_router.enabled():
+                            raise
+                        storage_router.log_store_failure(cfg.get("company_id"), exc)
         except Exception:
             logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         await _a.sleep(interval_s)
