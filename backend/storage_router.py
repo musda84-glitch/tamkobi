@@ -10,12 +10,13 @@ da aynı örnek yeniden okumaz ve gerçek sürücüde senkron hataya düşmez.
 senkron okuma yoksa bilinen eski kip kullanılır; o da yoksa legacy
 sayılır ve hata verilmez.
 
-Bu sürüm yalnız legacy arka ucunu tanır. shared_v2, dedicated ve
-bilinmeyen bir kip, kip biliniyorsa sessizce legacy'ye düşmez.
-Alanı olmayan mevcut firmalar legacy sayılır.
+Bu sürüm legacy ve dedicated arka uçlarını tanır. shared_v2 ve
+bilinmeyen bir kip sessizce legacy'ye düşmez. Alanı olmayan mevcut
+firmalar legacy sayılır. Hiçbir firma burada dedicated yapılmaz.
 
 dedicated_dsn_ref şemada durur. Değer düz metin yazılmaz; mühür
-comm_service.encrypt ile atılır. Bu modül o alanı okumaz.
+comm_service.encrypt ile atılır. Bu modül o alanı okumaz. Çözme
+yalnız dedicated koleksiyon açılırken yapılır.
 """
 from __future__ import annotations
 
@@ -64,6 +65,9 @@ def reset() -> None:
     global read_count
     _cache.clear()
     read_count = 0
+    import storage_dedicated
+
+    storage_dedicated.reset_pools()
 
 
 def public_mode(raw: Any) -> str:
@@ -200,6 +204,18 @@ def mode_for_handle(db, company_id: str) -> str:
     return LEGACY
 
 
+async def prepare_dedicated(db, company_id: str, mode: str) -> None:
+    """Giriş noktası dedicated kipte mühürlü referansı hatırlar.
+
+    Düz metin DSN burada okunmaz ve saklanmaz. Legacy çağrı ek sorgu atmaz.
+    """
+    if mode != DEDICATED:
+        return
+    import storage_dedicated
+
+    await storage_dedicated.note_company(db, company_id)
+
+
 async def load_mode(db, company_id: str) -> str:
     """Firma kipini döndürür. TTL dolmadan companies sorgusu yapmaz.
 
@@ -218,7 +234,17 @@ async def load_mode(db, company_id: str) -> str:
 
 
 def collection_for_mode(db, mode: str, company_id: str, name: str):
-    """Sabitlenmiş kipe göre arka uç. Legacy aynı db[name]."""
+    """Sabitlenmiş kipe göre arka uç.
+
+    Legacy aynı db[name]. Dedicated ayrı veritabanıdır; açılamazsa
+    hata verir, legacy koleksiyon dönmez.
+    """
+    if mode == LEGACY:
+        return db[name]
+    if mode == DEDICATED:
+        import storage_dedicated
+
+        return storage_dedicated.collection(db, company_id, name)
     reject_unless_legacy(mode, company_id)
     return db[name]
 

@@ -11,6 +11,7 @@ from .errors import DryRunError, LegacyTargetError, MigrationError
 from .masking import add_secret
 
 _READ = re.compile(r"^(select|show|pragma|with|explain)\b", re.IGNORECASE)
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -129,12 +130,22 @@ def assert_not_live(dsn: str) -> None:
         raise LegacyTargetError("Canlı uygulama veritabanı reddedildi.")
 
 
+def canonical_host(host: str) -> str:
+    """localhost, 127.0.0.1 ve ::1 aynı kimlik sayılır. Bağlantı adresini değiştirmez."""
+    text = str(host or "").strip().lower()
+    if len(text) >= 2 and text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if text in _LOOPBACK:
+        return "loopback"
+    return text
+
+
 def mysql_identity(dsn: str):
     text = str(dsn or "").strip()
     if not text.startswith("mysql") and not text.startswith("mariadb"):
         return None
     parsed = urlparse(_normalize_mysql(text))
-    host = (parsed.hostname or "").lower()
+    host = canonical_host(parsed.hostname or "")
     name = (parsed.path or "").lstrip("/").split("?")[0]
     if not host or not name:
         raise MigrationError("MySQL hedefi eksik.")
@@ -154,7 +165,7 @@ def live_mysql_identity():
         port = int(os.environ.get("MYSQL_PORT") or "3306")
     except ValueError:
         return None
-    return (host.lower(), port, name)
+    return (canonical_host(host), port, name)
 
 
 def sqlite_path(dsn: str) -> str:

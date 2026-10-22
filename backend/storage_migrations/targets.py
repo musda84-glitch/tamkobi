@@ -146,9 +146,18 @@ def _find_company(db, company_id: str) -> dict:
     raise CatalogError("Firma yok.")
 
 
-def _unseal(sealed: str) -> str:
-    from comm_service import decrypt
+def unseal_dedicated_ref(sealed: str) -> str:
+    """Mühürlü dedicated_dsn_ref. Düz metin loglanmaz, hata metnine yazılmaz."""
+    if not isinstance(sealed, str) or not sealed.strip():
+        raise CatalogError("Dedicated DSN referansı yok.")
+    return _require_dsn(_unseal(sealed))
 
+
+def _unseal(sealed: str) -> str:
+    from comm_service import decrypt, looks_like_fernet_token
+
+    if not looks_like_fernet_token(sealed):
+        raise CatalogError("DSN referansı çözülemedi.")
     try:
         plain = decrypt(sealed)
     except Exception as exc:

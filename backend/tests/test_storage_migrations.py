@@ -73,19 +73,22 @@ def _count(session, table):
 
 def test_pack_versions_are_contiguous():
     pack = load_migrations()
-    assert [item.version for item in pack] == [1, 2]
+    assert [item.version for item in pack] == [1, 2, 3]
     assert pack[0].name == "storage_meta"
     assert pack[1].name == "marker_steps"
+    assert pack[2].name == "storage_records"
     assert len(pack[0].steps) == 2
     assert len(pack[1].steps) == 2
+    assert len(pack[2].steps) == 1
+    assert "docs" not in pack[2].steps[0].lower()
 
 
 def test_empty_target_then_second_apply_writes_nothing():
     session = _memory()
     first = apply(session, confirm=True, dry_run=False)
     assert first.wrote is True
-    assert first.advanced == 2
-    assert [row.state for row in first.rows] == ["uygulandı", "uygulandı"]
+    assert first.advanced == 3
+    assert [row.state for row in first.rows] == ["uygulandı", "uygulandı", "uygulandı"]
     assert _count(session, "storage_meta") == 1
     assert _count(session, "storage_marker") == 1
     session.writes = 0
@@ -113,8 +116,8 @@ def test_interrupted_migration_resumes_without_repeating_finished_step():
     ]
     assert len(creates) == 1
     done = apply(session, confirm=True, dry_run=False)
-    assert done.advanced == 1
-    assert [row.state for row in done.rows] == ["uygulandı", "uygulandı"]
+    assert done.advanced == 2
+    assert [row.state for row in done.rows] == ["uygulandı", "uygulandı", "uygulandı"]
     assert _count(session, "storage_marker") == 1
     creates = [
         sql for sql in session.calls
@@ -339,6 +342,26 @@ def test_dedicated_sealed_dsn_applies_and_stays_masked(tmp_path, monkeypatch, ca
         comm_service._fernet = previous_fernet
 
 
+def test_plaintext_dedicated_dsn_is_rejected(monkeypatch, capsys):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("bağlantı açılmamalı")
+
+    monkeypatch.setattr("storage_migrations.session._connect_sqlite", boom)
+    monkeypatch.setattr("storage_migrations.session._connect_mysql", boom)
+    catalog = Catalog([
+        {
+            "_id": "co1",
+            storage_router.MODE_FIELD: storage_router.DEDICATED,
+            storage_router.DSN_FIELD: f"mysql://user:{SECRET}@db.internal/firm",
+        },
+    ])
+    code = main(["apply", "--target", "dedicated:co1", "--confirm"], catalog=catalog)
+    captured = capsys.readouterr()
+    assert code == 2
+    assert SECRET not in captured.out + captured.err
+    assert "db.internal" not in captured.out + captured.err
+
+
 def test_checksum_change_is_refused():
     session = _memory()
     apply(session, confirm=True, dry_run=False)
@@ -351,6 +374,157 @@ def test_checksum_change_is_refused():
     with pytest.raises(ChecksumError):
         apply(session, mutated, confirm=True, dry_run=False)
     assert _count(session, "storage_meta") == before
+
+
+def test_loopback_hosts_share_live_identity(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("bağlantı açılmamalı")
+
+    monkeypatch.setattr("storage_migrations.session._connect_mysql", boom)
+
+    def host(name):
+        if name == "::1":
+            return "[::1]"
+        return name
+
+    pairs = (
+        ("localhost", "127.0.0.1"),
+        ("127.0.0.1", "::1"),
+        ("::1", "localhost"),
+        ("localhost", "localhost"),
+    )
+    for live_host, target_host in pairs:
+        monkeypatch.setenv("MYSQL_URL", f"mysql://app:{SECRET}@{host(live_host)}:3306/tamkobi")
+        with pytest.raises(LegacyTargetError, match="Canlı") as caught:
+            connect(f"mysql://other:{SECRET}@{host(target_host)}:3306/tamkobi", write=False)
+        assert SECRET not in str(caught.value)
+        assert "127.0.0.1" not in str(caught.value)
+        assert "localhost" not in str(caught.value)
+
+    monkeypatch.delenv("MYSQL_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("MYSQL_HOST", "::1")
+    monkeypatch.setenv("MYSQL_PORT", "3306")
+    monkeypatch.setenv("MYSQL_DATABASE", "tamkobi")
+    with pytest.raises(LegacyTargetError, match="Canlı"):
+        connect(f"mysql://other:{SECRET}@127.0.0.1:3306/tamkobi", write=False)
+
+    monkeypatch.setenv("MYSQL_URL", f"mysql://app:{SECRET}@localhost:3306/tamkobi")
+    with pytest.raises(AssertionError):
+        connect(f"mysql://other:{SECRET}@127.0.0.1:3307/tamkobi", write=False)
+    with pytest.raises(AssertionError):
+        connect(f"mysql://other:{SECRET}@127.0.0.1:3306/otherdb", write=False)
+
+
+def test_cli_catalog_rejects_mysql_and_missing_file(tmp_path, monkeypatch):
+    from storage_migrations.catalog import load_cli_catalog
+    from storage_migrations.errors import CatalogError
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("bağlantı açılmamalı")
+
+    monkeypatch.setattr("storage_migrations.session._connect_mysql", boom)
+    monkeypatch.setenv("STORAGE_COMPANY_CATALOG", f"mysql://app:{SECRET}@10.9.9.9:3306/tamkobi")
+    with pytest.raises(CatalogError, match="canlı") as caught:
+        load_cli_catalog()
+    assert SECRET not in str(caught.value)
+    missing = tmp_path / "yok.db"
+    monkeypatch.setenv("STORAGE_COMPANY_CATALOG", f"sqlite:///{missing}")
+    with pytest.raises(CatalogError, match="yok"):
+        load_cli_catalog()
+    assert not missing.exists()
+
+
+def test_module_resolves_dedicated_company_only(tmp_path, monkeypatch):
+    import subprocess
+
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode()
+    previous_env = os.environ.get("CREDENTIAL_ENCRYPTION_KEY")
+    monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", key)
+    import comm_service
+
+    previous_fernet = comm_service._fernet
+    comm_service.reset_fernet_for_tests()
+    try:
+        folder = tmp_path / SECRET
+        folder.mkdir()
+        dedicated = folder / "co.db"
+        dsn = f"sqlite:///{dedicated}"
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        assert SECRET not in sealed
+        catalog_path = tmp_path / "catalog.db"
+        conn = sqlite3.connect(catalog_path)
+        conn.execute(
+            "CREATE TABLE company_catalog (company_id TEXT, storage_mode TEXT, dedicated_dsn_ref TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO company_catalog (company_id, storage_mode, dedicated_dsn_ref) VALUES (?, ?, ?)",
+            ("co1", "dedicated", sealed),
+        )
+        conn.execute(
+            "INSERT INTO company_catalog (company_id, storage_mode, dedicated_dsn_ref) VALUES (?, ?, ?)",
+            ("eski", "legacy", sealed),
+        )
+        conn.commit()
+        conn.close()
+        env = os.environ.copy()
+        env["CREDENTIAL_ENCRYPTION_KEY"] = key
+        env["STORAGE_COMPANY_CATALOG"] = f"sqlite:///{catalog_path}"
+        env["DATA_DIR"] = str(tmp_path)
+        env.pop("MYSQL_URL", None)
+        env.pop("DATABASE_URL", None)
+        env.pop("MYSQL_HOST", None)
+        legacy = subprocess.run(
+            [sys.executable, "-m", "storage_migrations", "apply", "--target", "dedicated:eski", "--confirm"],
+            cwd=str(_BACKEND),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        blob = legacy.stdout + legacy.stderr
+        assert legacy.returncode == 2
+        assert "Legacy" in blob
+        assert SECRET not in blob
+        assert not dedicated.exists()
+        listed = subprocess.run(
+            [sys.executable, "-m", "storage_migrations", "status"],
+            cwd=str(_BACKEND),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert listed.returncode == 0
+        assert "dedicated:co1" in listed.stdout
+        assert "eski" not in listed.stdout
+        assert SECRET not in listed.stdout + listed.stderr
+        applied = subprocess.run(
+            [sys.executable, "-m", "storage_migrations", "apply", "--target", "dedicated:co1", "--confirm"],
+            cwd=str(_BACKEND),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        blob = applied.stdout + applied.stderr
+        assert applied.returncode == 0, blob
+        assert SECRET not in blob
+        assert "sqlite://***" in applied.stdout
+        assert dedicated.exists()
+        conn = sqlite3.connect(dedicated)
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        conn.close()
+        assert "storage_records" in names
+        assert "docs" not in names
+    finally:
+        if previous_env is None:
+            monkeypatch.delenv("CREDENTIAL_ENCRYPTION_KEY", raising=False)
+        else:
+            monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", previous_env)
+        comm_service._fernet = previous_fernet
 
 
 def _capture_log():
