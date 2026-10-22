@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
-from decimal import Decimal
+import math
+from decimal import Decimal, InvalidOperation
 
 import storage_shared_v2
 from storage_shared_v2 import SharedV2Collection
@@ -196,26 +197,31 @@ def stored_value(body, field: str, width: int):
 
 
 def stored_decimal(body, field: str):
-    """Sayı kolonuna yazılacak DECIMAL metni. Aralık sorgusu bu kolonu indeksler.
+    """Sığan JSON sayısını DECIMAL(18,4) metnine çevirir.
 
-    JSON sayısı ve sayıya dönen metin (Decimal'ın str hali) yazılır.
-    Sayı olmayan metin NULL kalır; tam değer doc'tadır.
+    Belgedeki metin kolona yazılmaz. Sığmayan sayı, Infinity, NaN ve
+    quantize hatası da kolonu NULL bırakır. Yazma kesilmez; tam değer
+    doc'tadır ve sorgu o satırlar için tam belgeye düşer.
     """
     value = _scalar(body, field)
-    if value is None:
+    if isinstance(value, str) or value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     text = _text_of(value).strip()
     if text == "":
         return None
     try:
         number = Decimal(text)
-    except Exception:
+        if not number.is_finite():
+            return None
+        quantized = number.quantize(_DECIMAL_SCALE)
+    except (InvalidOperation, ValueError, ArithmeticError):
         return None
-    if not number.is_finite():
-        return None
-    quantized = number.quantize(_DECIMAL_SCALE)
     if quantized.copy_abs() >= _DECIMAL_LIMIT:
-        raise ValueError(f"{field} alanı DECIMAL sınırını aşıyor")
+        return None
     return format(quantized, "f")
 
 
@@ -295,16 +301,20 @@ class TableCollection(SharedV2Collection):
 
     def _nonscalar_sql(self, field):
         if field in self.spec.numeric:
+            column = self.spec.columns[field][0]
+            # Kolon NULL iken belgede değer varsa aralık ve sıra satırı düşürür.
+            # O durumda sorgu tam belgeye iner ve docs_v2 ile aynı kalır.
             if self.store.dialect == "mysql":
-                return (
+                present = (
                     f"JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IS NOT NULL "
-                    f"AND JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) NOT IN "
-                    "('INTEGER', 'DOUBLE', 'DECIMAL', 'NULL')"
+                    f"AND JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) <> 'NULL'"
                 )
-            return (
-                f"json_type(doc, '$.{field}') IS NOT NULL "
-                f"AND json_type(doc, '$.{field}') NOT IN ('integer', 'real', 'null')"
-            )
+            else:
+                present = (
+                    f"json_type(doc, '$.{field}') IS NOT NULL "
+                    f"AND json_type(doc, '$.{field}') <> 'null'"
+                )
+            return f"({present} AND {column} IS NULL)"
         return super()._nonscalar_sql(field)
 
     def _guard_key(self, body) -> None:

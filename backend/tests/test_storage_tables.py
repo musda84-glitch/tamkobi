@@ -592,14 +592,15 @@ def test_stored_value_follows_doc_json_scalar():
         "order_number": "N" * 80,
     }
     assert storage_tables.stored_value(body, "date", 40) == "2024-01-12 08:30:00"
-    assert storage_tables.stored_decimal(body, "change") == "10.5000"
+    assert storage_tables.stored_decimal(body, "change") is None
     assert storage_tables.stored_value(body, "flag", 64) is None
     assert storage_tables.stored_value(body, "note", 64) is None
     assert storage_tables.stored_value(body, "missing", 64) is None
     assert storage_tables.stored_value(body, "order_number", 64) == "N" * 64
-    assert storage_tables.stored_decimal({"change": "abc"}, "change") is None
-    with pytest.raises(ValueError, match="change"):
-        storage_tables.stored_decimal({"change": "9" * 20}, "change")
+    assert storage_tables.stored_decimal({"change": 10.5}, "change") == "10.5000"
+    assert storage_tables.stored_decimal({"change": Decimal("10.50")}, "change") is None
+    for raw in ("abc", "1e20", "123456789012345", "9" * 20, 1e300, 10**15, Decimal("Infinity"), Decimal("NaN")):
+        assert storage_tables.stored_decimal({"change": raw}, "change") is None
 
 
 async def _datetime_parity(company):
@@ -724,6 +725,96 @@ async def _case_distinct_companies():
     })
     kept = await lower.find({}).to_list(5)
     return [doc["_id"] for doc in kept]
+
+
+_EXTREME_AMOUNTS = (
+    ("sci", "1e20"),
+    ("wide", "123456789012345"),
+    ("text", "abc"),
+    ("huge", 1e300),
+    ("wide_num", 10**15),
+    ("inf", Decimal("Infinity")),
+    ("nan", Decimal("NaN")),
+    ("small", 10),
+    ("mid", 10.5),
+)
+_NULL_AMOUNT_IDS = ("sci", "wide", "text", "huge", "wide_num", "inf", "nan")
+
+
+async def _amount_extreme_parity(company):
+    docs = storage_shared_v2.collection_for(company, "orders")
+    real = storage_tables.collection_for(company, "orders")
+    for doc_id, amount in _EXTREME_AMOUNTS:
+        body = {
+            "_id": doc_id,
+            "order_number": doc_id,
+            "order_status": "open",
+            "order_date": "2024-01-01",
+            "total_amount": amount,
+        }
+        await docs.insert_one(dict(body))
+        await real.insert_one(dict(body))
+        stored = await real.find_one({"_id": doc_id})
+        assert stored is not None
+        assert stored["order_number"] == doc_id
+
+    async def ids(api, query, direction=1):
+        found = await api.find(query).sort("total_amount", direction).to_list(20)
+        return [doc["_id"] for doc in found]
+
+    queries = {
+        "eq_text": {"total_amount": "abc"},
+        "eq_sci": {"total_amount": "1e20"},
+        "eq_wide": {"total_amount": "123456789012345"},
+        "eq_num": {"total_amount": 10},
+        "eq_inf": {"total_amount": "Infinity"},
+        "eq_nan": {"total_amount": "NaN"},
+        "gt": {"total_amount": {"$gt": 10}},
+        "gte": {"total_amount": {"$gte": 10.5}},
+        "lt": {"total_amount": {"$lt": 10**15}},
+        "gt_text": {"total_amount": {"$gt": "2"}},
+        "in_text": {"total_amount": {"$in": ["abc", "1e20", "NaN"]}},
+        "in_mix": {"total_amount": {"$in": ["abc", 10, "Infinity"]}},
+    }
+    report = {}
+    for name, query in queries.items():
+        report[name] = (await ids(docs, query), await ids(real, query))
+    report["asc"] = (await ids(docs, {}, 1), await ids(real, {}, 1))
+    report["desc"] = (await ids(docs, {}, -1), await ids(real, {}, -1))
+    return report
+
+
+def _assert_amount_parity(report):
+    expected = [doc_id for doc_id, _amount in _EXTREME_AMOUNTS]
+    assert report["asc"][0]
+    assert set(report["asc"][0]) == set(expected)
+    assert len(report["asc"][0]) == len(expected)
+    assert "text" in report["eq_text"][0]
+    assert "sci" in report["eq_sci"][0]
+    assert "huge" in report["gt"][0]
+    assert "wide_num" in report["gt"][0]
+    assert "small" not in report["gt"][0]
+    assert "mid" in report["gte"][0]
+    assert "small" in report["lt"][0]
+    assert "huge" not in report["lt"][0]
+    for name, pair in report.items():
+        assert pair[1] == pair[0], (name, pair)
+
+
+def test_extreme_amounts_match_docs_v2(conn):
+    report = asyncio.run(_amount_extreme_parity("co-ext"))
+    _assert_amount_parity(report)
+    for doc_id in _NULL_AMOUNT_IDS:
+        stored = conn.execute(
+            "SELECT total_amount FROM t_orders WHERE company_id = ? AND id = ?",
+            ("co-ext", doc_id),
+        ).fetchone()[0]
+        assert stored is None
+    kept = conn.execute(
+        "SELECT total_amount FROM t_orders WHERE company_id = ? AND id = ?",
+        ("co-ext", "small"),
+    ).fetchone()[0]
+    assert float(kept) == 10
 
 
 def test_case_distinct_companies_keep_unique_rows(conn):
@@ -875,6 +966,19 @@ def test_mariadb_datetime_case_collation_and_amount_index():
         )
         blob = " ".join(str(part) for row in plan for part in row).lower()
         assert "idx_t_orders_amount" in blob
+        extreme = asyncio.run(_amount_extreme_parity("co-ext"))
+        _assert_amount_parity(extreme)
+        for doc_id in _NULL_AMOUNT_IDS:
+            stored = opened.fetchall(
+                "SELECT total_amount FROM t_orders WHERE company_id = ? AND id = ?",
+                ("co-ext", doc_id),
+            )[0][0]
+            assert stored is None
+        kept = opened.fetchall(
+            "SELECT total_amount FROM t_orders WHERE company_id = ? AND id = ?",
+            ("co-ext", "mid"),
+        )[0][0]
+        assert float(kept) == 10.5
     finally:
         storage_shared_v2.reset_store()
         try:
