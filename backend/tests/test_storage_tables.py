@@ -1282,6 +1282,118 @@ def test_long_text_sort_matches_docs_v2(conn):
     _assert_long_text_sort(report)
 
 
+_NULL_TEXT_ROWS = (
+    ("0", "Paid", "2024-01-01", 1),
+    ("1", None, "2024-01-01", 2),
+    ("2", "Kapali", "2024-01-01", 3),
+    ("3", "abc", "2024-01-01", 4),
+)
+_NULL_TEXT_FIELDS = (
+    ("orders", "order_status", "order_date", "total_amount", "order_number"),
+    ("invoices", "status", "issue_date", "grand_total", None),
+    ("stock_movements", "status", "date", "change", None),
+    ("bank_transactions", "match_status", "date", "amount", None),
+)
+
+
+def _json_null_text_order(dialect):
+    """MariaDB JSON null'ı 'null' sıralar. SQLite json_extract NULL → 'None'."""
+    if dialect == "mysql":
+        return ["2", "0", "3", "1"], ["1", "3", "0", "2"]
+    return ["2", "1", "0", "3"], ["3", "0", "1", "2"]
+
+
+async def _json_null_text_sort_parity(company):
+    report = {}
+    store = storage_shared_v2.get_store()
+    for name, text_field, date_field, amount_field, extra_field in _NULL_TEXT_FIELDS:
+        docs = storage_shared_v2.collection_for(company, name)
+        real = storage_tables.collection_for(company, name)
+        for doc_id, text, date_value, amount in _NULL_TEXT_ROWS:
+            body = {
+                "_id": doc_id,
+                text_field: text,
+                date_field: date_value,
+                amount_field: amount,
+            }
+            if extra_field:
+                body[extra_field] = text
+            await docs.insert_one(dict(body))
+            await real.insert_one(dict(body))
+        date_text = [(text_field, 1), (date_field, 1)]
+        text_amount = [(text_field, 1), (amount_field, -1)]
+        plans = [
+            ("asc", [(text_field, 1)], 0, None),
+            ("desc", [(text_field, -1)], 0, None),
+            ("limit", [(text_field, 1)], 0, 2),
+            ("page", [(text_field, 1)], 1, 2),
+            ("date_text", date_text, 0, None),
+            ("date_text_page", date_text, 1, 2),
+            ("text_amount", text_amount, 0, None),
+            ("text_amount_page", text_amount, 1, 2),
+        ]
+        if extra_field:
+            plans.append(("extra_asc", [(extra_field, 1)], 0, None))
+            plans.append(("extra_desc", [(extra_field, -1)], 0, None))
+        sides = {}
+        for label, spec, skip, limit in plans:
+            sides[label] = _pairs(
+                await _sorted_ids(docs, spec, skip, limit),
+                await _sorted_ids(real, spec, skip, limit),
+            )
+        sides["one_asc"] = _pairs(
+            await _one_id(docs, [(text_field, 1)]),
+            await _one_id(real, [(text_field, 1)]),
+        )
+        sides["one_desc"] = _pairs(
+            await _one_id(docs, [(text_field, -1)]),
+            await _one_id(real, [(text_field, -1)]),
+        )
+        sides["date_one"] = _pairs(await _one_id(docs, date_text), await _one_id(real, date_text))
+        sides["amount_one"] = _pairs(
+            await _one_id(docs, text_amount), await _one_id(real, text_amount),
+        )
+        before = store.python_scans
+        await _sorted_ids(real, [(text_field, 1)])
+        await _sorted_ids(real, date_text)
+        sides["scans"] = store.python_scans - before
+        report[name] = sides
+    report["dialect"] = store.dialect
+    return report
+
+
+def _assert_json_null_text_sort(report):
+    asc, desc = _json_null_text_order(report["dialect"])
+    amount_desc = ["3", "0", "1", "2"]
+    for name, _text, _date, _amount, extra in _NULL_TEXT_FIELDS:
+        sides = report[name]
+        assert sides["asc"][0] == asc, (name, report["dialect"], sides["asc"])
+        assert sides["desc"][0] == desc, (name, sides["desc"])
+        assert sides["limit"][0] == asc[:2], name
+        assert sides["page"][0] == asc[1:3], name
+        assert sides["one_asc"][0] == asc[0], name
+        assert sides["one_desc"][0] == desc[0], name
+        assert sides["date_text"][0] == asc, (name, sides["date_text"])
+        assert sides["date_text_page"][0] == asc[1:3], name
+        assert sides["date_one"][0] == asc[0], name
+        assert sides["text_amount"][0] == amount_desc, (name, sides["text_amount"])
+        assert sides["text_amount_page"][0] == amount_desc[1:3], name
+        assert sides["amount_one"][0] == amount_desc[0], name
+        assert sides["scans"] == 0, name
+        if extra:
+            assert sides["extra_asc"][0] == asc, (name, sides["extra_asc"])
+            assert sides["extra_desc"][0] == desc, name
+        for label, pair in sides.items():
+            if label == "scans":
+                continue
+            assert pair[1] == pair[0], (name, label, pair)
+
+
+def test_json_null_text_sort_matches_docs_v2(conn):
+    report = asyncio.run(_json_null_text_sort_parity("co-jnull"))
+    _assert_json_null_text_sort(report)
+
+
 async def _cached_amount_ids(store, company, query):
     found = await _bank(store, company).find(query).sort("_id", 1).to_list(10)
     return [doc["_id"] for doc in found]
@@ -1497,6 +1609,7 @@ def test_mariadb_datetime_case_collation_and_amount_index():
         _assert_legacy_sort(asyncio.run(_legacy_sort_parity("co-legacy")))
         _assert_text_column_sort(asyncio.run(_text_column_sort_parity("co-colsort")))
         _assert_long_text_sort(asyncio.run(_long_text_sort_parity("co-long")))
+        _assert_json_null_text_sort(asyncio.run(_json_null_text_sort_parity("co-jnull")))
         other = pymysql.connect(
             host=parsed.hostname or "127.0.0.1",
             port=parsed.port or 3306,

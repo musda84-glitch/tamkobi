@@ -428,6 +428,19 @@ class TableCollection(SharedV2Collection):
         if field in self.spec.numeric:
             # Tek anahtar ve kolonda NULL yokken: COALESCE sayıyı metne çevirirdi.
             return self.spec.columns[field][0]
+        if (
+            self.store.dialect == "mysql"
+            and field in self.spec.columns
+            and field not in self.spec.numeric
+        ):
+            # MariaDB JSON_UNQUOTE(JSON null) 'null' metnidir. Kolon SQL NULL
+            # kaldığı için COALESCE bunu 'None' yapardı; docs_v2 'null' sıralar.
+            column = self.spec.columns[field][0]
+            coalesced = f"COALESCE({column}, '{token}')"
+            return (
+                f"(CASE WHEN JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) = 'NULL' "
+                f"THEN 'null' ELSE {coalesced} END) COLLATE utf8mb4_bin"
+            )
         return super()._order_expr(field, token)
 
     def _search_expr(self, field, value, allow_equal: bool):
