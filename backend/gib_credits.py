@@ -550,16 +550,6 @@ async def _ledger_by_id(row_id: str, company_id: str):
     return row if isinstance(row, dict) else None
 
 
-async def _insert_ledger(doc: dict) -> bool:
-    try:
-        await _db.gib_credit_ledger.insert_one(doc)
-        return True
-    except Exception as exc:
-        if _is_dup_error(exc):
-            return False
-        raise
-
-
 async def ensure_wallet(wallet_id: str) -> dict:
     """Cüzdan yoksa bakiye 0 ile açar. Hoş geldin kontörü ve ledger yazmaz."""
     wid = str(wallet_id or "").strip()
@@ -605,33 +595,6 @@ async def _resolve_attach_transfer_id(company_id: str, old_wid: str, new_wid: st
         event_id = transfer_id
         transfer_id = _attach_transfer_id(company_id, old_wid, new_wid, event_id)
     return transfer_id
-
-
-def _ledger_doc(
-    *,
-    row_id: str,
-    wallet_id: str,
-    company_id: str,
-    row_type: str,
-    credits: int,
-    amount: int,
-    transfer_id: str,
-    route: str,
-    note: str,
-    created_at: str,
-) -> dict:
-    return {
-        "_id": row_id,
-        "wallet_id": wallet_id,
-        "company_id": company_id,
-        "type": row_type,
-        "credits": credits,
-        "amount": amount,
-        "transfer_id": transfer_id,
-        "route": route,
-        "note": note,
-        "created_at": created_at,
-    }
 
 
 async def _drop_open_out(out_id: str, company_id: str) -> None:
@@ -711,18 +674,22 @@ async def _finish_transfer(
     if not (source_done and dest_done):
         return {"transferred": 0, "applied": False, "transfer_id": transfer_id}
 
-    await _insert_ledger(_ledger_doc(
-        row_id=in_id,
-        wallet_id=new_wid,
-        company_id=company_id,
-        row_type="transfer_in",
-        credits=amount,
-        amount=amount,
-        transfer_id=transfer_id,
-        route=route,
-        note="Lisans birleştirme — kontör girişi",
-        created_at=now,
-    ))
+    try:
+        await _db.gib_credit_ledger.insert_one({
+            "_id": in_id,
+            "wallet_id": new_wid,
+            "company_id": company_id,
+            "type": "transfer_in",
+            "credits": amount,
+            "amount": amount,
+            "transfer_id": transfer_id,
+            "route": route,
+            "note": "Lisans birleştirme — kontör girişi",
+            "created_at": now,
+        })
+    except Exception as exc:
+        if not _is_dup_error(exc):
+            raise
     return {"transferred": amount, "applied": True, "transfer_id": transfer_id}
 
 
@@ -766,19 +733,25 @@ async def transfer_wallet_balance(old_wid: str, new_wid: str, *, company_id: str
 
     await ensure_wallet(new_wid)
     route = f"{old_wid}->{new_wid}"
-    out_row = _ledger_doc(
-        row_id=out_id,
-        wallet_id=old_wid,
-        company_id=company_id,
-        row_type="transfer_out",
-        credits=-amount,
-        amount=amount,
-        transfer_id=transfer_id,
-        route=route,
-        note="Lisans birleştirme — kontör çıkışı",
-        created_at=now,
-    )
-    inserted = await _insert_ledger(out_row)
+    out_row = {
+        "_id": out_id,
+        "wallet_id": old_wid,
+        "company_id": company_id,
+        "type": "transfer_out",
+        "credits": -amount,
+        "amount": amount,
+        "transfer_id": transfer_id,
+        "route": route,
+        "note": "Lisans birleştirme — kontör çıkışı",
+        "created_at": now,
+    }
+    try:
+        await _db.gib_credit_ledger.insert_one(out_row)
+        inserted = True
+    except Exception as exc:
+        if not _is_dup_error(exc):
+            raise
+        inserted = False
     if not inserted:
         existing_out = await _ledger_by_id(out_id, company_id)
         if existing_out and await _ledger_by_id(in_id, company_id):
