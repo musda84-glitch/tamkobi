@@ -147,7 +147,7 @@ def test_listed_write_routes_map_to_modules():
     assert rbac.module_for_path("/api/integrations/isnet-portal/test") == "/settings"
     assert rbac.module_for_path("/api/pricing/rules/trendyol") == "/stock"
     assert rbac.module_for_path("/api/dispatches/merge-to-invoice") == "/dispatches"
-    assert rbac.module_for_path("/api/label-templates") == "/settings"
+    assert rbac.module_for_path("/api/label-templates") == "/stock"
     assert rbac.module_for_path("/api/expense-budgets") == "/expenses"
     assert rbac.module_for_path("/api/tax-documents/doc_1") == "/accountant"
     assert "/b2b-yonetim" in {mod for _prefix, mod in rbac.API_MODULE_MAP}
@@ -157,8 +157,8 @@ def test_listed_write_routes_map_to_modules():
     assert rbac.module_for_path("/api/companies/co_a/b2b-settings") == "/b2b-yonetim"
     assert rbac.module_for_path("/api/contacts/c1/b2b-access") == "/b2b-yonetim"
     assert rbac.module_for_path("/api/contacts/c1/b2b-portal") == "/b2b-yonetim"
-    assert rbac.module_for_path("/api/invoices/inv_1/create-dispatch") == "/dispatches"
-    assert rbac.module_for_path("/api/orders/ord_1/create-dispatch") == "/dispatches"
+    assert rbac.module_for_path("/api/invoices/inv_1/create-dispatch") == "/invoices"
+    assert rbac.module_for_path("/api/orders/ord_1/create-dispatch") == "/orders"
     assert rbac.module_for_get_path("/api/label-templates") == "/stock"
     assert rbac.module_for_get_path("/api/personnel/attendance") == "/personnel"
 
@@ -210,7 +210,7 @@ _CASES = (
     ("POST", "/api/e-invoice/inv_1/refresh-status", "/invoices", "edit"),
     ("POST", "/api/marketplace/claims/c1/approve", "/orders", "edit"),
     ("PUT", "/api/pricing/rules/trendyol", "/stock", "edit"),
-    ("POST", "/api/label-templates", "/settings", "edit"),
+    ("POST", "/api/label-templates", "/stock", "edit"),
     ("PUT", "/api/expense-budgets", "/expenses", "edit"),
     ("DELETE", "/api/tax-documents/doc_1", "/accountant", "delete"),
     ("POST", "/api/companies/co_a/b2b-settings", "/b2b-yonetim", "edit"),
@@ -459,6 +459,179 @@ def test_view_prices_on_leaves_post_amounts(monkeypatch):
     status, body, _n, masked = _hit(mw, "POST", "/api/invoices", payload={"grand_total": 250})
     assert status == 200 and masked is None
     assert json.loads(body)["grand_total"] == 250
+
+
+def test_pricing_compute_allows_orders_view_rules_stay_stock_edit():
+    orders_view = _perms(**{"/orders": "view", "/stock": "none"})
+    stock_view = _perms(**{"/orders": "none", "/stock": "view"})
+    neither = _perms(**{"/orders": "none", "/stock": "none"})
+    assert rbac.mutation_allowed("/stock", "/api/pricing/compute", orders_view, "POST") is True
+    assert rbac.mutation_allowed("/stock", "/api/pricing/compute", stock_view, "POST") is True
+    assert rbac.mutation_allowed("/stock", "/api/pricing/compute", neither, "POST") is False
+    assert rbac.mutation_allowed("/stock", "/api/pricing/rules/trendyol", orders_view, "PUT") is False
+    assert rbac.mutation_allowed("/stock", "/api/pricing/rules/trendyol", stock_view, "PUT") is False
+    assert rbac.mutation_allowed("/stock", "/api/pricing/rules/trendyol", _perms(**{"/stock": "edit"}), "PUT") is True
+
+
+def test_pricing_compute_passes_and_rule_update_is_forbidden(monkeypatch):
+    async def _lookup(_user_doc, company_id=None):
+        return _role("sales", _perms(**{"/orders": "view", "/stock": "view"}), name="Satış")
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+    status, _body, n, _masked = _hit(mw, "POST", "/api/pricing/compute")
+    assert status == 200 and n == 1
+    status, _body, n, _masked = _hit(mw, "PUT", "/api/pricing/rules/trendyol")
+    assert status == 403 and n == 0
+
+
+def test_label_template_uses_stock_edit_not_settings():
+    stock = _perms(**{"/stock": "edit", "/settings": "none"})
+    settings = _perms(**{"/stock": "none", "/settings": "delete"})
+    view = _perms(**{"/stock": "view"})
+    assert rbac.mutation_allowed("/stock", "/api/label-templates", stock, "POST") is True
+    assert rbac.mutation_allowed("/stock", "/api/label-templates/tpl_1", stock, "PUT") is True
+    assert rbac.mutation_allowed("/stock", "/api/label-templates/tpl_1", stock, "DELETE") is True
+    assert rbac.mutation_allowed("/stock", "/api/label-templates", settings, "POST") is False
+    assert rbac.mutation_allowed("/stock", "/api/label-templates/tpl_1", view, "DELETE") is False
+
+
+def test_label_template_save_and_delete_with_stock_edit(monkeypatch):
+    async def _lookup(_user_doc, company_id=None):
+        return _role("warehouse", _perms(**{"/stock": "edit", "/settings": "none"}), name="Depo")
+
+    mw = _install(monkeypatch, _user("warehouse"), _lookup)
+    status, _body, n, _masked = _hit(mw, "POST", "/api/label-templates")
+    assert status == 200 and n == 1
+    status, _body, n, _masked = _hit(mw, "DELETE", "/api/label-templates/tpl_1")
+    assert status == 200 and n == 1
+
+    async def _settings(_user_doc, company_id=None):
+        return _role("manager", _perms(**{"/settings": "delete", "/stock": "none"}), name="Müdür")
+
+    mw = _install(monkeypatch, _user("manager"), _settings)
+    status, _body, n, _masked = _hit(mw, "POST", "/api/label-templates")
+    assert status == 403 and n == 0
+
+
+def test_order_create_dispatch_allows_orders_edit_or_dispatches_edit():
+    orders = _perms(**{"/orders": "edit", "/dispatches": "none"})
+    dispatches = _perms(**{"/orders": "none", "/dispatches": "edit"})
+    view = _perms(**{"/orders": "view", "/dispatches": "none"})
+    invoices = _perms(**{"/invoices": "edit", "/dispatches": "none", "/orders": "none"})
+    path = "/api/orders/ord_1/create-dispatch"
+    assert rbac.module_for_path(path) == "/orders"
+    assert rbac.mutation_allowed("/orders", path, orders, "POST") is True
+    assert rbac.mutation_allowed("/orders", path, dispatches, "POST") is True
+    assert rbac.mutation_allowed("/orders", path, view, "POST") is False
+    invoice_path = "/api/invoices/inv_1/create-dispatch"
+    assert rbac.module_for_path(invoice_path) == "/invoices"
+    assert rbac.mutation_allowed("/invoices", invoice_path, invoices, "POST") is True
+    assert rbac.mutation_allowed("/invoices", invoice_path, orders, "POST") is False
+
+
+def test_order_create_dispatch_with_orders_edit(monkeypatch):
+    async def _lookup(_user_doc, company_id=None):
+        return _role("sales", _perms(**{"/orders": "edit", "/dispatches": "none"}), name="Satış")
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+    status, _body, n, _masked = _hit(mw, "POST", "/api/orders/ord_1/create-dispatch")
+    assert status == 200 and n == 1
+
+
+def test_masked_product_update_keeps_stored_prices(monkeypatch):
+    stored = {
+        "_id": "prod_1",
+        "company_id": "co_a",
+        "name": "Raf",
+        "sku": "R-1",
+        "sale_price": 120,
+        "purchase_price": 40,
+        "variants": [{"id": "v1", "name": "Mavi", "sale_price": 90}],
+    }
+    saved = {}
+
+    class _Products:
+        async def find_one(self, query):
+            if query.get("_id") == "prod_1" and query.get("company_id") == "co_a":
+                return json.loads(json.dumps(stored))
+            return None
+
+    class _Logs:
+        async def insert_one(self, _doc):
+            return None
+
+    class _DB:
+        activity_logs = _Logs()
+        products = _Products()
+
+    async def _lookup(_user_doc, company_id=None):
+        return _role("sales", _perms(**{"/stock": "edit"}), features={"view_prices": False}, name="Satış")
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+    monkeypatch.setattr(rbac, "_db", _DB())
+    payload = {
+        "name": "Yeni Raf",
+        "sku": "R-1",
+        "sale_price": 0,
+        "purchase_price": 0,
+        "variants": [{"id": "v1", "name": "Kırmızı", "sale_price": 0}],
+    }
+    raw = json.dumps(payload).encode()
+    request = _http("PUT", "/api/products/prod_1")
+    request.scope["headers"].append((b"content-type", b"application/json"))
+
+    async def _receive():
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    request._receive = _receive
+
+    async def _next(req):
+        body = await req.json()
+        saved["body"] = body
+        doc = json.loads(json.dumps(stored))
+        doc.update({k: v for k, v in body.items() if k not in ("id", "_id", "company_id")})
+        saved["doc"] = doc
+        return _json({"ok": True, "sale_price": doc["sale_price"]})
+
+    async def _run():
+        return await mw.dispatch(request, _next)
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert saved["body"]["name"] == "Yeni Raf"
+    assert saved["body"]["sale_price"] == 120
+    assert saved["body"]["purchase_price"] == 40
+    assert saved["body"]["variants"][0]["name"] == "Kırmızı"
+    assert saved["body"]["variants"][0]["sale_price"] == 90
+    assert saved["doc"]["sale_price"] == 120
+    assert saved["doc"]["purchase_price"] == 40
+
+
+def test_pdf_mask_loads_role_before_handler(monkeypatch):
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "off")
+    calls = {"n": 0, "masked": None, "tl": None}
+
+    async def _lookup(_user_doc, company_id=None):
+        calls["n"] += 1
+        assert calls["masked"] is None
+        return _role("sales", _perms(**{"/invoices": "view"}), features={"view_prices": False}, name="Satış")
+
+    mw = _install(monkeypatch, _user("sales"), _lookup)
+
+    async def _next(_request):
+        calls["masked"] = rbac.price_mask_active()
+        import saas_docs
+        calls["tl"] = saas_docs._tl(1250.5)
+        return _json({"ok": True})
+
+    async def _run():
+        return await mw.dispatch(_http("GET", "/api/invoices/inv_1/pdf"), _next)
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert calls["n"] == 1
+    assert calls["masked"] is True
+    assert calls["tl"] == "0,00 ₺"
 
 
 # --- rota taraması ---

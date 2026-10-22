@@ -491,6 +491,124 @@ def mask_money(obj):
     return obj
 
 
+def _contains_money(obj) -> bool:
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key in MONEY_KEYS and _money_scalar(value):
+                return True
+            if _contains_money(value):
+                return True
+        return False
+    if isinstance(obj, list):
+        return any(_contains_money(item) for item in obj)
+    return False
+
+
+def _money_item_key(obj: Any):
+    if not isinstance(obj, dict):
+        return None
+    for key in ("_id", "id", "product_id", "line_id"):
+        value = obj.get(key)
+        if value not in (None, ""):
+            return (key, str(value))
+    return None
+
+
+def preserve_masked_money(incoming, stored):
+    """Maskeli tutarı mevcut kaydın değeriyle değiştirir. Kayıtta yoksa alan yazılmaz."""
+    if isinstance(incoming, list):
+        stored_list = stored if isinstance(stored, list) else []
+        by_key = {}
+        for item in stored_list:
+            key = _money_item_key(item)
+            if key and key not in by_key:
+                by_key[key] = item
+        merged = []
+        for index, item in enumerate(incoming):
+            match = None
+            key = _money_item_key(item)
+            if key and key in by_key:
+                match = by_key[key]
+            elif index < len(stored_list):
+                match = stored_list[index]
+            merged.append(preserve_masked_money(item, match))
+        return merged
+    if not isinstance(incoming, dict):
+        return incoming
+    stored_dict = stored if isinstance(stored, dict) else {}
+    out = {}
+    for key, value in incoming.items():
+        if key in MONEY_KEYS and _money_scalar(value):
+            if key in stored_dict:
+                out[key] = stored_dict[key]
+            continue
+        if isinstance(value, (dict, list)):
+            out[key] = preserve_masked_money(value, stored_dict.get(key))
+        else:
+            out[key] = value
+    return out
+
+
+def _pdf_get_path(path: str, method: str = "GET") -> bool:
+    if str(method or "").upper() not in ("GET", "HEAD"):
+        return False
+    p = _portal_norm_path(path).lower()
+    return p.endswith("/pdf") or p.endswith(".pdf")
+
+
+def _replace_request_body(request, body: bytes) -> None:
+    request._body = body
+    if hasattr(request, "_json"):
+        delattr(request, "_json")
+
+
+async def _stored_money_doc(path: str, company_id: Optional[str]):
+    """Yazılacak kaydı şirket kimliğiyle okur. Koleksiyon adı dinamiktir."""
+    if not company_id:
+        return None
+    import company_audit
+    parsed = company_audit.parse_target(path)
+    if not parsed:
+        return None
+    doc_id = str(parsed.get("doc_id") or "")
+    coll_name = company_audit._collection_of(parsed.get("resource") or "")
+    if not doc_id or not coll_name:
+        return None
+    coll = getattr(_db, coll_name, None)
+    find_one = getattr(coll, "find_one", None)
+    if find_one is None:
+        return None
+    try:
+        return await find_one({"_id": doc_id, "company_id": company_id})
+    except Exception:
+        return None
+
+
+async def _preserve_masked_prices(request, company_id: Optional[str]) -> None:
+    """view_prices kapalı yazmada maskeli 0, kayıtlı tutarın üzerine yazılmasın."""
+    ctype = str(request.headers.get("content-type") or "").lower()
+    if "application/json" not in ctype and "+json" not in ctype:
+        return
+    try:
+        raw = await request.body()
+    except Exception:
+        return
+    if not raw:
+        return
+    import json as _json
+    try:
+        data = _json.loads(raw)
+    except ValueError:
+        return
+    if not _contains_money(data):
+        return
+    stored = await _stored_money_doc(request.url.path, company_id)
+    if not isinstance(stored, dict):
+        return
+    merged = preserve_masked_money(data, stored)
+    _replace_request_body(request, _json.dumps(merged, ensure_ascii=False).encode("utf-8"))
+
+
 # İstek boyunca PDF/Excel üreticilerinin okuduğu bayrak. Middleware call_next öncesi kurar.
 _price_mask_ctx: contextvars.ContextVar[bool] = contextvars.ContextVar("rbac_price_mask", default=False)
 
@@ -719,7 +837,7 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/integrations/isnet/test", "/settings"),
                   ("/api/pricing", "/stock"),
                   ("/api/dispatches", "/dispatches"),
-                  ("/api/label-templates", "/settings"),
+                  ("/api/label-templates", "/stock"),
                   ("/api/expense-budgets", "/expenses"),
                   ("/api/tax-documents", "/accountant"),
                   # Menüde ayrı duran modüller. Okuma module_for_get_path'te personelde kalır.
@@ -727,7 +845,7 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/saha", "/saha"),
                   ("/api/b2b-yonetim", "/b2b-yonetim")]
 # Yalnız GET/HEAD görünürlük. Yazma module_for_path API_MODULE_MAP'i okur.
-# Etiket şablonlarında aynı uzunlukta GET_EXTRA okumayı /stock'ta tutar.
+# Aynı uzunluktaki GET_EXTRA yazma eşlemesini ezer. Etiket şablonları iki tarafta da /stock.
 # En uzun önek kazanır: /api/integrations/cargo ve /api/integrations/ecommerce
 # API_MODULE_MAP'te daha uzundur, /settings'e düşmez.
 GET_EXTRA_MODULE_MAP = (
@@ -1101,8 +1219,8 @@ def module_for_path(path: str) -> Optional[str]:
     p = _portal_norm_path(path)
     if _b2b_admin_path(p):
         return "/b2b-yonetim"
-    if p.endswith("/create-dispatch") or p.startswith("/api/dispatches"):
-        return "/dispatches"
+    # Sipariş/fatura altındaki create-dispatch kendi önekinde kalır (/orders, /invoices).
+    # İrsaliye düzenle ayrıca mutation_allowed içinde kabul edilir.
     # Puantaj lisansı ve okuma /personnel kalır. /mesai yazma kapısı mutation_allowed'dadır.
     # Aksi halde haritadaki daha uzun önek pakette /mesai kapalı firmada puantajı kilitler.
     if _attendance_tree(p):
@@ -1178,6 +1296,28 @@ def _saha_order_create(path: str, method: str) -> bool:
     return str(method or "").upper() == "POST" and _portal_norm_path(path) == "/api/orders"
 
 
+def _pricing_compute_path(path: str, method: str) -> bool:
+    """Fiyat önizlemesi kayıt yazmaz. Stok veya sipariş görüntüle yeter."""
+    return str(method or "").upper() == "POST" and _portal_norm_path(path) == "/api/pricing/compute"
+
+
+def _label_template_path(path: str) -> bool:
+    p = _portal_norm_path(path)
+    return p == "/api/label-templates" or p.startswith("/api/label-templates/")
+
+
+def _create_dispatch_side(path: str) -> Optional[str]:
+    """Sipariş veya fatura ekranından irsaliye. None ise bu istisna uygulanmaz."""
+    p = _portal_norm_path(path)
+    if not p.endswith("/create-dispatch"):
+        return None
+    if p.startswith("/api/orders/"):
+        return "orders"
+    if p.startswith("/api/invoices/"):
+        return "invoices"
+    return None
+
+
 def mutation_path_open(path: str, method: str = "POST") -> bool:
     """Modül eşlemesi aranmayan oturumlu yazma. Public ve SKIP ayrı kapıdır."""
     method_u = str(method or "").upper()
@@ -1220,8 +1360,18 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
         return level_allows(perms.get("/mesai"), need) and level_allows(perms.get("/personnel"), need)
     if not module:
         return False
+    # Etiket şablonu silmek stok düzenle ile açılır; ayarlar gerekmez.
+    if _label_template_path(path):
+        return level_allows(perms.get("/stock"), "edit")
     if level_allows(perms.get(module, "none"), need):
         return True
+    if _pricing_compute_path(path, method_u):
+        return level_allows(perms.get("/stock"), "view") or level_allows(perms.get("/orders"), "view")
+    side = _create_dispatch_side(path)
+    if side == "orders" and need == "edit":
+        return level_allows(perms.get("/orders"), "edit") or level_allows(perms.get("/dispatches"), "edit")
+    if side == "invoices" and need == "edit":
+        return level_allows(perms.get("/invoices"), "edit") or level_allows(perms.get("/dispatches"), "edit")
     if _saha_order_create(path, method_u) and need == "edit" and level_allows(perms.get("/saha"), "edit"):
         return True
     # Sipariş ekranından kargolama: /orders edit yeterli (ayrı /cargo yetkisi şart değil)
@@ -1859,6 +2009,18 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                         role = view_role
                     if blocked is not None:
                         return blocked
+            if (
+                _pdf_get_path(path, request.method)
+                and user
+                and not write_role_exempt(user)
+                and role is None
+                and not view_lookup_failed
+            ):
+                try:
+                    role = await role_for(user, cid)
+                except Exception:
+                    # Rol çözülemezse PDF tutarı açık kalmasın.
+                    view_lookup_failed = True
             if cargo_label_request(path, request.method) and user and not write_role_exempt(user):
                 if role is None:
                     try:
@@ -1889,6 +2051,14 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 if _attendance_tree(path) and not _self_attendance_path(path):
                     shown = "/mesai"
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {shown})."}, status_code=403)
+        if (
+            request.method in ("POST", "PUT", "PATCH")
+            and user
+            and not write_role_exempt(user)
+            and role is not None
+            and not role_features(role).get("view_prices")
+        ):
+            await _preserve_masked_prices(request, cid)
         response = await _call_with_price_mask(call_next, request, user, role, False)
         if response.status_code < 400 and user:
             ip = request_ip(request)

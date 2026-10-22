@@ -172,7 +172,7 @@ def test_get_extra_does_not_change_mutation_mapping():
     assert rbac.module_for_path("/api/marketplace/claims/c1/approve") == "/orders"
     assert rbac.module_for_get_path("/api/account/gib-credits") == "/settings"
     assert rbac.module_for_get_path("/api/label-templates") == "/stock"
-    assert rbac.module_for_path("/api/label-templates") == "/settings"
+    assert rbac.module_for_path("/api/label-templates") == "/stock"
     assert rbac.module_for_get_path("/api/personnel/attendance") == "/personnel"
     assert rbac.module_for_path("/api/personnel/attendance/att_1/confirm") == "/personnel"
 
