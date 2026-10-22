@@ -357,14 +357,63 @@ class TableCollection(SharedV2Collection):
         sıralar ve son anahtarın yönünü hepsine uygular. Çok anahtar ya da
         kolonda NULL varken SQL bu sonucu vermez; sorgu Python yoluna düşer.
         NULL kontrolü her sorguda, firma kapsamında, tutar indeksinden okunur.
+
+        docs_v2'nin tam metin sıraladığı kırpık kolonun ardına tam belge değeri
+        eklenir. docs_v2'nin kendi kesik kolonu varsa aynı kesim kullanılır.
         """
-        if sort:
-            pairs = storage_shared_v2._sort_pairs(sort)
-            numeric = [field for field, _direction in pairs if field in self.spec.numeric]
-            single = len(pairs) == 1 and len(numeric) == 1
-            if numeric and not (single and self._decimal_sort_ok(numeric[0])):
+        if not sort:
+            return super()._sort_sql(sort)
+        pairs = storage_shared_v2._sort_pairs(sort)
+        if not pairs:
+            return super()._sort_sql(sort)
+        numeric = [field for field, _direction in pairs if field in self.spec.numeric]
+        single = len(pairs) == 1 and len(numeric) == 1
+        if numeric and not (single and self._decimal_sort_ok(numeric[0])):
+            raise _NoPush("sort")
+        direction = "DESC" if pairs[-1][1] == -1 else "ASC"
+        bits = []
+        fields = []
+        for field, _direction in pairs:
+            if field == "_id":
+                bits.append(f"id {direction}")
+                continue
+            if not storage_shared_v2._SAFE_FIELD.match(field):
                 raise _NoPush("sort")
-        return super()._sort_sql(sort)
+            bits.extend(self._text_order_bits(field, direction))
+            fields.append(field)
+        if "_id" not in [field for field, _direction in pairs]:
+            bits.append("id ASC")
+        return "ORDER BY " + ", ".join(bits), tuple(fields)
+
+    def _text_order_bits(self, field, direction):
+        primary = f"{self._order_expr(field, 'None')} {direction}"
+        if field not in self.spec.columns or field in self.spec.numeric:
+            return [primary]
+        generated = storage_shared_v2._COLUMN_OF.get(field)
+        if generated is None:
+            # docs_v2 bu alanı tam JSON metniyle sıralar. Kırpık kolon yetmez.
+            return [primary, f"{self._doc_order_expr(field)} {direction}"]
+        _column, width = generated
+        if self.spec.columns[field][1] == width:
+            return [primary]
+        return [f"{self._prefix_order_expr(field, width)} {direction}"]
+
+    def _doc_order_expr(self, field):
+        return self._coalesced_order(self._full_text(field))
+
+    def _prefix_order_expr(self, field, width):
+        full = self._full_text(field)
+        if self.store.dialect == "mysql":
+            expr = f"LEFT({full}, {int(width)})"
+        else:
+            expr = f"substr({full}, 1, {int(width)})"
+        return self._coalesced_order(expr)
+
+    def _coalesced_order(self, expr):
+        coalesced = f"COALESCE({expr}, 'None')"
+        if self.store.dialect == "mysql":
+            return f"{coalesced} COLLATE utf8mb4_bin"
+        return coalesced
 
     def _decimal_sort_ok(self, field) -> bool:
         column = self.spec.columns[field][0]
