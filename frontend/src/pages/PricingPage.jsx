@@ -2,12 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { Link, useLocation } from "react-router-dom";
 import { Check, Sparkles, ArrowRight, ShieldCheck, Boxes, Users, FileText, Warehouse, Factory, MessageCircle, ChevronDown, Image as ImageIcon, PlayCircle } from "lucide-react";
-import { API_URL, useAuth } from "../context/AuthContext";
+import { API_URL } from "../context/AuthContext";
 import { PLAN_COLORS } from "../components/saas/saasUi";
-import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
+import { MarketingFooter, MarketingNav, SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { serializeModuleKeys } from "../utils/modulePack";
-import { LegalFooterLinks } from "../components/LegalConsent";
 import { Seo, buildFaqJsonLd, buildOrgSoftwareJsonLd } from "../components/Seo";
 import { billableCatalog, highlightModules } from "../utils/pricingHighlights";
 import { announceVitrinPreview } from "../utils/vitrinPreview";
@@ -33,7 +32,6 @@ const QUOTA_ROWS = [
 ];
 
 export default function PricingPage() {
-  const { authenticated } = useAuth() || {};
   const { pathname } = useLocation();
   const [d, setD] = useState(null);
   const [yearly, setYearly] = useState(false);
@@ -90,19 +88,9 @@ export default function PricingPage() {
       <SiteHeader
         brand={brand}
         right={(
-          <div className="flex items-center gap-3 text-xs">
-            <a href="#paketler" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-plans">Paketler</a>
-            <a href="#sss" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-faq">SSS</a>
-            <a href="#ozel-paket" className="text-slate-300 hover:text-white hidden sm:inline" data-testid="site-nav-custom">Kendi paketin</a>
-            {authenticated ? (
-              <Link to="/panel" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold" data-testid="pricing-go-panel">Panele git</Link>
-            ) : (
-              <>
-                <Link to="/login" className="text-slate-300 hover:text-white" data-testid="pricing-login-link">Giriş Yap</Link>
-                <Link to="/kayit" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-xl font-bold" data-testid="pricing-signup-link">Ücretsiz Dene</Link>
-              </>
-            )}
-          </div>
+          <MarketingNav
+            extras={[{ key: "ozel", to: "#ozel-paket", label: "Kendi paketin", testId: "site-nav-custom" }]}
+          />
         )}
       />
 
@@ -115,6 +103,7 @@ export default function PricingPage() {
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3" data-testid="vitrin-hero-title">{copy.heroTitle}</h1>
           )}
           <p className="text-slate-400 text-sm sm:text-base mt-4" data-testid="vitrin-hero-text">{copy.heroText}</p>
+          <Link to="/moduller" className="inline-flex items-center mt-5 text-sm font-bold text-emerald-400 hover:text-emerald-300" data-testid="pricing-modules-link">Modülleri İncele →</Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-8 text-xs">
           {copy.lines.map((t, i) => {
@@ -297,10 +286,7 @@ export default function PricingPage() {
         </section>
       )}
 
-      <footer className="border-t border-white/10 py-6 text-center text-[11px] text-slate-500 space-y-2">
-        <LegalFooterLinks className="text-slate-500" prefix="pricing-footer" />
-        <div>{brand} · Bulut ERP</div>
-      </footer>
+      <MarketingFooter brand={brand} legalPrefix="pricing-footer" />
 
       {wa ? (
         <a
