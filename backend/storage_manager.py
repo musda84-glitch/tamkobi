@@ -80,7 +80,15 @@ _ROUTES_BOUND = False
 def init(db, get_current_user_dep, require_super_admin_dep):
     global _db
     _db = db
+    import storage_quota
+    storage_quota.init(db)
     _bind_routes(get_current_user_dep, require_super_admin_dep)
+
+
+def _quota():
+    import storage_quota
+    storage_quota.init(_db)
+    return storage_quota
 
 
 def _now() -> str:
@@ -191,6 +199,45 @@ async def account_storage_summary(company_id: str) -> Dict[str, Any]:
     }
 
 
+async def company_storage_detail(company_id: str) -> Dict[str, Any]:
+    """Klasör dökümü + lisans kotası. Kullanılan bayt, limit denetimiyle aynı sayıdır."""
+    import saas
+
+    quota = _quota()
+    summary = await account_storage_summary(company_id)
+    lic = await saas.effective(company_id)
+    usage = await saas.quota_usage(company_id)
+    limit_mb = int(lic.get("storage_limit_mb") or 0)
+    used = int(usage.get("storage_bytes") or 0)
+    raw = (lic.get("quota_overrides") or {}).get("storage_limit_mb")
+    if raw in (None, ""):
+        override_mb = None
+    else:
+        try:
+            override_mb = max(0, int(raw))
+        except (TypeError, ValueError):
+            override_mb = None
+    plan_limit = int((lic.get("plan_defaults") or {}).get("storage_limit_mb") or 0)
+    if limit_mb <= 0:
+        source = "unlimited"
+    elif override_mb is not None:
+        source = "override"
+    else:
+        source = "plan"
+    company = await _db.companies.find_one({"_id": company_id}, {"name": 1}) or {}
+    summary.update({
+        "company_name": company.get("name"),
+        "plan_name": lic.get("plan_name"),
+        "storage_limit_mb": limit_mb,
+        "plan_limit_mb": plan_limit,
+        "override_mb": override_mb,
+        "limit_source": source,
+        **quota.usage_view(used, limit_mb),
+        "increase_request": await quota.latest_increase_request(company_id),
+    })
+    return summary
+
+
 async def list_accounts_storage() -> List[Dict[str, Any]]:
     import saas
 
@@ -298,13 +345,7 @@ def _bind_routes(get_current_user, require_super_admin):
         c = await _db.companies.find_one({"_id": company_id})
         if not c:
             raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-        import saas
-        summary = await account_storage_summary(company_id)
-        lic = await saas.effective(company_id)
-        summary["company_name"] = c.get("name")
-        summary["storage_limit_mb"] = lic.get("storage_limit_mb") or 0
-        summary["plan_name"] = lic.get("plan_name")
-        return summary
+        return await company_storage_detail(company_id)
 
     @router.post("/system/storage/{company_id}/ensure")
     async def system_ensure_folders(company_id: str, admin: dict = Depends(require_super_admin)):
@@ -335,13 +376,49 @@ def _bind_routes(get_current_user, require_super_admin):
 
     @router.get("/storage/me")
     async def my_storage(user: dict = Depends(get_current_user)):
-        cid = _active_company(user)
-        import saas
-        summary = await account_storage_summary(cid)
-        lic = await saas.effective(cid)
-        summary["storage_limit_mb"] = lic.get("storage_limit_mb") or 0
-        summary["plan_name"] = lic.get("plan_name")
-        return summary
+        return await company_storage_detail(_active_company(user))
+
+    @router.post("/storage/me/increase-request")
+    async def my_storage_increase(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+        quota = _quota()
+        doc = await quota.create_increase_request(_active_company(user), user, req or {})
+        return {
+            "status": "success",
+            "message": "Depolama artış talebiniz alındı. Yönetici onayladığında limit güncellenir.",
+            "request": doc,
+        }
+
+    @router.get("/system/storage/{company_id}/requests")
+    async def system_storage_requests(
+        company_id: str,
+        admin: dict = Depends(require_super_admin),
+        status: Optional[str] = Query(None),
+    ):
+        if not await _db.companies.find_one({"_id": company_id}):
+            raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+        st = (status or "").strip()
+        if st and st not in ("pending", "approved", "rejected"):
+            raise HTTPException(status_code=400, detail="Geçersiz durum.")
+        rows = await _quota().list_increase_requests(company_id, status=st or None)
+        return {"items": rows, "total": len(rows)}
+
+    @router.put("/system/storage/{company_id}/requests/{request_id}")
+    async def system_storage_resolve(
+        company_id: str,
+        request_id: str,
+        req: Dict[str, Any],
+        admin: dict = Depends(require_super_admin),
+    ):
+        if not await _db.companies.find_one({"_id": company_id}):
+            raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+        doc = await _quota().resolve_increase_request(
+            company_id,
+            request_id,
+            str((req or {}).get("status") or ""),
+            (req or {}).get("note"),
+            actor=_uid(admin) or "",
+        )
+        return {"item": doc}
 
     @router.post("/storage/me/ensure")
     async def my_storage_ensure(user: dict = Depends(get_current_user)):

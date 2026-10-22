@@ -396,6 +396,9 @@ export const MyStoragePanel = () => {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState("");
+  const [askAmount, setAskAmount] = useState("");
+  const [askUnit, setAskUnit] = useState("gb");
+  const [askNote, setAskNote] = useState("");
 
   const load = useCallback(() => axios.get(`${API_URL}/storage/me`, cred)
     .then((r) => setData(r.data))
@@ -411,6 +414,26 @@ export const MyStoragePanel = () => {
       await load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestIncrease = async () => {
+    if (!askAmount.trim()) return;
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/storage/me/increase-request`, {
+        amount: Number(String(askAmount).replace(",", ".")),
+        unit: askUnit,
+        message: askNote.trim(),
+      }, cred);
+      toast.success(r.data.message || "Talebiniz alındı.");
+      setAskAmount("");
+      setAskNote("");
+      await load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Talep gönderilemedi.");
     } finally {
       setBusy(false);
     }
@@ -457,10 +480,45 @@ export const MyStoragePanel = () => {
           </button>
         </div>
         <QuotaBar
-          used={Number(((data.total_bytes || 0) / (1024 * 1024)).toFixed(1))}
+          used={Number(((data.used_bytes ?? data.total_bytes || 0) / (1024 * 1024)).toFixed(1))}
           limit={data.storage_limit_mb || 0}
           testId="my-storage-quota"
         />
+        {data.increase_request ? (
+          <div
+            className={`rounded-xl px-3 py-2 ${data.increase_request.status === "rejected" ? "bg-rose-50 text-rose-800" : data.increase_request.status === "approved" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}
+            data-testid="my-storage-request-status"
+          >
+            {data.increase_request.status === "pending" ? "Talebiniz inceleniyor" : data.increase_request.status === "approved" ? "Son talebiniz onaylandı" : "Son talebiniz reddedildi"}
+            {": "}
+            <b>{data.increase_request.requested_limit_mb} MB</b>
+            {data.increase_request.admin_note ? ` · ${data.increase_request.admin_note}` : ""}
+          </div>
+        ) : null}
+        {data.unlimited || !data.storage_limit_mb ? (
+          <p className="text-slate-500" data-testid="my-storage-unlimited">Depolama limitiniz sınırsız.</p>
+        ) : data.increase_request?.status === "pending" ? null : (
+          <div className="flex flex-wrap gap-2 items-end pt-1" data-testid="my-storage-request-form">
+            <div className="w-28">
+              <label className="block text-[10px] text-slate-500 mb-0.5">Yeni limit</label>
+              <input value={askAmount} onChange={(e) => setAskAmount(e.target.value)} className={inputCls} inputMode="decimal" placeholder="10" data-testid="my-storage-request-amount" />
+            </div>
+            <div className="w-20">
+              <label className="block text-[10px] text-slate-500 mb-0.5">Birim</label>
+              <select value={askUnit} onChange={(e) => setAskUnit(e.target.value)} className={inputCls} data-testid="my-storage-request-unit">
+                <option value="mb">MB</option>
+                <option value="gb">GB</option>
+              </select>
+            </div>
+            <div className="flex-1 min-w-[160px]">
+              <label className="block text-[10px] text-slate-500 mb-0.5">Not</label>
+              <input value={askNote} onChange={(e) => setAskNote(e.target.value)} className={inputCls} placeholder="İsteğe bağlı" data-testid="my-storage-request-note" />
+            </div>
+            <button type="button" disabled={busy || !askAmount.trim()} onClick={requestIncrease} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-bold disabled:opacity-60" data-testid="my-storage-request-send">
+              Limit artışı talep et
+            </button>
+          </div>
+        )}
       </div>
       <div className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-wrap gap-2 items-end">
         <div className="flex-1 min-w-[180px]">

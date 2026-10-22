@@ -4,16 +4,16 @@ Tehlikeli uçlar (kullanıcı silme, anahtar iptali, alt şirket koparma) danger
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from client_ip import request_ip
 import addons
 import platform_store as store
 import saas
 import storage_manager
-from platform_admin_v1 import _auth, _item, _redact
+from platform_admin_v1 import _auth, _item, _page, _redact, _window
 from platform_admin_v1_write import (
     _company_or_404,
     _present,
@@ -122,13 +122,104 @@ async def admin_v1_storage(request: Request):
 async def admin_v1_company_storage(company_id: str, request: Request):
     await _auth(request, store.SCOPE_ADMIN_STORAGE_READ)
     await _storage_company(company_id)
-    summary = await storage_manager.account_storage_summary(company_id)
-    lic = await saas.effective(company_id)
-    company = await saas._db.companies.find_one({"_id": company_id}) or {}
-    summary["company_name"] = company.get("name")
-    summary["storage_limit_mb"] = lic.get("storage_limit_mb") or 0
-    summary["plan_name"] = lic.get("plan_name")
-    return _redact(summary)
+    return _redact(await storage_manager.company_storage_detail(company_id))
+
+
+_LIMIT_FIELDS = ("storage_limit_mb", "amount", "unit", "unlimited")
+_REQUEST_FIELDS = ("status", "note")
+
+
+@router.put("/platform/admin-v1/companies/{company_id}/storage/limit")
+async def admin_v1_storage_limit(company_id: str, request: Request):
+    import storage_quota
+
+    async def prepare(payload: Dict[str, Any]) -> List[str]:
+        _reject_unknown(payload, _LIMIT_FIELDS)
+        storage_quota.parse_admin_limit(payload)
+        await _storage_company(company_id)
+        return _present(payload, _LIMIT_FIELDS)
+
+    async def apply(payload: Dict[str, Any], key_doc: dict):
+        limit_mb = storage_quota.parse_admin_limit(payload)
+        await saas.apply_license_update(company_id, {"storage_limit_mb": limit_mb})
+        return _item(await storage_manager.company_storage_detail(company_id))
+
+    return await _write(
+        request,
+        store.SCOPE_ADMIN_STORAGE_WRITE,
+        "company",
+        company_id,
+        apply,
+        op="storage.limit",
+        prepare=prepare,
+    )
+
+
+@router.get("/platform/admin-v1/companies/{company_id}/storage/requests")
+async def admin_v1_storage_requests(
+    company_id: str,
+    request: Request,
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    import storage_quota
+
+    storage_manager._quota()
+    await _auth(request, store.SCOPE_ADMIN_STORAGE_READ)
+    await _storage_company(company_id)
+    st = (status or "").strip()
+    if st and st not in ("pending", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="Geçersiz durum.")
+    rows = await storage_quota.list_increase_requests(company_id, status=st or None, limit=200)
+    page, total = _window(rows, limit, offset)
+    return _page(page, limit, offset, total)
+
+
+@router.put("/platform/admin-v1/companies/{company_id}/storage/requests/{request_id}")
+async def admin_v1_storage_request_resolve(company_id: str, request_id: str, request: Request):
+    import storage_quota
+
+    async def prepare(payload: Dict[str, Any]) -> List[str]:
+        _reject_unknown(payload, _REQUEST_FIELDS)
+        status = payload.get("status")
+        if status not in ("approved", "rejected"):
+            raise HTTPException(status_code=400, detail="Geçersiz durum.")
+        note = payload.get("note")
+        if "note" in payload and not isinstance(note, str):
+            raise HTTPException(status_code=400, detail="Not metin olmalıdır.")
+        if status == "rejected" and not str(note or "").strip():
+            raise HTTPException(status_code=400, detail="Red notu zorunlu.")
+        await _storage_company(company_id)
+        storage_manager._quota()
+        row = await storage_quota._db.storage_increase_requests.find_one(
+            {"_id": request_id, "company_id": company_id},
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Talep bulunamadı.")
+        if row.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="Talep zaten sonuçlanmış.")
+        return _present(payload, _REQUEST_FIELDS)
+
+    async def apply(payload: Dict[str, Any], key_doc: dict):
+        doc = await storage_quota.resolve_increase_request(
+            company_id,
+            request_id,
+            payload["status"],
+            payload.get("note"),
+            actor=str(key_doc.get("_id") or ""),
+        )
+        return _item(doc)
+
+    return await _write(
+        request,
+        store.SCOPE_ADMIN_STORAGE_WRITE,
+        "storage_increase_request",
+        request_id,
+        apply,
+        op="storage.request.resolve",
+        prepare=prepare,
+    )
 
 
 @router.get("/platform/admin-v1/companies/{company_id}/storage/folders/{area_key}/files")

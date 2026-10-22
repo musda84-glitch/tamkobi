@@ -504,11 +504,18 @@ Yeni kapsamlar `ADMIN_SCOPES` içindedir. Bir `:write` diğerini kapsamaz. `admi
 | `GET /addons` | `admin.settings:read` | `addons._list_addons` |
 | `PUT /addons` | `admin.settings:write` | `{"defaults": {anahtar: bool\|null}}`. Bilinmeyen anahtar **400**. Audit `addon.defaults`. Şirket eklenti aç/kapa A4’te `admin.licenses:write` olarak kalır. |
 | `GET /storage` | `admin.storage:read` | `storage_manager.list_accounts_storage` |
-| `GET /companies/{company_id}/storage` | `admin.storage:read` | `account_storage_summary` + `saas.effective` kota |
+| `GET /companies/{company_id}/storage` | `admin.storage:read` | Klasör dökümü (`file_count`, `bytes`) ve lisans kotası. `used_bytes` denetimle aynı sayıdır (`quota_usage`). `limit_mb` 0 ve `unlimited: true` sınırsızdır. `percent` sınırsızda null. `override_mb` null ise limit paketten gelir. |
+| `PUT /companies/{company_id}/storage/limit` | `admin.storage:write` | Aynı `storage_limit_mb` kaydı (`apply_license_update`). Gövde: `storage_limit_mb` (null = paket, 0 = sınırsız) veya `amount` + `unit` (`mb`\|`gb`) veya `unlimited: true`. Audit `storage.limit`. |
+| `GET /companies/{company_id}/storage/requests` | `admin.storage:read` | Artış talepleri. `status` = `pending`\|`approved`\|`rejected`. Sayfa `items`. |
+| `PUT /companies/{company_id}/storage/requests/{request_id}` | `admin.storage:write` | `status`: `approved` yeni limiti yazar, `rejected` `note` zorunlu. Audit `storage.request.resolve`. |
 | `GET /companies/{company_id}/storage/folders/{area_key}/files` | `admin.storage:read` | `list_folder_files` |
 | `POST /companies/{company_id}/storage/ensure` | `admin.storage:write` | `ensure_account_folders`. Audit `storage.ensure`. |
 | `POST /companies/{company_id}/storage/folders` | `admin.storage:write` | `{"label"}`. Audit `storage.folder`. |
 | `POST /storage/ensure-all` | `admin.storage:write` | her şirket için `ensure_account_folders`. Audit `storage.ensure_all`. |
+
+Yeni kapsam adı yoktur. Depolama sekmesi `admin.storage:read` ve `admin.storage:write` kullanır. Aynı `storage_limit_mb` alanı `admin.quotas:write` ile `PUT /companies/{id}/quotas` üzerinden de yazılır.
+
+Şirket paneli (HMAC değil, oturum): `GET /api/storage/me` aynı özeti ve `increase_request` alanını döner. `POST /api/storage/me/increase-request` gövdesi `amount` + `unit` (`mb` veya `gb`) ya da `limit_mb`, isteğe bağlı `message`. Bekleyen talep varken, limit sınırsızken veya istenen limit mevcut limitten büyük değilken **400**. Yönetici listesi `GET /api/system/storage/{company_id}/requests` (`{"items","total"}`). Karar `PUT /api/system/storage/{company_id}/requests/{request_id}` gövdesi `status` (`approved` veya `rejected`) ve `note`. Onay `apply_license_update` ile limiti yazar. Red notu zorunlu. Şirkete `storage_limit` bildirimi gider (`/settings?tab=storage`). Yükleme `saas.check_storage_limit` ile denetlenir; aşım **403** ve “Depolama limiti aşıldı…” metnidir.
 
 ### Panel kullanıcısı ve API anahtarı
 
