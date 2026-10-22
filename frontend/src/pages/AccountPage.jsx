@@ -418,6 +418,15 @@ function integratorCreditMessage(err) {
   return "Entegratör kontörü yüklenemedi.";
 }
 
+const INTEGRATOR_OFF_NOTICE = "Entegratör bağlı değil, gönderimler TamKobi kontöründen düşer";
+
+function integratorConfiguredFor(wallet, companyId) {
+  if (!wallet) return false;
+  if (wallet.company_id && companyId && wallet.company_id !== companyId) return false;
+  if (wallet.integrator_configured != null) return wallet.integrator_configured === true;
+  return wallet.enforced === false;
+}
+
 export const GibCreditsPanel = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState("");
@@ -430,9 +439,12 @@ export const GibCreditsPanel = ({ companyId }) => {
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { axios.get(`${API_URL}/payments/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, []);
-  const enforcedOff = d?.enforced === false && (!d.company_id || d.company_id === companyId);
+  const integratorConfigured = integratorConfiguredFor(d, companyId);
   useEffect(() => {
-    if (!companyId || !enforcedOff) return undefined;
+    if (!companyId || !integratorConfigured) {
+      setInteg(null);
+      return undefined;
+    }
     let cancelled = false;
     setInteg({ loading: true });
     axios.get(`${API_URL}/e-invoice/integrator-credits`, { params: { company_id: companyId } })
@@ -444,12 +456,16 @@ export const GibCreditsPanel = ({ companyId }) => {
       })
       .catch((err) => {
         if (cancelled) return;
-        setInteg({ loading: false, balance: null, message: integratorCreditMessage(err), error: true });
+        const detail = err?.response?.data?.detail;
+        const message = typeof detail === "string" && detail.trim()
+          ? detail.trim()
+          : integratorCreditMessage(err);
+        setInteg({ loading: false, balance: null, message, error: true });
       });
     return () => { cancelled = true; };
-  }, [companyId, enforcedOff]);
+  }, [companyId, integratorConfigured]);
   if (!d) return <div className="text-xs text-slate-400 p-6">Yükleniyor…</div>;
-  const platformMuted = d.enforced === false;
+  const platformMuted = integratorConfigured;
   const buy = async (pack, via) => {
     setBusy(pack.id + via);
     try {
@@ -467,21 +483,31 @@ export const GibCreditsPanel = ({ companyId }) => {
   return (
     <div className="space-y-4 text-xs" data-testid="gib-credits-panel">
       {paytr && <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4" {...backdropDismissProps(() => setPaytr(null))}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3"><div className="flex justify-between px-2 pb-2"><b>PayTR — GİB Kontör</b><button type="button" onClick={() => setPaytr(null)}>Kapat</button></div><iframe title="PayTR" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" /></div></div>}
-      {platformMuted && (
-        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950" data-testid="gib-integrator-notice">
-          <p>e-Belgeleriniz {integratorName} üzerinden gönderiliyor; kontör entegratörünüzden düşer. Bu TamKobi kontörü yalnız simüle/platform gönderiminde kullanılır.</p>
-          <div className="mt-2 font-semibold" data-testid="gib-integrator-balance">
-            {(!integ || integ.loading) && "Entegratör bakiyesi yükleniyor…"}
-            {integ && !integ.loading && integ.error && <span data-testid="gib-integrator-balance-error">{integ.message}</span>}
-            {integ && !integ.loading && !integ.error && integ.balance != null && (
-              <>Entegratör bakiyesi: <b>{integ.balance.toLocaleString("tr-TR")}</b></>
-            )}
-            {integ && !integ.loading && !integ.error && integ.balance == null && (
-              <span data-testid="gib-integrator-balance-message">{integ.message || "Entegratör kontörü yüklenemedi."}</span>
-            )}
-          </div>
-        </div>
-      )}
+      <div
+        className={integratorConfigured
+          ? "rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-950"
+          : "rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950"}
+        data-testid="gib-integrator-notice"
+        data-state={integratorConfigured ? "configured" : "unconfigured"}
+      >
+        {integratorConfigured ? (
+          <>
+            <p>e-Belgeleriniz {integratorName} üzerinden gönderiliyor; kontör entegratörünüzden düşer. Bu TamKobi kontörü yalnız simüle/platform gönderiminde kullanılır.</p>
+            <div className="mt-2 font-semibold" data-testid="gib-integrator-balance">
+              {(!integ || integ.loading) && "Entegratör bakiyesi yükleniyor…"}
+              {integ && !integ.loading && integ.error && <span data-testid="gib-integrator-balance-error">{integ.message}</span>}
+              {integ && !integ.loading && !integ.error && integ.balance != null && (
+                <>Entegratör bakiyesi: <b>{integ.balance.toLocaleString("tr-TR")}</b></>
+              )}
+              {integ && !integ.loading && !integ.error && integ.balance == null && (
+                <span data-testid="gib-integrator-balance-message">{integ.message || "Entegratör kontörü yüklenemedi."}</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <p>{INTEGRATOR_OFF_NOTICE}</p>
+        )}
+      </div>
       <div className={`bg-slate-900 text-white rounded-2xl p-5 flex flex-wrap items-center gap-4 ${platformMuted ? "opacity-60" : ""}`} data-testid="gib-platform-wallet">
         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${platformMuted ? "bg-slate-600 text-slate-200" : "bg-amber-400 text-slate-900"}`}><Wallet className="w-6 h-6" /></div>
         <div className="flex-1 min-w-[200px]">

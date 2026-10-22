@@ -117,6 +117,7 @@ def test_configured_isnet_is_not_enforced_and_keeps_legacy_shape():
     db = _db({COMP_A: {"provider": "isnet", "status": "configured", "password_enc": "secret"}}, balance=0)
     body = _call(db, COMP_A, _user([COMP_A], COMP_A))
     assert body["enforced"] is False
+    assert body["integrator_configured"] is True
     assert body["integrator_provider"] == "isnet"
     assert body["company_id"] == COMP_A
     assert body["wallet_id"] == f"wallet-{COMP_A}"
@@ -139,6 +140,7 @@ def test_simulated_settings_keep_wallet_enforced():
     db = _db({COMP_A: {"status": "simulated"}, COMP_B: {"provider": "isnet", "status": "configured"}})
     body = _call(db, COMP_A, _user([COMP_A], COMP_A))
     assert body["enforced"] is True
+    assert body["integrator_configured"] is False
     assert body["integrator_provider"] is None
     assert body["balance"] == 0
     assert set(LEGACY_KEYS) <= set(body)
@@ -150,6 +152,7 @@ def test_unconfigured_isnet_still_enforced():
     db = _db({COMP_A: {"provider": "isnet", "status": "simulated"}})
     body = _call(db, COMP_A, _user([COMP_A], COMP_A))
     assert body["enforced"] is True
+    assert body["integrator_configured"] is False
     assert body["integrator_provider"] == "isnet"
 
 
@@ -158,6 +161,7 @@ def test_missing_settings_enforced_and_null_provider():
     body = _call(db, None, _user([COMP_A], COMP_A))
     assert body["company_id"] == COMP_A
     assert body["enforced"] is True
+    assert body["integrator_configured"] is False
     assert body["integrator_provider"] is None
 
 

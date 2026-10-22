@@ -579,6 +579,11 @@ class IsnetPortalClient:
 
     async def get_kontor(self) -> Dict[str, Any]:
         r = await self._client.get("/", headers={"Accept": "text/html"})
+        if r.status_code in (401, 403):
+            exc = HTTPException(status_code=r.status_code, detail="İşNet portal kontör sorgusu reddedildi.")
+            exc.integrator_kind = "ip"
+            exc.integrator_http_status = r.status_code
+            raise exc
         html = r.text or ""
         m = re.search(
             r'id=["\']kontorInfo["\'][^>]*>(.*?)</(?:div|span|td|p)>',
@@ -587,11 +592,13 @@ class IsnetPortalClient:
         )
         raw = re.sub(r"<[^>]+>", " ", m.group(1)).strip() if m else ""
         u = re.search(r"<u[^>]*>(\d+)</u>", html, re.I)
-        remaining = int(u.group(1)) if u else 0
-        if not remaining and raw:
+        remaining = int(u.group(1)) if u else None
+        if remaining is None and raw:
             nums = re.findall(r"\d+", raw)
             if nums:
                 remaining = int(nums[0])
+        if remaining is None:
+            return {"remaining_credits": None, "raw_text": raw}
         return {"remaining_credits": remaining, "raw_text": raw or f"Kalan Kontör : {remaining}"}
 
     async def lookup_turmob(self, tax_id: str) -> Dict[str, Any]:

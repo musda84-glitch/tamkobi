@@ -1332,10 +1332,21 @@ async def _soap_call(
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction": soap_action_header(service_interface, action),
     }
+    quiet_credit = action == "GetCompanyBalance"
+
+    def _credit_http(status: int, detail: str, kind: str, upstream: Optional[int] = None) -> HTTPException:
+        exc = HTTPException(status_code=status, detail=detail)
+        exc.integrator_kind = kind
+        if upstream in (401, 403):
+            exc.integrator_http_status = upstream
+        return exc
+
     try:
         async with _isnet_async_client(timeout=timeout, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
     except httpx.RequestError as e:
+        if quiet_credit:
+            raise _credit_http(502, "Entegratör SOAP'a ulaşılamadı.", "network") from e
         logger.warning(
             "İşNet SOAP unreachable (%s) src=%s: %s",
             action,
@@ -1348,6 +1359,14 @@ async def _soap_call(
         ) from e
     text = _as_text(getattr(resp, "text", "") or "")
     if resp.status_code >= 400:
+        if quiet_credit:
+            kind = "ip" if resp.status_code in (401, 403) else "http"
+            raise _credit_http(
+                502,
+                "Entegratör SOAP yanıtı alınamadı.",
+                kind,
+                resp.status_code,
+            )
         raise _provider_http_exc(
             502,
             "Entegratör SOAP yanıtı alınamadı.",
@@ -1357,6 +1376,8 @@ async def _soap_call(
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
+        if quiet_credit:
+            raise _credit_http(502, "Entegratör SOAP yanıtı okunamadı.", "parse") from e
         logger.warning(
             "İşNet SOAP XML parse (%s): %s body=%s",
             action,
@@ -1369,6 +1390,8 @@ async def _soap_call(
         body = root
     fault = _find_text(body, "faultstring", "FaultString", "Message")
     if body is not None and any(_local(c.tag).lower() == "fault" for c in list(body)):
+        if quiet_credit:
+            raise _credit_http(502, "Entegratör SOAP hatası.", "fault")
         raise _provider_http_exc(
             502,
             "Entegratör SOAP hatası.",

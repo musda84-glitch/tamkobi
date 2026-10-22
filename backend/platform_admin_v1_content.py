@@ -415,8 +415,14 @@ async def admin_v1_gib_gift(company_id: str, request: Request):
         return ["credits"]
 
     async def apply(payload: Dict[str, Any], key_doc: dict):
+        import idempotency
         note = str(payload.get("note") or "Platform yüklemesi")[:200]
-        balance = await gib_credits.gift(company_id, int(payload["credits"]), note)
+        balance = await gib_credits.gift(
+            company_id,
+            int(payload["credits"]),
+            note,
+            request_id=idempotency.header_key(request),
+        )
         return _item({"company_id": company_id, "credits": int(payload["credits"]), "balance": balance})
 
     return await _write(

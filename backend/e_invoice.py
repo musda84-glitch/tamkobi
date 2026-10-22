@@ -11,9 +11,13 @@ import logging
 import re
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
@@ -27,7 +31,7 @@ import tenant_access
 import ubl_export
 from buyer_tax import buyer_tax_choice, usable_tax
 from invoice_edit_lock import invoice_gib_locked
-from safe_error import mask_sensitive_text, public_provider_detail
+from safe_error import looks_like_raw_body, mask_sensitive_text, public_provider_detail
 
 _TR_TZ = ZoneInfo("Europe/Istanbul")
 
@@ -47,6 +51,16 @@ SCENARIO_MAP = {
 
 # issue_invoice canlı gönderim yolu. Yapılandırılmışsa platform cüzdanı düşmez.
 REAL_INTEGRATOR_PROVIDERS = ("n11faturam", "isnet", "isnet_portal", "qnb_efinans")
+
+
+ALREADY_SUBMITTED_DETAIL = "Bu belge zaten gönderildi."
+UNSUPPORTED_ET_DETAIL = "Bu belge türü entegratörünüz üzerinden henüz desteklenmiyor."
+CREDIT_IP_DETAIL = "Sunucu IP'si İşNet'te bu VKN için tanımlı değil olabilir"
+CREDIT_FAULT_DETAIL = "İşNet SOAP Fault döndürdü. Kontör bakiyesi alınamadı."
+CREDIT_NETWORK_DETAIL = "İşNet sunucusuna ulaşılamadı. Ağ hatası nedeniyle kontör sorgulanamadı."
+CREDIT_PARSE_DETAIL = "İşNet kontör yanıtı ayrıştırılamadı."
+CREDIT_BALANCE_MISSING_DETAIL = "İşNet yanıtında bakiye alanı bulunamadı."
+_CREDIT_BALANCE_KEYS = ("remaining_credit", "remaining_credits", "balance", "total_credit")
 
 
 def configured_real_integrator(settings: Optional[dict]) -> bool:
@@ -77,6 +91,14 @@ async def _user_dep(request: Request) -> dict:
 
 def _blank_gib_id(value: Any) -> bool:
     return not str(value or "").strip()
+
+
+def invoice_already_submitted(inv: Optional[dict]) -> bool:
+    """sent/queued ve ETTN veya takip no doluysa yeniden gönderilmez."""
+    state = str((inv or {}).get("einvoice_state") or "").strip().lower()
+    if state not in ("sent", "queued"):
+        return False
+    return not _blank_gib_id((inv or {}).get("gib_uuid")) or not _blank_gib_id((inv or {}).get("gib_tracking_id"))
 
 
 async def migrate_mislabelled_paper_invoices(db) -> int:
@@ -736,6 +758,8 @@ async def issue_invoice(
         raise HTTPException(status_code=400, detail="Gelen e-fatura kesilmez; Onayla/Reddet kullanın.")
     if inv.get("invoice_type") == "purchase" and (e_type or inv.get("e_type")) == "e_invoice":
         raise HTTPException(status_code=400, detail="Alış e-faturası GİB'den gelir; kesim yalnızca satış belgelerinde yapılır.")
+    if invoice_already_submitted(inv):
+        raise HTTPException(status_code=409, detail=ALREADY_SUBMITTED_DETAIL)
 
     inv = await apply_issue_stamp(
         invoice_id,
@@ -1229,6 +1253,18 @@ async def issue_invoice(
             "gib_lookup": gib_meta,
         })
 
+    if configured_real_integrator(settings) and et not in live_etypes:
+        await _db.invoices.update_one(
+            {"_id": invoice_id, "company_id": cid},
+            {"$set": {
+                "einvoice_state": "error",
+                "gib_status": f"Hata: {UNSUPPORTED_ET_DETAIL}",
+                "gib_error": "integrator_etype_unsupported",
+                "error_at": _now(),
+            }},
+        )
+        raise HTTPException(status_code=400, detail=UNSUPPORTED_ET_DETAIL)
+
     if et == "e_dispatch":
         await _db.invoices.update_one(
             {"_id": invoice_id, "company_id": cid},
@@ -1248,9 +1284,11 @@ async def issue_invoice(
         )
 
     remaining = None
-    # Simüle / kağıt dışı yerel GİB yolu — platform kontörü burada düşer
+    # Simüle / kağıt dışı yerel GİB yolu — platform kontörü burada düşer.
+    # Yapılandırılmış gerçek entegratör bu yola düşse bile cüzdan düşmez.
     if consume:
-        remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
+        if not configured_real_integrator(settings):
+            remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
     tracking = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     export = et in ("e_export", "e_ihracat") or inv.get("trade_kind") == "export"
     gib_status = "e-İhracat GİB'e iletildi" if export else "Başarıyla İletildi (GİB Onaylı)"
@@ -1323,13 +1361,136 @@ async def create_from_order(order_id: str, req: Dict[str, Any], user: dict) -> D
     return await finalize_create_result(result, inv_id, order_id=order_id, company_id=company_id or order.get("company_id"))
 
 
+def _credit_detail_text(exc: BaseException) -> str:
+    detail = getattr(exc, "detail", "")
+    return detail if isinstance(detail, str) else ""
+
+
+def _looks_like_fault(exc: BaseException) -> bool:
+    blob = f"{type(exc).__name__} {_credit_detail_text(exc)}".lower()
+    cause = exc.__cause__
+    if cause is not None:
+        blob = f"{blob} {type(cause).__name__}"
+    return "fault" in blob or "soap hatası" in blob
+
+
+def _looks_like_network(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.RequestError):
+        return True
+    cause = exc.__cause__
+    if isinstance(cause, httpx.RequestError):
+        return True
+    blob = f"{type(exc).__name__} {type(cause).__name__ if cause is not None else ''}".lower()
+    if "timeout" in blob or "connecterror" in blob or "networkerror" in blob:
+        return True
+    return "ulaşılamadı" in _credit_detail_text(exc).lower()
+
+
+def _looks_like_parse(exc: BaseException) -> bool:
+    if isinstance(exc, ET.ParseError):
+        return True
+    cause = exc.__cause__
+    if isinstance(cause, ET.ParseError):
+        return True
+    blob = f"{type(exc).__name__} {_credit_detail_text(exc)}".lower()
+    return "parse" in blob or "ayrıştır" in blob or "okunamadı" in blob
+
+
+def credit_query_failure(exc: BaseException) -> tuple:
+    """Kontör sorgu hatasını kullanıcıya kısa Türkçe mesaja çevir."""
+    kind = str(getattr(exc, "integrator_kind", "") or "").strip().lower()
+    status = int(getattr(exc, "status_code", 0) or 0)
+    upstream = int(getattr(exc, "integrator_http_status", 0) or 0)
+    if kind == "ip" or status in (401, 403) or upstream in (401, 403):
+        code = status if status in (401, 403) else upstream if upstream in (401, 403) else 403
+        return code, CREDIT_IP_DETAIL
+    if kind == "fault" or _looks_like_fault(exc):
+        return 502, CREDIT_FAULT_DETAIL
+    if kind == "network" or _looks_like_network(exc):
+        return 502, CREDIT_NETWORK_DETAIL
+    if kind == "parse" or _looks_like_parse(exc):
+        return 502, CREDIT_PARSE_DETAIL
+    detail = _credit_detail_text(exc)
+    if 400 <= status <= 499 and status not in (401, 403) and detail and not looks_like_raw_body(detail):
+        lowered = detail.lower()
+        if "password" not in lowered and "secret" not in lowered and "token" not in lowered:
+            return status, detail
+    code = status if 400 <= status <= 599 else 502
+    return code, public_provider_detail("Entegratör kontör sorgusu başarısız.", detail)
+
+
+def _integrator_credit_host(settings: Optional[dict], provider: str) -> str:
+    try:
+        if provider == "isnet_portal":
+            url = isnet_portal.portal_base(settings or {})
+        else:
+            url = isnet.soap_url(settings or {})
+        return (urlparse(url).hostname or "")[:253]
+    except Exception:
+        return ""
+
+
+def _log_credit_query(settings: Optional[dict], provider: str, action: str, http_status) -> None:
+    mode = isnet.explicit_environment(settings or {}) or "unset"
+    host = _integrator_credit_host(settings, provider) or "-"
+    logger.warning(
+        "integrator credit query action=%s http_status=%s mode=%s host=%s",
+        action,
+        http_status if http_status not in (None, "") else "-",
+        mode,
+        host,
+    )
+
+
+def parsed_credit_balance(bal: Any):
+    """(balance, field_found). Boş/yok alan 0 sayılmaz."""
+    if not isinstance(bal, dict):
+        return None, False
+    for key in _CREDIT_BALANCE_KEYS:
+        if key not in bal:
+            continue
+        raw = bal.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        digits = re.sub(r"[^\d.]", "", text)
+        if not digits or digits == ".":
+            continue
+        try:
+            return int(float(digits)), True
+        except ValueError:
+            continue
+    return None, False
+
+
+async def _portal_kontor(settings: dict) -> Dict[str, Any]:
+    password_fn: Optional[Callable] = _deps.get("password_fn")
+    pwd = ""
+    if password_fn:
+        try:
+            pwd = password_fn(settings) or ""
+        except Exception:
+            pwd = ""
+    client = isnet_portal.IsnetPortalClient(settings, pwd)
+    try:
+        await client.login()
+        return await client.get_kontor()
+    finally:
+        closer = getattr(client, "aclose", None)
+        if closer:
+            await closer()
+
+
 @router.get("/e-invoice/integrator-credits")
 async def api_integrator_credits(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Entegratör (İşNet SOAP vb.) kontör / bakiye — yerel gib-credits cüzdanı değil."""
     cid = tenant_access.resolve_company_id(user, company_id)
     settings = (await _db.einvoice_settings.find_one({"company_id": cid}) if _db else None) or {}
     provider = (settings.get("provider") or "").strip()
-    if settings.get("status") != "configured" or provider not in ("isnet", "isnet_portal", "n11faturam"):
+    # SOAP/portal yalnız configured_real_integrator ve sorgulanabilir sağlayıcıda.
+    if not configured_real_integrator(settings) or provider not in ("isnet", "isnet_portal", "n11faturam"):
         return {
             "company_id": cid,
             "provider": provider or None,
@@ -1337,57 +1498,48 @@ async def api_integrator_credits(company_id: Optional[str] = None, user: dict = 
             "source": "none",
             "message": "Entegratör yapılandırılmamış — kontör bilgisi alınamadı.",
         }
-    password_fn: Optional[Callable] = _deps.get("password_fn")
-    _ = password_fn  # SOAP IP–VKN; şifre gerekmez
     label = {"isnet": "İşNet SOAP", "isnet_portal": "İşNet Portal", "n11faturam": "n11 Faturam"}.get(provider, provider)
+    if provider == "n11faturam":
+        return {
+            "company_id": cid,
+            "provider": provider,
+            "balance": None,
+            "source": provider,
+            "message": "n11 Faturam kontör sorgusu bu uçtan desteklenmiyor.",
+        }
     try:
-        if provider in ("isnet", "isnet_portal"):
-            try:
-                isnet.require_explicit_mode(settings)
-            except HTTPException as e:
-                return {
-                    "company_id": cid,
-                    "provider": provider,
-                    "balance": None,
-                    "source": provider,
-                    "message": e.detail if isinstance(e.detail, str) else isnet.MODE_REQUIRED_DETAIL,
-                }
-            bal = await isnet.get_company_balance(settings)
-            src = provider
-        else:
-            return {
-                "company_id": cid,
-                "provider": provider,
-                "balance": None,
-                "source": provider,
-                "message": "n11 Faturam kontör sorgusu bu uçtan desteklenmiyor.",
-            }
+        isnet.require_explicit_mode(settings)
     except HTTPException as e:
-        logger.warning(
-            "integrator credit query: %s",
-            mask_sensitive_text(str(getattr(e, "detail", e)))[:2000],
-        )
-        raise HTTPException(
-            status_code=e.status_code,
-            detail=public_provider_detail(f"{label} kontör sorgusu başarısız.", e.detail),
-        ) from e
-    except Exception as e:
-        logger.warning("integrator credit query failed: %s", mask_sensitive_text(str(e))[:2000])
-        raise HTTPException(status_code=502, detail="Entegratör kontör sorgusu başarısız.") from e
-
-    raw = bal.get("remaining_credit") or bal.get("balance") or bal.get("total_credit") or ""
-    digits = re.sub(r"[^\d.]", "", str(raw))
+        return {
+            "company_id": cid,
+            "provider": provider,
+            "balance": None,
+            "source": provider,
+            "message": e.detail if isinstance(e.detail, str) else isnet.MODE_REQUIRED_DETAIL,
+        }
+    action = "get_kontor" if provider == "isnet_portal" else "GetCompanyBalance"
     try:
-        balance = int(float(digits)) if digits else None
-    except ValueError:
-        balance = None
+        if provider == "isnet_portal":
+            bal = await _portal_kontor(settings)
+        else:
+            bal = await isnet.get_company_balance(settings)
+    except Exception as e:
+        status, detail = credit_query_failure(e)
+        _log_credit_query(settings, provider, action, status)
+        raise HTTPException(status_code=status, detail=detail) from e
+
+    balance, found = parsed_credit_balance(bal if isinstance(bal, dict) else {})
+    message = (bal.get("message") if isinstance(bal, dict) else None) or f"{label} kontör bakiyesi"
+    if not found:
+        message = CREDIT_BALANCE_MISSING_DETAIL
+        _log_credit_query(settings, provider, action, 200)
     return {
         "company_id": cid,
         "provider": provider,
         "balance": balance,
-        "raw": bal,
-        "source": src,
-        "message": bal.get("message") or f"{label} kontör bakiyesi",
+        "raw": bal if isinstance(bal, dict) else {},
+        "source": provider,
+        "message": message,
     }
 
 
