@@ -66,6 +66,7 @@ _BANK_KEY_TABLE = "storage_bank_external"
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
+_missing_bank_key_logged: set[str] = set()
 # Mühür, okunduğu storage_epoch ile birlikte durur. Epoch değişince eski ref kullanılmaz.
 _sealed_epoch: dict[str, int] = {}
 _registry_lock = threading.Lock()
@@ -168,6 +169,7 @@ def reset_pools() -> None:
         _pools.clear()
         _sealed.clear()
         _sealed_epoch.clear()
+        _missing_bank_key_logged.clear()
 
 
 def is_open(company_id: str) -> bool:
@@ -532,6 +534,17 @@ def _assert_schema(session, company_id: str) -> None:
         raise DedicatedStorageError("Dedicated şema sürümü eski.", company_id=company_id)
 
 
+def _missing_table(exc: BaseException) -> bool:
+    """MySQL 1146 ve sqlite 'no such table'. Başka hatalar buraya girmez."""
+    args = getattr(exc, "args", ())
+    if args and args[0] == 1146:
+        return True
+    text = " ".join(str(part) for part in args).lower()
+    if not text:
+        text = str(exc or "").lower()
+    return "no such table" in text or "doesn't exist" in text or "does not exist" in text
+
+
 def _duplicate(exc: Exception) -> bool:
     if isinstance(exc, sqlite3.IntegrityError):
         return True
@@ -677,24 +690,51 @@ class DedicatedCollection(StorageCollection):
     def _matched(self, session, query) -> list:
         return [doc for doc in self._load(session) if match_query(doc, query)]
 
-    def _has_bank_key(self, session) -> bool:
-        return _BANK_KEY_TABLE in session.tables()
+    def _warn_missing_bank_key(self) -> None:
+        cid = str(self.company_id or "")
+        if cid in _missing_bank_key_logged:
+            return
+        _missing_bank_key_logged.add(cid)
+        _log.warning(
+            "storage_bank_external yok company=%s; banka external_id taraması kullanılıyor",
+            _safe_id(cid),
+        )
+
+    def _key_table_ready(self, session) -> bool:
+        """Anahtar tablosu yoksa veya varlık sorgusu 1146 verirse tarama yeter."""
+        try:
+            present = _BANK_KEY_TABLE in session.tables()
+        except Exception as exc:
+            if _missing_table(exc):
+                self._warn_missing_bank_key()
+                return False
+            raise
+        if not present:
+            self._warn_missing_bank_key()
+            return False
+        return True
 
     def _release_bank_external(self, session, doc_id) -> None:
         if self.name != "bank_transactions" or not doc_id:
             return
-        if not self._has_bank_key(session):
+        if not self._key_table_ready(session):
             return
-        session.execute(
-            f"DELETE FROM {_BANK_KEY_TABLE} WHERE company_id = ? AND doc_id = ?",
-            (self.company_id, str(doc_id)),
-        )
+        try:
+            session.execute(
+                f"DELETE FROM {_BANK_KEY_TABLE} WHERE company_id = ? AND doc_id = ?",
+                (self.company_id, str(doc_id)),
+            )
+        except Exception as exc:
+            if _missing_table(exc):
+                self._warn_missing_bank_key()
+                return
+            raise
 
     def _claim_bank_external(self, session, doc: dict, *, inserting: bool) -> None:
         """(company_id, external_id) banka hareketinde tek olsun.
 
         Güncelleme mevcut kopyayı bozmaz; yeni ekleme aynı external_id'yi reddeder.
-        Anahtar tablosu yoksa tarama yine de ikinci eklemeyi keser.
+        Anahtar tablosu yoksa veya MySQL 1146 verirse tarama ikinci eklemeyi keser.
         """
         if self.name != "bank_transactions":
             return
@@ -717,7 +757,9 @@ class DedicatedCollection(StorageCollection):
             if inserting:
                 raise DuplicateKeyError("Kayıt zaten var.")
             return
-        if not self._has_bank_key(session) or len(ext) > _EXT_MAX or not own:
+        if len(ext) > _EXT_MAX or not own:
+            return
+        if not self._key_table_ready(session):
             return
         self._release_bank_external(session, own)
         try:
@@ -726,6 +768,9 @@ class DedicatedCollection(StorageCollection):
                 (self.company_id, ext, own),
             )
         except Exception as exc:
+            if _missing_table(exc):
+                self._warn_missing_bank_key()
+                return
             if _duplicate(exc):
                 raise DuplicateKeyError("Kayıt zaten var.") from None
             raise
@@ -1019,3 +1064,61 @@ class DedicatedCollection(StorageCollection):
         if old_id is not None and str(old_id) != str(new_id):
             self._delete_ids(session, [old_id])
         self._write(session, new_doc)
+
+
+def _migrate_sealed(sealed: str) -> int:
+    """Bekleyen migration. Uygulanmış sürüm yeniden yazılmaz. DSN loglanmaz."""
+    from storage_migrations.engine import apply as apply_schema
+    from storage_migrations.session import connect
+    from storage_migrations.targets import unseal_dedicated_ref
+
+    dsn = unseal_dedicated_ref(sealed)
+    add_secret(dsn)
+    session = connect(dsn, write=True)
+    try:
+        result = apply_schema(session, confirm=True, dry_run=False)
+        return int(result.advanced)
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+async def apply_pending_schemas(docs) -> list[dict]:
+    """Dedicated belgelerdeki bekleyen şema adımları.
+
+    Legacy atlanır. Mührü olmayan dedicated satır da atlanır. Bir şirket
+    kesilirse diğerleri sürer. Dönüş company_id, advanced ve ok taşır.
+    """
+    import asyncio
+
+    report = []
+    seen = set()
+    for doc in docs or []:
+        if not isinstance(doc, dict):
+            continue
+        mode, _epoch, _locked = storage_router._view(doc)
+        if mode != storage_router.DEDICATED:
+            continue
+        cid = storage_router.canonical_company_id(str(doc.get("_id") or doc.get("id") or ""))
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        sealed = doc.get(storage_router.DSN_FIELD)
+        label = _safe_id(cid)
+        if not isinstance(sealed, str) or not sealed.strip():
+            continue
+        try:
+            advanced = await asyncio.to_thread(_migrate_sealed, sealed)
+        except Exception as exc:
+            _log.warning(
+                "dedicated migration atlandı company=%s error=%s",
+                label,
+                type(exc).__name__,
+            )
+            report.append({"company_id": label, "ok": False, "advanced": 0, "error": type(exc).__name__})
+            continue
+        _log.info("dedicated migration company=%s advanced=%s", label, advanced)
+        report.append({"company_id": label, "ok": True, "advanced": advanced, "error": ""})
+    return report
