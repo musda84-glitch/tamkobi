@@ -117,14 +117,14 @@ class SharedV2Store:
         self.scalar_ok: set = set()
         self.scalar_bad: set = set()
 
-    @property
-    def dialect(self) -> str:
+    def _get_dialect(self) -> str:
         return self._dialect
 
-    @dialect.setter
-    def dialect(self, value: str) -> None:
+    def _set_dialect(self, value: str) -> None:
         self._dialect = value
         self._dialect_pinned = True
+
+    dialect = property(_get_dialect, _set_dialect)
 
     def ensure_dialect(self) -> str:
         """SQL kurulmadan önce lehçe belli olsun. Varsayılan sqlite MySQL'e sızmasın."""
