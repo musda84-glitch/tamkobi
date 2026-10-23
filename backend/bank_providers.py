@@ -13,6 +13,7 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -1784,19 +1785,69 @@ def _norm_key(name: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
+# Aynı satırda onlarca alan okunur. Anahtar katlaması satır başına bir kez yapılır.
+# Değerler her okumada dict'ten alınır; anahtar kümesi değişirse harita yenilenir.
+_ci_cache = threading.local()
+
+
+def _ci_key_map(raw: dict) -> dict:
+    slots = getattr(_ci_cache, "slots", None)
+    if slots is None:
+        slots = {}
+        _ci_cache.slots = slots
+    keys = tuple(raw)
+    hit = slots.get(id(raw))
+    if hit is not None and hit[0] is raw and hit[1] == keys:
+        return hit[2]
+    folded: Dict[str, Any] = {}
+    for key in keys:
+        folded[_norm_key(key)] = key
+    if len(slots) > 32:
+        slots.clear()
+    slots[id(raw)] = (raw, keys, folded)
+    return folded
+
+
 def _ci_get(raw: Any, *names: str) -> Any:
     """Case-insensitive dict get; skips empty values. Turkish letters folded."""
     if not isinstance(raw, dict):
         return None
-    wanted = [_norm_key(n) for n in names]
-    by_norm = {_norm_key(k): v for k, v in raw.items()}
-    for n in wanted:
-        if not n:
+    folded = _ci_key_map(raw)
+    for name in names:
+        norm = _norm_key(name)
+        if not norm:
             continue
-        v = by_norm.get(n)
-        if v is not None and v != "":
-            return v
+        origin = folded.get(norm)
+        if origin is None:
+            continue
+        value = raw.get(origin)
+        if value is not None and value != "":
+            return value
     return None
+
+
+def _payload_heavy(data: Any, limit: int = 32) -> bool:
+    """Büyük ekstre gövdesi. Ayrıştırma döngüyü kilitlemesin."""
+    if isinstance(data, list):
+        return len(data) >= limit
+    if not isinstance(data, dict):
+        return False
+    for value in data.values():
+        if isinstance(value, list) and len(value) >= limit:
+            return True
+        if isinstance(value, dict):
+            for inner in value.values():
+                if isinstance(inner, list) and len(inner) >= limit:
+                    return True
+    return False
+
+
+async def _normalize_tx_rows_offloop(raw: Any) -> List[Dict[str, Any]]:
+    if not _payload_heavy(raw):
+        return _normalize_tx_rows(raw)
+    import platform_lease
+
+    return await platform_lease.call_blocking(_normalize_tx_rows, raw)
 
 
 def _textish(val: Any) -> str:
@@ -2901,12 +2952,12 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 resp = await client.post(url, headers=post_headers, json=body)
             return resp
 
-        def _consume(data: Any, *, as_statement: bool = True, from_ticket: bool = False) -> Optional[Dict[str, Any]]:
+        async def _consume(data: Any, *, as_statement: bool = True, from_ticket: bool = False) -> Optional[Dict[str, Any]]:
             nonlocal balance, got_ok_empty
             bal = _extract_balance(data, prefer_iban=account)
             if bal is not None:
                 balance = bal
-            rows = _normalize_tx_rows(data)
+            rows = await _normalize_tx_rows_offloop(data)
             if rows:
                 return _pack(rows)
             ready = _ticket_ready(data)
@@ -2942,7 +2993,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
             except Exception:
                 data = {}
             logger.info("enpara %s → %s", label, _enpara_response_hint(resp, data))
-            out = _consume(data, as_statement=True)
+            out = await _consume(data, as_statement=True)
             if out and out.get("transactions"):
                 return out
             res_err = _enpara_result_error(data)
@@ -3011,7 +3062,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                     continue
                 if _ticket_ready(data) is False:
                     continue
-                out = _consume(data, as_statement=True, from_ticket=True)
+                out = await _consume(data, as_statement=True, from_ticket=True)
                 if out is not None:
                     return out
             return None
@@ -3098,7 +3149,7 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 except Exception:
                     data = None
                 if data is not None:
-                    out = _consume(data, as_statement=False)
+                    out = await _consume(data, as_statement=False)
                     if out and out.get("transactions"):
                         return out
                     bal = _extract_balance(data, prefer_iban=account)
@@ -3283,7 +3334,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                     bal = _extract_balance(data, prefer_iban=account)
                     if bal is not None:
                         balance = bal
-                    rows = _normalize_tx_rows(data)
+                    rows = await _normalize_tx_rows_offloop(data)
                     if rows:
                         try:
                             rows = await _kuveyt_enrich_rows_from_receipts(conn, token, rows)
@@ -3350,7 +3401,11 @@ async def _fetch_live_transactions(conn: dict, since: datetime) -> Dict[str, Any
         resp = await client.get(f"{base}/v1/accounts/transactions", headers=headers, params=params)
         resp.raise_for_status()
         payload = resp.json()
-    return {"transactions": _normalize_tx_rows(payload), "balance": _extract_balance(payload), "access_token": None}
+    return {
+        "transactions": await _normalize_tx_rows_offloop(payload),
+        "balance": _extract_balance(payload),
+        "access_token": None,
+    }
 
 
 async def fetch_transactions(conn: dict, since: datetime) -> Dict[str, Any]:

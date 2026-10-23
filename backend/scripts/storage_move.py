@@ -154,6 +154,19 @@ def _bytes(docs) -> int:
     return sum(len(_freeze(doc).encode("utf-8")) for doc in docs)
 
 
+def _bytes_and_digest(docs) -> tuple:
+    """Tek JSON geçişi. Bayt ve sağlama ayrı ayrı dondurmakla aynı sonucu verir."""
+    parts = []
+    total = 0
+    for doc in docs:
+        frozen = _freeze(doc)
+        total += len(frozen.encode("utf-8"))
+        parts.append(frozen)
+    parts.sort()
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return total, digest
+
+
 def _chunks(items, size: int):
     step = max(1, int(size or 1))
     rows = list(items)
@@ -724,8 +737,12 @@ async def _company(db, company_id: str):
     return found if isinstance(found, dict) else None
 
 
+# Üst düzey alanlar değişir. İç içe nesnelere dokunulmaz; yazan taraf kendi kopyasını alır.
+_PREPARE_OFFLOAD_AT = 32
+
+
 def _prepare(doc: dict, company_id: str, name: str = "") -> dict:
-    body = copy.deepcopy(doc)
+    body = dict(doc)
     body["_id"] = str(body.get("_id") or "")
     if name == "companies" or _kind(name) == "company":
         for field in _control_fields():
@@ -733,6 +750,49 @@ def _prepare(doc: dict, company_id: str, name: str = "") -> dict:
     if not str(body.get("company_id") or "").strip():
         body["company_id"] = company_id
     return body
+
+
+def _prepare_many(docs, company_id: str, name: str = "") -> list:
+    return [_prepare(doc, company_id, name) for doc in docs if isinstance(doc, dict) and doc.get("_id")]
+
+
+async def _prepare_docs(docs, company_id: str, name: str = "") -> list:
+    rows = [doc for doc in docs or [] if isinstance(doc, dict) and doc.get("_id")]
+    if len(rows) < _PREPARE_OFFLOAD_AT:
+        return [_prepare(doc, company_id, name) for doc in rows]
+    import platform_lease
+
+    return await platform_lease.call_blocking(_prepare_many, rows, company_id, name)
+
+
+def _count_and_bytes(docs, company_id: str, name: str = "") -> tuple:
+    prepared = _prepare_many(docs, company_id, name)
+    return len(prepared), _bytes(prepared)
+
+
+async def _measure_docs(docs, company_id: str, name: str = "") -> tuple:
+    """Kayıt sayısı ve kanonik bayt. Büyük küme döngünün dışında dondurulur."""
+    rows = [doc for doc in docs or [] if isinstance(doc, dict) and doc.get("_id")]
+    if len(rows) < _PREPARE_OFFLOAD_AT:
+        return _count_and_bytes(rows, company_id, name)
+    import platform_lease
+
+    return await platform_lease.call_blocking(_count_and_bytes, rows, company_id, name)
+
+
+def _prepare_with_stats_sync(docs, company_id: str, name: str = ""):
+    prepared = _prepare_many(docs, company_id, name)
+    nbytes, digest = _bytes_and_digest(prepared)
+    return prepared, nbytes, digest
+
+
+async def _prepare_with_stats(docs, company_id: str, name: str = ""):
+    rows = [doc for doc in docs or [] if isinstance(doc, dict) and doc.get("_id")]
+    if len(rows) < _PREPARE_OFFLOAD_AT:
+        return _prepare_with_stats_sync(rows, company_id, name)
+    import platform_lease
+
+    return await platform_lease.call_blocking(_prepare_with_stats_sync, rows, company_id, name)
 
 
 def _check_docs(name: str, docs, company_id: str):
@@ -985,7 +1045,7 @@ async def _inspect(db, company, company_id: str, to_mode: str, ignore_moves=()) 
         except Exception as exc:
             report.errors.append(_safe(exc))
             continue
-        prepared = [_prepare(doc, company_id, name) for doc in docs if doc.get("_id")]
+        prepared, nbytes, digest = await _prepare_with_stats(docs, company_id, name)
         doc_errors, doc_conflicts = _check_docs(name, prepared, company_id)
         report.errors.extend(doc_errors)
         report.conflicts.extend(doc_conflicts)
@@ -994,12 +1054,12 @@ async def _inspect(db, company, company_id: str, to_mode: str, ignore_moves=()) 
         report.collections.append({
             "name": name,
             "count": len(prepared),
-            "bytes": _bytes(prepared),
+            "bytes": nbytes,
             "target": _target_table(to_mode, name),
             "target_count": len(target_docs),
         })
         report.counts[name] = {"source": len(prepared), "target": len(target_docs)}
-        report.checksums[name] = {"source": _digest(prepared), "target": ""}
+        report.checksums[name] = {"source": digest, "target": ""}
     if report.errors or report.conflicts:
         report.ok = False
         report.status = "reddedildi"
@@ -1428,11 +1488,11 @@ async def _drop_docs(coll, company_id: str, name: str, ids, target: str, source:
 async def _apply_sql_delta(conn, tombs, db, company, company_id, source, target, name, copied, watermark, ignore) -> None:
     live = _query_changed(conn, name, company_id, watermark)
     live = _without_mover(name, live, ignore)
-    prepared = []
-    for doc in live:
-        if not doc.get("_id") or not _belongs(doc, name, company_id):
-            continue
-        prepared.append(_prepare(doc, company_id, name))
+    pending = [
+        doc for doc in live
+        if isinstance(doc, dict) and doc.get("_id") and _belongs(doc, name, company_id)
+    ]
+    prepared = await _prepare_docs(pending, company_id, name)
     live_ids = {str(doc["_id"]) for doc in prepared}
     drop = [doc_id for doc_id in tombs.get(name) or [] if doc_id not in live_ids]
     coll = _open(db, target, company_id, name, company)
@@ -1442,11 +1502,7 @@ async def _apply_sql_delta(conn, tombs, db, company, company_id, source, target,
         await _put_docs(coll, company_id, prepared, copied, name)
 
 
-async def _apply_full_diff(db, company, company_id, source, target, name, copied, ignore) -> None:
-    fresh_source = await _read(db, source, company_id, name, company, ignore)
-    fresh_target = await _read(db, target, company_id, name, company, ignore)
-    source_rows = [_prepare(doc, company_id, name) for doc in fresh_source if doc.get("_id")]
-    target_rows = [_prepare(doc, company_id, name) for doc in fresh_target if doc.get("_id")]
+def _diff_rows_sync(source_rows, target_rows):
     source_by = {str(doc["_id"]): doc for doc in source_rows}
     target_by = {str(doc["_id"]): doc for doc in target_rows}
     changed = []
@@ -1455,6 +1511,23 @@ async def _apply_full_diff(db, company, company_id, source, target, name, copied
         if old is None or _freeze(old) != _freeze(doc):
             changed.append(doc)
     missing = [ident for ident in target_by if ident not in source_by]
+    return changed, missing
+
+
+async def _diff_rows(source_rows, target_rows):
+    if len(source_rows) + len(target_rows) < _PREPARE_OFFLOAD_AT:
+        return _diff_rows_sync(source_rows, target_rows)
+    import platform_lease
+
+    return await platform_lease.call_blocking(_diff_rows_sync, source_rows, target_rows)
+
+
+async def _apply_full_diff(db, company, company_id, source, target, name, copied, ignore) -> None:
+    fresh_source = await _read(db, source, company_id, name, company, ignore)
+    fresh_target = await _read(db, target, company_id, name, company, ignore)
+    source_rows = await _prepare_docs(fresh_source, company_id, name)
+    target_rows = await _prepare_docs(fresh_target, company_id, name)
+    changed, missing = await _diff_rows(source_rows, target_rows)
     coll = _open(db, target, company_id, name, company)
     if missing:
         await _drop_docs(coll, company_id, name, missing, target, source)
@@ -1463,6 +1536,7 @@ async def _apply_full_diff(db, company, company_id, source, target, name, copied
 
 
 def _store_verified(name, source_rows, target_rows, target, counts, checksums, collections, steps) -> None:
+    # Sağlama _digest üzerinden gider. Uyuşmazlık geri almayı bu çağrı tetikler.
     source_sum = _digest(source_rows)
     target_sum = _digest(target_rows)
     if len(source_rows) != len(target_rows) or source_sum != target_sum:
@@ -1480,6 +1554,18 @@ def _store_verified(name, source_rows, target_rows, target, counts, checksums, c
     steps.append({"name": f"sağlama:{name}", "status": "tamam"})
 
 
+async def _verify_stored(name, source_rows, target_rows, target, counts, checksums, collections, steps) -> None:
+    heavy = len(source_rows) >= _PREPARE_OFFLOAD_AT or len(target_rows) >= _PREPARE_OFFLOAD_AT
+    if not heavy:
+        _store_verified(name, source_rows, target_rows, target, counts, checksums, collections, steps)
+        return
+    import platform_lease
+
+    await platform_lease.call_blocking(
+        _store_verified, name, source_rows, target_rows, target, counts, checksums, collections, steps,
+    )
+
+
 async def _precopy(db, company, company_id, source, target, copied, progress, batches, *, batch_size, move_id, lost, pace) -> list:
     """Yazma kilidi yokken kaynak anlık görüntüsünü hedefe alır."""
     names = await _names(db, source, company_id, company, target, (move_id,))
@@ -1489,7 +1575,7 @@ async def _precopy(db, company, company_id, source, target, copied, progress, ba
         if name == "companies" and target == storage_router.LEGACY:
             continue
         docs = await _read(db, source, company_id, name, company, (move_id,))
-        prepared = [_prepare(doc, company_id, name) for doc in docs if doc.get("_id")]
+        prepared = await _prepare_docs(docs, company_id, name)
         doc_errors, doc_conflicts = _check_docs(name, prepared, company_id)
         if doc_errors or doc_conflicts:
             raise MoveError("Kaynak doğrulanamadı.")
@@ -1564,13 +1650,13 @@ async def _catch_up(db, company, company_id, source, target, copied, progress, b
             pace.beat = time.monotonic()
             if name == "companies" and target == storage_router.LEGACY:
                 docs = await _read(db, source, company_id, name, company, ignore)
-                prepared = [_prepare(doc, company_id, name) for doc in docs if doc.get("_id")]
+                prepared = await _prepare_docs(docs, company_id, name)
                 await _sync_catalog_company(db, company_id, prepared[0] if prepared else {})
                 loaded = await _read(db, target, company_id, name, company, ignore)
                 fresh_source = await _read(db, source, company_id, name, company, ignore)
-                source_rows = [_prepare(doc, company_id, name) for doc in fresh_source if doc.get("_id")]
-                target_rows = [_prepare(doc, company_id, name) for doc in loaded if doc.get("_id")]
-                _store_verified(name, source_rows, target_rows, target, counts, checksums, collections, steps)
+                source_rows = await _prepare_docs(fresh_source, company_id, name)
+                target_rows = await _prepare_docs(loaded, company_id, name)
+                await _verify_stored(name, source_rows, target_rows, target, counts, checksums, collections, steps)
                 continue
             coll = _open(db, target, company_id, name, company)
             if target == storage_router.SHARED_V2 and name not in mirrored:
@@ -1588,11 +1674,11 @@ async def _catch_up(db, company, company_id, source, target, copied, progress, b
                 await _remember_progress(db, company_id, move_id, progress, pace, force=True)
             fresh_source = await _read(db, source, company_id, name, company, ignore)
             fresh_target = await _read(db, target, company_id, name, company, ignore)
-            source_rows = [_prepare(doc, company_id, name) for doc in fresh_source if doc.get("_id")]
-            target_rows = [_prepare(doc, company_id, name) for doc in fresh_target if doc.get("_id")]
+            source_rows = await _prepare_docs(fresh_source, company_id, name)
+            target_rows = await _prepare_docs(fresh_target, company_id, name)
             if not source_rows and not target_rows and name not in live_set:
                 continue
-            _store_verified(name, source_rows, target_rows, target, counts, checksums, collections, steps)
+            await _verify_stored(name, source_rows, target_rows, target, counts, checksums, collections, steps)
             if target == storage_router.SHARED_V2 or source == storage_router.SHARED_V2:
                 side = coll if target == storage_router.SHARED_V2 else _open(db, source, company_id, name, company)
                 rows = target_rows if target == storage_router.SHARED_V2 else source_rows
@@ -2142,7 +2228,7 @@ async def _reverse(db, company, company_id: str, source_mode: str, current_mode:
         await _beat_due(db, company_id, move_id, lost, pace)
         current_docs = await _read(db, current_mode, company_id, name, company, skip)
         previous_docs = await _read(db, source_mode, company_id, name, company, skip)
-        current_prepared = [_prepare(doc, company_id, name) for doc in current_docs if doc.get("_id")]
+        current_prepared = await _prepare_docs(current_docs, company_id, name)
         previous_by_id = {str(doc.get("_id")): doc for doc in previous_docs if doc.get("_id")}
         current_by_id = {str(doc.get("_id")): doc for doc in current_prepared}
         if name == "companies" and source_mode == storage_router.LEGACY:

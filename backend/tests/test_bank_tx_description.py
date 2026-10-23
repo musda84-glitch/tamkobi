@@ -21,6 +21,29 @@ def test_ci_get_reads_turkish_aciklama():
     assert bp._ci_get(row, "aciklama", "description") == "SHELL ISTANBUL"
 
 
+def test_ci_get_folds_keys_once_and_reads_live_values(monkeypatch):
+    calls = {"n": 0}
+    real = bp._norm_key
+
+    def wrapped(name):
+        calls["n"] += 1
+        return real(name)
+
+    monkeypatch.setattr(bp, "_norm_key", wrapped)
+    bp._ci_cache.slots = {}
+    row = {f"alan{i}": i for i in range(20)}
+    row["Açıklama"] = "BIR"
+    row["aciklama"] = "SON"
+    assert bp._ci_get(row, "description", "aciklama") == "SON"
+    after_first = calls["n"]
+    assert bp._ci_get(row, "aciklama") == "SON"
+    assert calls["n"] == after_first + 1
+    row["aciklama"] = "IKI"
+    assert bp._ci_get(row, "aciklama") == "IKI"
+    row["yeni"] = "ek"
+    assert bp._ci_get(row, "yeni") == "ek"
+
+
 def test_normalize_uses_turkish_description_and_counterparty():
     rows = bp._normalize_tx_rows({
         "hareketler": [
