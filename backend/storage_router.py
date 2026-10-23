@@ -750,6 +750,25 @@ async def warm_dedicated_refs(db) -> list[dict]:
     return report
 
 
+async def apply_dedicated_migrations(db) -> list[dict]:
+    """Açılışta dedicated veritabanlarına bekleyen migration.
+
+    Şema ilk hazırlıkta ve taşıma hedefi kurulurken uygulanır. Çalışan
+    süreç bundan sonra yeni sürümü görmez; bu çağrı kaldığı sürümden
+    sürer. Idempotenttir. Legacy ve mühürsüz satır atlanır. DSN loglanmaz.
+    """
+    if not enabled() or db is None:
+        return []
+    try:
+        docs = await _catalog_companies(db)
+    except Exception as exc:
+        _job_logger().warning("dedicated migration okunamadı: %s", type(exc).__name__)
+        return []
+    import storage_dedicated
+
+    return await storage_dedicated.apply_pending_schemas(docs)
+
+
 async def open_company_store(db, company_id: str) -> CompanyStore:
     """Tek şirketin deposu. Açılamazsa hata verir; çağıran loglayıp devam eder.
 

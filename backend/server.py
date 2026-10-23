@@ -381,6 +381,14 @@ async def startup_event():
                     "dedicated ref kontrolü atlandı: %s",
                     type(_warm_exc).__name__,
                 )
+            try:
+                import storage_router as _storage_router
+                await _storage_router.apply_dedicated_migrations(db)
+            except Exception as _mig_exc:
+                logger.warning(
+                    "dedicated migration atlandı: %s",
+                    type(_mig_exc).__name__,
+                )
             await seed_all_data(db)
             await seed_partners(db)
             await seed_shopfloor_pins(db)
