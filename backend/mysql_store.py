@@ -78,6 +78,59 @@ def parse_ts(value: Optional[str]):
     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _doc_change_stamp(doc: dict):
+    """Satırın değişim anı. Yazının damgası, yoksa belgedeki updated_at / created_at."""
+    if not isinstance(doc, dict):
+        return None
+    for key in ("_row_updated_at", "updated_at", "created_at"):
+        raw = doc.get(key)
+        if not raw:
+            continue
+        parsed = parse_ts(str(raw))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def changed_window(docs, since: Optional[str], limit: int = 3000):
+    """changed_since sayfası. since boşsa tamamı. Sınır satırı tekrar gelir.
+
+    Dönüş: (belgeler, cursor, more). Cursor ISO zamandır.
+    """
+    parsed = parse_ts(since)
+    try:
+        cap = int(limit)
+    except (TypeError, ValueError):
+        cap = 3000
+    if cap < 1:
+        cap = 1
+    ranked = []
+    for doc in docs or []:
+        if not isinstance(doc, dict):
+            continue
+        stamp = _doc_change_stamp(doc)
+        ranked.append((stamp or datetime.min, str(doc.get("_id") or ""), stamp, doc))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    if parsed is not None:
+        ranked = [item for item in ranked if item[2] is not None and item[2] >= parsed]
+    more = len(ranked) > cap
+    page = ranked[:cap]
+    out = []
+    cursor = since
+    for _order, _ident, stamp, doc in page:
+        body = dict(doc)
+        if stamp is not None:
+            text = iso_ts(stamp)
+            body["_row_updated_at"] = text
+            cursor = text
+        out.append(body)
+    if not out and parsed is None:
+        cursor = iso_ts(datetime.now(timezone.utc))
+    elif not out:
+        cursor = since
+    return out, cursor, more
+
+
 def _audit_sql(op: str, collection: str, doc_id=None, duration_ms: float = 0):
     try:
         from applog import log_sql
@@ -2264,9 +2317,31 @@ class MySQLCollection:
             await self._db.sync_tombstones.insert_one(body)
 
     async def changed_since(self, since: Optional[str] = None, company_id: Optional[str] = None, limit: int = 3000) -> Tuple[List[dict], Optional[str], bool]:
-        """SQL-level delta: rows whose docs.updated_at is >= since, optionally scoped by company_id."""
+        """SQL-level delta: rows whose docs.updated_at is >= since, optionally scoped by company_id.
+
+        Dedicated ve shared_v2 şirket satırı paylaşılan docs tablosuna inmez.
+        Yönlendirme yoksa (legacy, bayrak kapalı, taşımanın yazarı) katalog sorgusu sürer.
+        """
         _guard(self.name, "changed_since", company_id=company_id)
         if company_id:
+            routed = await _route_read(self, {"company_id": str(company_id)})
+            if routed is not None:
+                reader = getattr(routed, "changed_since", None)
+                if reader is None:
+                    import storage_router
+
+                    raise storage_router.StorageModeError(
+                        storage_router.catalog_blocked_message(
+                            str(getattr(routed, "_pinned_mode", "") or ""),
+                            str(company_id),
+                            write=False,
+                        ),
+                        company_id=str(company_id),
+                    )
+                result = reader(since, company_id=company_id, limit=limit)
+                if hasattr(result, "__await__"):
+                    result = await result
+                return result
             await _block_shared_copy(self, query={"company_id": str(company_id)}, write=False)
         await self._db._ensure()
         sql = "SELECT doc, updated_at FROM docs WHERE collection=%s"

@@ -18,12 +18,14 @@ import threading
 import uuid
 from collections import OrderedDict
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import storage_router
 from mysql_store import (
     DuplicateKeyError,
     aggregate_rows,
     apply_update,
+    changed_window,
     dumps,
     loads,
     match_query,
@@ -59,6 +61,8 @@ _SEALED_MAX = 1024
 STORAGE_RECORDS_VERSION = 4
 _DOC_ID_MAX = 191
 _COMPANY_ID_MAX = 64
+_EXT_MAX = 191
+_BANK_KEY_TABLE = "storage_bank_external"
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
@@ -583,6 +587,19 @@ def _reject_update_lengths(query, update) -> None:
     _reject_field_lengths(update.get("_id"), update)
 
 
+def _external_text(doc) -> str:
+    if not isinstance(doc, dict):
+        return ""
+    return str(doc.get("external_id") or "").strip()
+
+
+def _touch_row(doc: dict) -> dict:
+    """Yazılan belgenin değişim damgası. API bunu istemciye vermeden ayıklar."""
+    body = dict(doc)
+    body["_row_updated_at"] = datetime.now(timezone.utc).isoformat()
+    return body
+
+
 def _upsert_sql(dialect: str) -> str:
     if dialect == "mysql":
         return "REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
@@ -660,11 +677,65 @@ class DedicatedCollection(StorageCollection):
     def _matched(self, session, query) -> list:
         return [doc for doc in self._load(session) if match_query(doc, query)]
 
-    def _write(self, session, doc: dict) -> None:
-        body = dict(doc)
+    def _has_bank_key(self, session) -> bool:
+        return _BANK_KEY_TABLE in session.tables()
+
+    def _release_bank_external(self, session, doc_id) -> None:
+        if self.name != "bank_transactions" or not doc_id:
+            return
+        if not self._has_bank_key(session):
+            return
+        session.execute(
+            f"DELETE FROM {_BANK_KEY_TABLE} WHERE company_id = ? AND doc_id = ?",
+            (self.company_id, str(doc_id)),
+        )
+
+    def _claim_bank_external(self, session, doc: dict, *, inserting: bool) -> None:
+        """(company_id, external_id) banka hareketinde tek olsun.
+
+        Güncelleme mevcut kopyayı bozmaz; yeni ekleme aynı external_id'yi reddeder.
+        Anahtar tablosu yoksa tarama yine de ikinci eklemeyi keser.
+        """
+        if self.name != "bank_transactions":
+            return
+        ext = _external_text(doc)
+        if not ext:
+            return
+        own = str(doc.get("_id") or "")
+        conflict = False
+        for existing in self._load(session):
+            if str(existing.get("_id") or "") == own:
+                continue
+            if _external_text(existing) != ext:
+                continue
+            owner = str(existing.get("company_id") or "")
+            if owner and storage_router.canonical_company_id(owner) != self.company_id:
+                continue
+            conflict = True
+            break
+        if conflict:
+            if inserting:
+                raise DuplicateKeyError("Kayıt zaten var.")
+            return
+        if not self._has_bank_key(session) or len(ext) > _EXT_MAX or not own:
+            return
+        self._release_bank_external(session, own)
+        try:
+            session.execute(
+                f"INSERT INTO {_BANK_KEY_TABLE} (company_id, external_id, doc_id) VALUES (?, ?, ?)",
+                (self.company_id, ext, own),
+            )
+        except Exception as exc:
+            if _duplicate(exc):
+                raise DuplicateKeyError("Kayıt zaten var.") from None
+            raise
+
+    def _write(self, session, doc: dict, *, inserting: bool = False) -> None:
+        body = _touch_row(doc)
         if not body.get("_id"):
             body["_id"] = str(uuid.uuid4())
         _reject_field_lengths(body["_id"], body)
+        self._claim_bank_external(session, body, inserting=inserting)
         session.execute(
             _upsert_sql(session.dialect),
             (self.name, str(body["_id"]), dumps(body)),
@@ -673,6 +744,7 @@ class DedicatedCollection(StorageCollection):
     def _delete_ids(self, session, ids) -> int:
         removed = 0
         for doc_id in ids:
+            self._release_bank_external(session, doc_id)
             session.execute(
                 "DELETE FROM storage_records WHERE collection = ? AND doc_id = ?",
                 (self.name, str(doc_id)),
@@ -698,6 +770,24 @@ class DedicatedCollection(StorageCollection):
         cursor.limit(1)
         rows = await cursor.to_list(1)
         return rows[0] if rows else None
+
+    async def changed_since(self, since=None, company_id=None, limit: int = 3000):
+        """storage_records satırları. Paylaşılan docs tablosu okunmaz."""
+        self._guard("changed_since", company_id=company_id)
+        requested = str(company_id or "").strip()
+        if requested and storage_router.canonical_company_id(requested) != self.company_id:
+            return [], since, False
+
+        def work(session):
+            docs = []
+            for doc in self._load(session):
+                owner = str(doc.get("company_id") or self.company_id)
+                if storage_router.canonical_company_id(owner) != self.company_id:
+                    continue
+                docs.append(doc)
+            return changed_window(docs, since, limit)
+
+        return self._run(work)
 
     async def count_documents(self, query=None):
         self._guard("count_documents", query=query)
@@ -730,7 +820,7 @@ class DedicatedCollection(StorageCollection):
 
     async def insert_one(self, doc: dict):
         self._guard("insert_one", doc=doc)
-        body = copy.deepcopy(doc or {})
+        body = _touch_row(copy.deepcopy(doc or {}))
         if not body.get("_id"):
             body["_id"] = str(uuid.uuid4())
         _reject_field_lengths(body["_id"], body)
@@ -738,6 +828,7 @@ class DedicatedCollection(StorageCollection):
 
         def work(session):
             try:
+                self._claim_bank_external(session, body, inserting=True)
                 session.execute(
                     "INSERT INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)",
                     (self.name, str(body["_id"]), dumps(body)),
@@ -787,7 +878,7 @@ class DedicatedCollection(StorageCollection):
                 if not upsert:
                     return UpdateResult(0, 0, None)
                 created = new_upsert_doc(update, query)
-                self._write(session, created)
+                self._write(session, created, inserting=True)
                 session.commit()
                 return UpdateResult(0, 1, created.get("_id"))
             old = found[0]
@@ -820,7 +911,7 @@ class DedicatedCollection(StorageCollection):
                 if not upsert:
                     return UpdateResult(0, 0, None)
                 created = new_upsert_doc(update, query)
-                self._write(session, created)
+                self._write(session, created, inserting=True)
                 session.commit()
                 return UpdateResult(0, 1, created.get("_id"))
             changed = 0
@@ -849,7 +940,7 @@ class DedicatedCollection(StorageCollection):
                     return UpdateResult(0, 0, None)
                 if not body.get("_id"):
                     body["_id"] = str(uuid.uuid4())
-                self._write(session, body)
+                self._write(session, body, inserting=True)
                 session.commit()
                 return UpdateResult(0, 1, body.get("_id"))
             old = found[0]
@@ -878,7 +969,7 @@ class DedicatedCollection(StorageCollection):
                 if not upsert:
                     return None
                 created = new_upsert_doc(update, query)
-                self._write(session, created)
+                self._write(session, created, inserting=True)
                 session.commit()
                 return project_doc(created, projection)
             old = found[0]

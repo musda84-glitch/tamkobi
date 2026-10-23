@@ -15110,12 +15110,24 @@ async def _sync_bank_connection_core(
 
     inserted, skipped, balance_delta = 0, 0, 0.0
     new_txs = []
+    seen_ext = set()
     for t in result["transactions"]:
-        exists = await db.bank_transactions.find_one({
-            "account_id": acc["_id"],
-            "external_id": t["external_id"],
-            "company_id": cid,
-        })
+        ext = str(t.get("external_id") or "").strip()
+        if ext and ext in seen_ext:
+            skipped += 1
+            continue
+        if ext:
+            # Aynı external_id hesap değişse de tek hareket. Üç kip de bu sorguyu kullanır.
+            exists = await db.bank_transactions.find_one({
+                "company_id": cid,
+                "external_id": ext,
+            })
+        else:
+            exists = await db.bank_transactions.find_one({
+                "account_id": acc["_id"],
+                "external_id": t.get("external_id"),
+                "company_id": cid,
+            })
         if exists:
             # Eski "Banka Hareketi" vb. kayıtları bankadan gelen açıklama/karşı tarafla doldur
             patch: Dict[str, Any] = {}
@@ -15135,11 +15147,12 @@ async def _sync_bank_connection_core(
                     {"_id": exists["_id"], "company_id": cid},
                     {"$set": patch},
                 )
+            if ext:
+                seen_ext.add(ext)
             skipped += 1
             continue
         suggestion = await _suggest_contact(cid, t.get("counterparty", ""), t.get("description", ""))
         is_credit = t["direction"] == "credit"
-        balance_delta += t["amount"] if is_credit else -t["amount"]
         tx = BankTransaction(
             company_id=cid, account_id=acc["_id"], account_name=acc.get("account_name"),
             type="inflow" if is_credit else "outflow",
@@ -15147,7 +15160,7 @@ async def _sync_bank_connection_core(
             amount=t["amount"], currency=t.get("currency", "TRY"),
             description=t["description"],
             counterparty=(t.get("counterparty") or None) or None,
-            external_id=t["external_id"], source="bank_sync",
+            external_id=ext or t.get("external_id"), source="bank_sync",
             is_simulated=t.get("is_simulated", False), match_status="unmatched",
             suggested_contact_id=suggestion["_id"] if suggestion else None,
             suggested_contact_name=suggestion.get("name") if suggestion else None,
@@ -15155,7 +15168,18 @@ async def _sync_bank_connection_core(
         )
         tx_doc = tx.to_mongo()
         tx_doc["company_id"] = cid
-        await db.bank_transactions.insert_one(tx_doc)
+        if ext:
+            tx_doc["external_id"] = ext
+        try:
+            await db.bank_transactions.insert_one(tx_doc)
+        except DuplicateKeyError:
+            if ext:
+                seen_ext.add(ext)
+            skipped += 1
+            continue
+        if ext:
+            seen_ext.add(ext)
+        balance_delta += t["amount"] if is_credit else -t["amount"]
         new_txs.append(tx_doc)
         inserted += 1
 
