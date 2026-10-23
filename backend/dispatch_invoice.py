@@ -1,7 +1,46 @@
 """İrsaliye ↔ fatura bağlama ve giden irsaliyeleri tek satış faturasında birleştirme."""
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import functools
+import inspect
 from typing import Any, Dict, List, Optional, Sequence
+
+_block_new_orders: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "dispatch_invoice_block_new_orders", default=False,
+)
+
+ORDER_CREATE_BLOCKED = (
+    "İrsaliye birleştirme veya faturaya dönüşüm sırasında yeni sipariş açılamaz."
+)
+
+
+def order_insert_blocked() -> bool:
+    return bool(_block_new_orders.get())
+
+
+@contextlib.contextmanager
+def forbid_new_orders():
+    """Birleştirme ve irsaliye→fatura süresince satış siparişi insert'ini kapatır."""
+    token = _block_new_orders.set(True)
+    try:
+        yield
+    finally:
+        _block_new_orders.reset(token)
+
+
+def guard_no_new_orders(fn):
+    """Uç noktayı, gövdesindeki sorgular aynı fonksiyonda kalacak şekilde sarar."""
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        with forbid_new_orders():
+            return await fn(*args, **kwargs)
+
+    wrapper.__signature__ = signature
+    return wrapper
 
 
 def _is_sales_invoice(inv: Optional[Dict[str, Any]]) -> bool:
@@ -664,6 +703,7 @@ _CARRY_KEYS = (
 )
 
 
+@guard_no_new_orders
 async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, company_id: str, products: Dict[str, Any], create_invoice) -> Dict[str, Any]:
     """Doğrulanmış irsaliyelerden tek TASLAK satış faturası. Aynı irsaliye ikinci faturaya girmez."""
     cid = str(company_id or "").strip()

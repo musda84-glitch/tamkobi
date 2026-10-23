@@ -21,6 +21,9 @@ class _Cursor:
     def sort(self, *args, **kwargs):
         return self
 
+    def limit(self, n=None):
+        return self
+
     async def to_list(self, n=None):
         rows = self.rows if n is None else self.rows[:n]
         return [dict(r) for r in rows]
@@ -103,6 +106,7 @@ class FakeDB:
         self.bank_transactions = FakeColl()
         self.partner_transactions = FakeColl()
         self.counters = FakeColl()
+        self.companies = FakeColl()
         self.einvoice_settings = FakeColl()
         self.idempotency_keys = None
 
@@ -780,3 +784,107 @@ def test_issue_rejects_draft_dispatch_and_ubl_uses_gib_number_once():
     assert "2026-10-09" in xml
     assert "IRS-2" not in xml.split("<cac:DespatchDocumentReference>")[1].split("</cac:DespatchDocumentReference>")[0]
     assert "<cbc:DocumentTypeCode>IRSALIYE</cbc:DocumentTypeCode>" not in xml
+
+
+ERSAY = "ERSAY HOME ÜRETİM TEDARİK İÇ VE DIŞ TİCARET LİMİTED ŞTİ."
+
+
+def test_merge_and_convert_do_not_create_b2b_order():
+    """Alıcı ünvanı başka bir TamKobi şirketi olsa da birleştirme ve dönüşüm sipariş açmaz."""
+    import dispatch_invoice
+    import server
+    from models import Order, OrderItem
+
+    db = FakeDB()
+    db.companies.docs.append({"_id": "comp_9039c0ec", "name": ERSAY})
+    shelf = _item("Duvar Rafı", 2, price=4567.08, discount=0)
+    d1 = _dispatch(
+        "d1", "IRS-1", order_id="o1", order_number="SIP-1",
+        contact_name=ERSAY, items=[shelf], currency="TRY", fx_rate=1, fx_source="manual",
+    )
+    d2 = _dispatch(
+        "d2", "IRS-2", order_id="o2", order_number="SIP-2",
+        contact_name=ERSAY, items=[_item("Duvar Rafı", 1, price=1826.84, discount=0)],
+        currency="TRY", fx_rate=1, fx_source="manual",
+    )
+    d3 = _dispatch(
+        "d3", "IRS-3", order_id="o3", order_number="SIP-3",
+        contact_name=ERSAY, items=[dict(shelf)],
+        currency="TRY", fx_rate=1, fx_source="manual",
+        general_discount_rate=0,
+    )
+    _seed(db, [d1, d2, d3], [
+        {
+            "_id": "o1", "company_id": "c1", "invoice_id": None, "is_invoiced": False,
+            "order_number": "SIP-1", "contact_id": "ct1", "customer_name": ERSAY,
+            "channel": "manual", "order_status": "approved",
+            "items": [{"product_id": "p1", "product_name": "Duvar Rafı", "quantity": 2, "unit_price": 100, "vat_rate": 20, "total": 200}],
+            "currency": "TRY", "subtotal": 200, "vat_total": 40, "grand_total": 240,
+        },
+        {
+            "_id": "o2", "company_id": "c1", "invoice_id": None, "is_invoiced": False,
+            "order_number": "SIP-2", "contact_id": "ct1", "customer_name": ERSAY,
+            "channel": "b2b", "order_status": "approved",
+        },
+        {
+            "_id": "o3", "company_id": "c1", "invoice_id": None, "is_invoiced": False,
+            "order_number": "SIP-3", "contact_id": "ct1", "customer_name": ERSAY,
+            "channel": "manual", "order_status": "approved",
+        },
+    ])
+    db.contacts.docs[0]["name"] = ERSAY
+    contact = {
+        "_id": "ct1", "company_id": "c1", "name": ERSAY,
+        "email": "ersay@example.com", "phone": "0212", "address": "Adres", "city": "İstanbul",
+    }
+    line = OrderItem(product_name="Duvar Rafı", quantity=1, unit_price=100, vat_rate=20, total=100)
+    fresh_order = Order(
+        company_id="c1", channel="b2b", customer_name=ERSAY,
+        shipping_address="Adres", city="İstanbul", items=[line], total_amount=120,
+    )
+    blocked = []
+    real_point = dispatch_invoice._point_orders
+
+    async def _point_and_refuse(*args, **kwargs):
+        with pytest.raises(HTTPException) as b2b_exc:
+            await server._create_b2b_order_core(contact, [line], {})
+        with pytest.raises(HTTPException) as panel_exc:
+            await server.create_order(fresh_order, USER)
+        blocked.append((b2b_exc.value.status_code, panel_exc.value.status_code))
+        await real_point(*args, **kwargs)
+
+    async def _go():
+        with patch.object(server, "db", db), patch.object(dispatch_invoice, "_point_orders", _point_and_refuse):
+            merged = await server._merge_dispatches_core(["d1", "d2"], USER, company_id="c1")
+            before_convert = [o["_id"] for o in db.orders.docs]
+            converted = await server.convert_dispatch_to_invoice("d3", {}, USER)
+            dispatched = await server.create_dispatch("o1", USER)
+        return merged, converted, dispatched, before_convert
+
+    merged, converted, dispatched, before_convert = _run(_go())
+    numbers = [o.get("order_number") for o in db.orders.docs]
+    assert numbers == ["SIP-1", "SIP-2", "SIP-3"]
+    assert before_convert == ["o1", "o2", "o3"]
+    assert blocked == [(409, 409), (409, 409)]
+    assert not any(str(c.get("_id") or "").startswith("B2B-") for c in db.counters.docs)
+    assert merged["contact_name"] == ERSAY
+    assert converted["status"] in ("success", "exists", "linked")
+    assert dispatched["status"] in ("success", "exists")
+    assert not any(str(o.get("order_number") or "").startswith("B2B-") for o in db.orders.docs)
+
+    async def _portal():
+        with patch.object(server, "db", db), \
+             patch.object(server, "_notify_company", AsyncMock()), \
+             patch.object(server, "_attach_draft_invoice_on_intake", AsyncMock()), \
+             patch.object(server, "_clear_b2b_active_cart", AsyncMock()):
+            return await server._create_b2b_order_core(contact, [line], {})
+
+    opened = _run(_portal())
+    b2b_rows = [o for o in db.orders.docs if str(o.get("order_number") or "").startswith("B2B-")]
+    assert len(b2b_rows) == 1
+    assert b2b_rows[0]["order_status"] == "pending"
+    assert b2b_rows[0]["channel"] == "b2b"
+    assert b2b_rows[0]["source"] == "b2b_portal"
+    assert b2b_rows[0]["customer_name"] == ERSAY
+    assert b2b_rows[0]["company_id"] == "c1"
+    assert opened["order"]["order_number"] == b2b_rows[0]["order_number"]
