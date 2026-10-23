@@ -10429,11 +10429,35 @@ def _purchase_tracks_stock(inv: dict) -> bool:
     return inv.get("stock_effects_applied") is not None
 
 
+async def _guard_effect_storage(company_id: str) -> None:
+    """Çok adımlı cari/stok yazısından önce dedicated ref'i doğrula. Yazmaz.
+
+    DSN yoksa ilk bakiye satırından önce DedicatedStorageError. Kilitli şirkette
+    de aynı şekilde, kısmi etki kalmaz.
+    """
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    import storage_router
+
+    if not storage_router.enabled():
+        return
+    mode, _epoch, locked = await storage_router.load_view(db, cid)
+    if locked:
+        raise storage_router.StorageWriteLocked(storage_router.WRITE_LOCK_MESSAGE, company_id=cid)
+    if mode != storage_router.DEDICATED:
+        return
+    import storage_dedicated
+
+    storage_dedicated.collection(db, cid, "invoices")
+
+
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + satış stok düşümü / alış stok girişi. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
     cid = str(inv.get("company_id") or "").strip()
+    await _guard_effect_storage(cid)
     if inv.get("contact_id"):
         change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
@@ -10463,6 +10487,7 @@ async def _reverse_invoice_effects(inv: dict):
     if _is_dispatch_doc(inv):
         return
     cid = str(inv.get("company_id") or "").strip()
+    await _guard_effect_storage(cid)
     if inv.get("contact_id"):
         change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
@@ -19285,64 +19310,112 @@ async def _try_shopphp_settlement(order: dict, contact: Optional[dict] = None, i
         logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", (order or {}).get("order_number"))
 
 
+_marketplace_holds: Dict[str, dict] = {}
+
+
+def _marketplace_hold_key(company_id: str, doc: dict) -> str:
+    channel = str((doc or {}).get("channel") or "").strip()
+    number = str((doc or {}).get("order_number") or "").strip()
+    return "\n".join((str(company_id or "").strip(), channel, number))
+
+
+def _remember_marketplace_hold(company_id: str, doc: dict) -> None:
+    """Yazma kilidinde kalmış sipariş. Sonraki senkron aynı işçiden yeniden dener.
+
+    Belge loglanmaz; müşteri adı, VKN ve ETTN yazılmaz.
+    """
+    if not isinstance(doc, dict):
+        return
+    if not str(doc.get("channel") or "").strip() or not str(doc.get("order_number") or "").strip():
+        return
+    try:
+        body = json.loads(json.dumps(doc, default=str))
+    except Exception:
+        body = dict(doc)
+    _marketplace_holds[_marketplace_hold_key(company_id, doc)] = {
+        "company_id": str(company_id or ""),
+        "doc": body,
+    }
+
+
+def _drop_marketplace_hold(company_id: str, doc: dict) -> None:
+    _marketplace_holds.pop(_marketplace_hold_key(company_id, doc), None)
+
+
+def clear_marketplace_holds() -> None:
+    """Testler süreç içi bekleyen siparişi temizler."""
+    _marketplace_holds.clear()
+
+
+def _combine_marketplace_result(replayed: Optional[dict], res: Optional[dict]) -> dict:
+    out = dict(res or {})
+    prior = replayed or {}
+    out["inserted"] = int(out.get("inserted") or 0) + int(prior.get("inserted") or 0)
+    out["updated"] = int(out.get("updated") or 0) + int(prior.get("updated") or 0)
+    out["held"] = int(out.get("held") or 0) + int(prior.get("held") or 0)
+    orders = list(prior.get("inserted_orders") or [])
+    orders.extend(out.get("inserted_orders") or [])
+    out["inserted_orders"] = orders
+    return out
+
+
+async def _replay_marketplace_holds(company_id: str) -> dict:
+    """Bekletilen siparişleri yeniden yazar. Kilit sürerse işaret durur."""
+    cid = str(company_id or "").strip()
+    docs = [row["doc"] for row in _marketplace_holds.values() if row.get("company_id") == cid and isinstance(row.get("doc"), dict)]
+    if not docs:
+        return {"inserted": 0, "updated": 0, "held": 0, "inserted_orders": []}
+    return await _upsert_marketplace_orders(cid, docs)
+
+
+async def _pause_marketplace_cursor(channel_id: str, company_id: str, now: str, res: dict) -> bool:
+    """Kilit yüzünden sipariş kaldıysa last_synced_at ilerlemez."""
+    if int((res or {}).get("held") or 0) <= 0:
+        if isinstance(res, dict):
+            res.pop("held", None)
+        return False
+    await db.integration_configs.update_one(
+        {"_id": channel_id, "company_id": company_id},
+        {"$set": {
+            "last_sync_attempt_at": now,
+            "last_error": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener.",
+        }},
+    )
+    await _notify_marketplace_inserted(company_id, res)
+    return True
+
+
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
-    inserted = updated = 0
+    """Pazaryeri siparişini yazar. Yazma kilidinde bir kez yeniden dener, kalanı bekletir.
+
+    Bekleyen gövde loglanmaz. Veritabanı çağrıları bu fonksiyonda kalır.
+    """
+    import storage_router
+
+    inserted = updated = held = 0
     inserted_orders: list = []
-    channels = omp_media.marketplace_channels_from_orders(docs or [])
+    items = list(docs or [])
+    channels = omp_media.marketplace_channels_from_orders(items)
     mp_media_idx = await omp_media.load_marketplace_cache_media_index(db, company_id, channels) if channels else {}
-    match_idx = await _load_marketplace_stock_match_index(company_id) if docs else {}
-    for d in docs:
-        channel = d.get("channel")
-        order_number = d.get("order_number")
-        if not channel or not order_number:
-            continue
-        key = {"company_id": company_id, "channel": channel, "order_number": order_number}
-        d = marketplace_providers.normalize_marketplace_order_prices(d)
-        if mp_media_idx:
-            d = omp_media.apply_marketplace_item_media(d, mp_media_idx)
-        d = _apply_stock_matches_to_order(d, match_idx)
-        d["updated_at"] = datetime.now(timezone.utc).isoformat()
-        existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
-        if existing:
-            payload = merge_keep_fields(existing, d)
-            payload = _apply_stock_matches_to_order(payload, match_idx)
-            payload = marketplace_providers.normalize_marketplace_order_prices(payload)
-            await db.orders.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": payload})
-            merged = {**existing, **payload}
-            if not merged.get("contact_id"):
-                await _ensure_order_contact(merged)
-            # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
-            if not merged.get("invoice_id") and not merged.get("is_invoiced"):
-                await _attach_draft_invoice_on_intake(merged, source="marketplace")
-            # Yalnızca bekleyen → onaylı geçişi. Bu değişiklikten önce "Ödendi"
-            # kalmış, tx_id'siz siparişlere geriye dönük hakediş yazılmaz.
-            if (
-                not _marketplace_settlement_payment_ready(existing)
-                and _marketplace_settlement_payment_ready(merged)
-            ):
-                await _try_shopphp_settlement(merged)
-            updated += 1
-            continue
-        d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
-        d["created_at"] = d["updated_at"]
+    match_idx = await _load_marketplace_stock_match_index(company_id) if items else {}
+    index = 0
+    retried = False
+    while index < len(items):
+        d = items[index]
         try:
-            await db.orders.insert_one({**d, "company_id": company_id})
-            contact = await _ensure_order_contact(d)
-            inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
-            await _try_shopphp_settlement(d, contact, inv)
-            inserted += 1
-            inserted_orders.append({
-                "_id": d["_id"],
-                "channel": channel,
-                "order_number": order_number,
-                "grand_total": d.get("grand_total") or d.get("total_amount"),
-                "customer_name": d.get("customer_name"),
-            })
-        except DuplicateKeyError:
-            # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
+            channel = d.get("channel")
+            order_number = d.get("order_number")
+            if not channel or not order_number:
+                retried = False
+                index += 1
+                continue
+            key = {"company_id": company_id, "channel": channel, "order_number": order_number}
+            d = marketplace_providers.normalize_marketplace_order_prices(d)
+            if mp_media_idx:
+                d = omp_media.apply_marketplace_item_media(d, mp_media_idx)
+            d = _apply_stock_matches_to_order(d, match_idx)
+            d["updated_at"] = datetime.now(timezone.utc).isoformat()
             existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
-            if not existing:
-                existing = await db.orders.find_one(key)
             if existing:
                 payload = merge_keep_fields(existing, d)
                 payload = _apply_stock_matches_to_order(payload, match_idx)
@@ -19351,13 +19424,71 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 merged = {**existing, **payload}
                 if not merged.get("contact_id"):
                     await _ensure_order_contact(merged)
+                # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
+                if not merged.get("invoice_id") and not merged.get("is_invoiced"):
+                    await _attach_draft_invoice_on_intake(merged, source="marketplace")
+                # Yalnızca bekleyen → onaylı geçişi. Bu değişiklikten önce "Ödendi"
+                # kalmış, tx_id'siz siparişlere geriye dönük hakediş yazılmaz.
                 if (
                     not _marketplace_settlement_payment_ready(existing)
                     and _marketplace_settlement_payment_ready(merged)
                 ):
                     await _try_shopphp_settlement(merged)
                 updated += 1
-    return {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
+                _drop_marketplace_hold(company_id, items[index])
+                retried = False
+                index += 1
+                continue
+            d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
+            d["created_at"] = d["updated_at"]
+            try:
+                await db.orders.insert_one({**d, "company_id": company_id})
+                contact = await _ensure_order_contact(d)
+                inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
+                await _try_shopphp_settlement(d, contact, inv)
+                inserted += 1
+                inserted_orders.append({
+                    "_id": d["_id"],
+                    "channel": channel,
+                    "order_number": order_number,
+                    "grand_total": d.get("grand_total") or d.get("total_amount"),
+                    "customer_name": d.get("customer_name"),
+                })
+            except DuplicateKeyError:
+                # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
+                existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
+                if not existing:
+                    existing = await db.orders.find_one(key)
+                if existing:
+                    payload = merge_keep_fields(existing, d)
+                    payload = _apply_stock_matches_to_order(payload, match_idx)
+                    payload = marketplace_providers.normalize_marketplace_order_prices(payload)
+                    await db.orders.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": payload})
+                    merged = {**existing, **payload}
+                    if not merged.get("contact_id"):
+                        await _ensure_order_contact(merged)
+                    if (
+                        not _marketplace_settlement_payment_ready(existing)
+                        and _marketplace_settlement_payment_ready(merged)
+                    ):
+                        await _try_shopphp_settlement(merged)
+                    updated += 1
+            _drop_marketplace_hold(company_id, items[index])
+            retried = False
+            index += 1
+        except storage_router.StorageWriteLocked:
+            if not retried:
+                retried = True
+                continue
+            for pending in items[index:]:
+                _remember_marketplace_hold(company_id, pending)
+            held += len(items) - index
+            break
+    out = {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
+    if held:
+        out["held"] = held
+    return out
+
 
 CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": "Hepsiburada Müşterisi", "amazon": "Amazon Müşterisi", "n11": "n11 Müşterisi", "shopify": "Shopify Müşterisi",
                              "woocommerce": "WooCommerce Müşterisi", "ciceksepeti": "Çiçeksepeti Müşterisi", "shopphp": "ShopPHP Müşterisi", "b2b": "B2B Bayi", "manual": "Genel", "saha": "Saha Müşterisi"}
@@ -20177,6 +20308,7 @@ async def _sync_ecommerce_channel_core(
     if not company_id:
         logger.warning("Pazaryeri senkronu atlandı: kayıtta firma bilgisi yok (%s)", channel_id)
         return {"status": "skipped", "message": "Kayıtta firma bilgisi yok."}
+    replayed = await _replay_marketplace_holds(company_id)
     channel = config.get("channel", "trendyol")
     now = datetime.now(timezone.utc).isoformat()
     sync_days = marketplace_providers.resolve_sync_days(
@@ -20192,6 +20324,9 @@ async def _sync_ecommerce_channel_core(
             await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
+        res = _combine_marketplace_result(replayed, res)
+        if await _pause_marketplace_cursor(channel_id, company_id, now, res):
+            return {"status": "held", "live": True, "channel": channel, "days": sync_days, **res, "message": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener."}
         await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
         await _notify_marketplace_inserted(company_id, res)
         return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
@@ -20224,6 +20359,9 @@ async def _sync_ecommerce_channel_core(
             warnings.append(f"Sorular alınamadı: {type(e).__name__}")
         await client.close()
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_trendyol_order(p, company_id, channel) for p in pkgs])
+        res = _combine_marketplace_result(replayed, res)
+        if await _pause_marketplace_cursor(channel_id, company_id, now, res):
+            return {"status": "held", "live": True, "days": sync_days, **res, "message": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener."}
         new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims]) if claims else 0
         new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions]) if questions else 0
         await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now, "last_sync_warnings": warnings[:5]}, "$inc": {"synced_orders": res["inserted"]}})
@@ -20236,6 +20374,9 @@ async def _sync_ecommerce_channel_core(
                 "message": msg}
     docs = marketplace_providers.simulated_orders(company_id, channel)
     res = await _upsert_marketplace_orders(company_id, docs)
+    res = _combine_marketplace_result(replayed, res)
+    if await _pause_marketplace_cursor(channel_id, company_id, now, res):
+        return {"status": "held", "live": False, "days": sync_days, **res, "message": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener."}
     await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"last_synced_at": now, "live": False}})
     await _notify_marketplace_inserted(company_id, res)
     return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}

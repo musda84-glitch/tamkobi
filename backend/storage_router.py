@@ -19,8 +19,10 @@ Bilinmeyen bir kip sessizce legacy'ye düşmez. Alanı olmayan mevcut
 firmalar legacy sayılır. Hiçbir firma burada dedicated veya shared_v2 yapılmaz.
 
 dedicated_dsn_ref şemada durur. Değer düz metin yazılmaz; mühür
-comm_service.encrypt ile atılır. Bu modül o alanı okumaz. Çözme
-yalnız dedicated koleksiyon açılırken yapılır.
+comm_service.encrypt ile atılır. Yazma yolu kip, epoch ve mühürlü
+referansı aynı katalog belgesinden hatırlar. Epoch değişince veya
+dedicated kipte ref önbellekte yoksa katalogdan taze okunur. Çözme
+yalnız dedicated koleksiyon açılırken yapılır. Düz metin loglanmaz.
 """
 from __future__ import annotations
 
@@ -362,7 +364,9 @@ def _read_sync(db, company_id: str):
         return None
     _bump()
     mode, epoch, locked = _view(memory if isinstance(memory, dict) else None)
-    return _store(company_id, mode, epoch, locked)
+    stored = _store(company_id, mode, epoch, locked)
+    _capture_dedicated_ref(company_id, memory if isinstance(memory, dict) else None, mode, epoch)
+    return stored
 
 
 def _refresh_mode(db, company_id: str):
@@ -372,7 +376,9 @@ def _refresh_mode(db, company_id: str):
         return None
     _bump()
     mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
-    return _store(company_id, mode, epoch, locked)
+    stored = _store(company_id, mode, epoch, locked)
+    _capture_dedicated_ref(company_id, doc if isinstance(doc, dict) else None, mode, epoch)
+    return stored
 
 
 def mode_for_handle(db, company_id: str) -> str:
@@ -695,12 +701,13 @@ async def iter_company_stores(db, *, company_id: str = ""):
         seen.add(cid)
         try:
             mode, epoch, locked = _view(doc)
+            _capture_dedicated_ref(cid, doc, mode, epoch)
+            _store(cid, mode, epoch, locked)
             if mode == DEDICATED:
                 await prepare_dedicated(db, cid, mode)
             elif mode != LEGACY and mode != SHARED_V2:
                 reject_unless_legacy(mode, cid)
             _probe_store(db, cid, mode)
-            _store(cid, mode, epoch, locked)
             yield cid, CompanyStore(db, cid, mode, epoch)
         except Exception as exc:
             log_store_failure(cid, exc)
@@ -798,6 +805,7 @@ def _locked_now(db, company_id: str) -> bool:
         if memory is not _UNREAD:
             mode, epoch, locked = _view(memory if isinstance(memory, dict) else None)
             _store(cid, mode, epoch, locked)
+            _capture_dedicated_ref(cid, memory, mode, epoch)
             return locked
     if _on_loop():
         return True
@@ -806,6 +814,7 @@ def _locked_now(db, company_id: str) -> bool:
         return True
     mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
     _store(cid, mode, epoch, locked)
+    _capture_dedicated_ref(cid, doc, mode, epoch)
     return locked
 
 
@@ -891,11 +900,15 @@ def forget_mode(company_id: str) -> None:
     """Bu sürecin kip ve kilit önbelleğini bırakır.
 
     Diğer süreçler TTL dolunca katalogdan yeniden okur. Taşıma, kilidi
-    açmadan önce en az bir TTL bekler.
+    açmadan önce en az bir TTL bekler. Mühürlü ref de bu süreçte düşer;
+    sonraki okuma kip ile birlikte yeniden alır.
     """
     cid = str(company_id or "")
     _cache.pop(cid, None)
     _lock_cache.pop(cid, None)
+    import storage_dedicated
+
+    storage_dedicated.forget_ref(cid)
 
 
 def _view_cached(company_id: str):
@@ -909,9 +922,25 @@ def _view_cached(company_id: str):
     return row[0], int(row[2]), bool(lock[0])
 
 
+def _capture_dedicated_ref(company_id: str, doc, mode: str, epoch: int) -> None:
+    """Kip ile aynı belgedeki mühür. Başka önbellekten boş ref bağlanmaz."""
+    import storage_dedicated
+
+    storage_dedicated.sync_ref_from_doc(company_id, doc if isinstance(doc, dict) else None, mode, epoch)
+
+
+def _dedicated_ref_ready(company_id: str, mode: str, epoch: int) -> bool:
+    if mode != DEDICATED:
+        return True
+    import storage_dedicated
+
+    return storage_dedicated.ref_ready(company_id, epoch)
+
+
 def _remember_view(company_id: str, doc) -> tuple[str, int, bool]:
     mode, epoch, locked = _view(doc if isinstance(doc, dict) else None)
     _store(company_id, mode, epoch, locked)
+    _capture_dedicated_ref(company_id, doc, mode, epoch)
     _bump()
     return mode, epoch, locked
 
@@ -965,7 +994,7 @@ async def read_company_doc_async(db, company_id: str):
     try:
         result = find_one(
             {"_id": company_id},
-            {MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1},
+            {MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1, DSN_FIELD: 1},
         )
         if inspect.isawaitable(result):
             result = await result
@@ -985,7 +1014,7 @@ async def load_view(db, company_id: str) -> tuple[str, int, bool]:
     if not cid:
         raise ValueError("company_id boş")
     cached = _view_cached(cid)
-    if cached is not None:
+    if cached is not None and _dedicated_ref_ready(cid, cached[0], cached[1]):
         return cached
     doc = await read_company_doc_async(db, cid)
     if doc is _UNREAD:
@@ -999,7 +1028,7 @@ def load_view_sync(db, company_id: str) -> tuple[str, int, bool]:
     if not cid:
         raise ValueError("company_id boş")
     cached = _view_cached(cid)
-    if cached is not None:
+    if cached is not None and _dedicated_ref_ready(cid, cached[0], cached[1]):
         return cached
     if db is not None:
         memory = _memory_doc(db, cid)

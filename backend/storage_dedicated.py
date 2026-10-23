@@ -62,6 +62,8 @@ _COMPANY_ID_MAX = 64
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
+# Mühür, okunduğu storage_epoch ile birlikte durur. Epoch değişince eski ref kullanılmaz.
+_sealed_epoch: dict[str, int] = {}
 _registry_lock = threading.Lock()
 _generation_seq = 0
 # Taşıma kendi oturumunu kullanır. Havuz bağlantısının izolasyonu değişmez.
@@ -161,6 +163,7 @@ def reset_pools() -> None:
             _close_unlocked(company_id)
         _pools.clear()
         _sealed.clear()
+        _sealed_epoch.clear()
 
 
 def is_open(company_id: str) -> bool:
@@ -338,7 +341,7 @@ def _dsn_for(db, company_id: str) -> str:
             raise DedicatedStorageError(_public(exc), company_id=company_id) from None
     except (LegacyTargetError, UsageError) as exc:
         raise DedicatedStorageError(_public(exc), company_id=company_id) from None
-    sealed = _sealed.get(company_id)
+    sealed = sealed_for_current_epoch(company_id)
     if not sealed:
         raise DedicatedStorageError("Dedicated DSN referansı yok.", company_id=company_id)
     try:
@@ -372,21 +375,96 @@ def _memory_docs(db):
     return None
 
 
+def _epoch_of(doc: dict) -> int:
+    try:
+        return int(doc.get(storage_router.EPOCH_FIELD) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _remember_doc(company_id: str, doc: dict) -> None:
     if not isinstance(doc, dict):
         return
-    if storage_router.public_mode(doc.get(storage_router.MODE_FIELD)) != storage_router.DEDICATED:
+    mode = storage_router.public_mode(doc.get(storage_router.MODE_FIELD))
+    sync_ref_from_doc(company_id, doc, mode, _epoch_of(doc))
+
+
+def forget_ref(company_id: str) -> None:
+    """Bu sürecin mühür önbelleği. Havuz açık yazmayı kesmez."""
+    cid = str(company_id or "")
+    _sealed.pop(cid, None)
+    _sealed_epoch.pop(cid, None)
+
+
+def ref_ready(company_id: str, epoch: int) -> bool:
+    """Bu epoch için dolu mühür var mı. Boş veya başka epoch hazır sayılmaz."""
+    cid = str(company_id or "")
+    sealed = _sealed.get(cid) or ""
+    if not sealed.strip():
+        return False
+    seen = _sealed_epoch.get(cid)
+    return seen is not None and int(seen) == int(epoch)
+
+
+def sealed_for_current_epoch(company_id: str) -> str:
+    """Taze kip önbelleğiyle aynı epoch'taki mühür. Eski epoch'un ref'i dönmez."""
+    cid = str(company_id or "")
+    sealed = (_sealed.get(cid) or "").strip()
+    if not sealed:
+        return ""
+    row = storage_router._cache.get(cid)
+    if not row or storage_router._now() >= row[1] or row[0] != storage_router.DEDICATED:
+        return sealed
+    seen = _sealed_epoch.get(cid)
+    if seen is None or int(seen) != int(row[2]):
+        return ""
+    return sealed
+
+
+def remember_sealed(company_id: str, sealed: str, epoch: int) -> None:
+    """Mühürlü ref. Düz metin saklanmaz. Ref değişince boştaki havuz kapanır."""
+    cid = str(company_id or "").strip()
+    text = str(sealed or "").strip()
+    if not cid or not text:
+        return
+    prev = _sealed.get(cid)
+    if prev and prev != text:
+        _drop_pool_if_idle(cid)
+    _sealed[cid] = text
+    _sealed_epoch[cid] = int(epoch)
+    _sealed.move_to_end(cid)
+    while len(_sealed) > _SEALED_MAX:
+        gone, _old = _sealed.popitem(last=False)
+        _sealed_epoch.pop(gone, None)
+
+
+def sync_ref_from_doc(company_id: str, doc, mode: str, epoch: int) -> None:
+    """Kip ile aynı belgedeki mühür. Dedicated ve ref boşsa eski epoch saklanmaz."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    if mode != storage_router.DEDICATED:
+        forget_ref(cid)
+        return
+    if not isinstance(doc, dict) or storage_router.DSN_FIELD not in doc:
+        seen = _sealed_epoch.get(cid)
+        if seen is not None and int(seen) != int(epoch):
+            forget_ref(cid)
         return
     sealed = doc.get(storage_router.DSN_FIELD)
-    if isinstance(sealed, str) and sealed.strip():
-        _remember(company_id, sealed.strip())
+    if not isinstance(sealed, str) or not sealed.strip():
+        forget_ref(cid)
+        return
+    remember_sealed(cid, sealed, int(epoch))
 
 
-def _remember(company_id: str, sealed: str) -> None:
-    _sealed[company_id] = sealed
-    _sealed.move_to_end(company_id)
-    while len(_sealed) > _SEALED_MAX:
-        _sealed.popitem(last=False)
+def _drop_pool_if_idle(company_id: str) -> None:
+    cid = str(company_id or "")
+    with _lock():
+        pool = _pools.get(cid)
+        if pool is None or pool.in_use > 0 or pool.closed:
+            return
+        _close_unlocked(cid)
 
 
 async def _remember_async(db, company_id: str) -> None:
@@ -400,7 +478,11 @@ async def _remember_async(db, company_id: str) -> None:
     try:
         found = find_one(
             {"_id": company_id},
-            {storage_router.DSN_FIELD: 1, storage_router.MODE_FIELD: 1},
+            {
+                storage_router.DSN_FIELD: 1,
+                storage_router.MODE_FIELD: 1,
+                storage_router.EPOCH_FIELD: 1,
+            },
         )
         if inspect.isawaitable(found):
             found = await found
