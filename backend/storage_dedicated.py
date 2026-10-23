@@ -7,6 +7,7 @@ hazır değilse açık hata verilir, legacy koleksiyona düşülmez.
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 import hashlib
 import inspect
@@ -63,6 +64,29 @@ _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
 _registry_lock = threading.Lock()
 _generation_seq = 0
+# Taşıma kendi oturumunu kullanır. Havuz bağlantısının izolasyonu değişmez.
+_read_session: "contextvars.ContextVar" = contextvars.ContextVar(
+    "dedicated_read_session",
+    default=None,
+)
+
+
+def use_read_session(company_id: str, session):
+    return _read_session.set((str(company_id or ""), session))
+
+
+def reset_read_session(token) -> None:
+    if token is not None:
+        _read_session.reset(token)
+
+
+def read_session(company_id: str = ""):
+    item = _read_session.get()
+    if item is None:
+        return None
+    if company_id and item[0] != str(company_id):
+        return None
+    return item[1]
 
 
 def _lock():
@@ -243,6 +267,10 @@ def checkout(company_id: str, dsn: str) -> _Pool:
 
 @contextmanager
 def _session(company_id: str, dsn: str):
+    override = read_session(company_id)
+    if override is not None:
+        yield override
+        return
     pool = checkout(company_id, dsn)
     try:
         with pool.op_lock:

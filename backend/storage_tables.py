@@ -454,6 +454,7 @@ class TableCollection(SharedV2Collection):
         return super()._eq_pred(field, value)
 
     def _nonscalar_sql(self, field):
+        self.store.ensure_dialect()
         if field in self.spec.numeric:
             column = self.spec.columns[field][0]
             # Kolon NULL iken belgede değer varsa aralık ve sıra satırı düşürür.

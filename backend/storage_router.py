@@ -724,6 +724,28 @@ class StorageEpochStale(StorageModeError):
         )
 
 
+class PartialWriteError(StorageModeError):
+    """Depolar arası yazmanın bir kısmı uygulandı. Tekrar çift etki yapabilir.
+
+    applied: yazmanın gittiği şirket kimlikleri. failed: uygulanmayan şirket.
+    İleti sır, VKN ve ETTN taşımaz.
+    """
+
+    def __init__(self, applied, failed: str = "", *, operation: str = ""):
+        self.applied = [str(item) for item in (applied or []) if item]
+        self.failed = str(failed or "")
+        self.operation = str(operation or "")
+        applied_text = ", ".join(_safe_company(item) for item in self.applied) or "-"
+        failed_text = _safe_company(self.failed) if self.failed else "-"
+        super().__init__(
+            "Yazma kısmen uygulandı. Uygulanan şirketler: "
+            f"{applied_text}. Uygulanmayan şirket: {failed_text}. "
+            "Depolar arası tek işlem yok; aynı yazmayı tekrarlamak uygulanan "
+            "şirketlerde çift etki yapabilir.",
+            company_id=self.failed,
+        )
+
+
 class StorageMoveBusy(RuntimeError):
     """İkinci taşıma başlayamaz."""
 
@@ -1154,12 +1176,17 @@ def _sum_delete(results):
 class SplitWrite:
     """Arşiv şirketinin canlı deposu ve legacy şirketler. Sorgular kopyadır.
 
-    Toplam matched/modified/deleted, uygulanan her hedefin toplamıdır.
+    Depolar arası tek işlem yoktur. Yazmadan önce her hedefte sorgu
+    çalıştırılır. Bu kontrol düşerse hiçbir yere yazılmaz. Yazının bir
+    kısmı uygulandıktan sonra sonraki hedef hata verirse PartialWriteError
+    uygulanmış şirketleri söyler. Toplam matched/modified/deleted, hatasız
+    biten her hedefin toplamıdır.
     """
 
-    def __init__(self, legacy, legacy_query, parts):
+    def __init__(self, legacy, legacy_query, legacy_companies, parts):
         self._legacy = legacy
         self._legacy_query = legacy_query
+        self._legacy_companies = [str(item) for item in (legacy_companies or []) if item]
         self._parts = list(parts)
 
     async def _call(self, target, method, query, args, kwargs):
@@ -1178,22 +1205,120 @@ class SplitWrite:
         finally:
             _PASSTHROUGH.reset(token)
 
-    async def update_many(self, query, update, upsert: bool = False):
+    async def _probe_one(self, target, query):
+        """Sorguyu hedefte çalıştır. shared_v2 planı SQL'i kurar; legacy tam tarama yapmaz."""
+        body = copy.deepcopy(query) if isinstance(query, dict) else {}
+        planner = getattr(target, "_read_plan", None)
+        if callable(planner):
+            built, _reason = planner(body, [("_id", 1)], 0, 1, 1)
+            if built is not None:
+                fetch = getattr(target, "_fetch_docs", None)
+                if callable(fetch):
+                    fetch(*built)
+            return
+        if hasattr(target, "_load_filtered"):
+            await self._probe_legacy_sql(target, body)
+            return
+        await self._probe_find(target, body)
+
+    async def _probe_legacy_sql(self, target, query):
+        from mysql_store import sql_pushdown
+
+        sql, params = sql_pushdown(str(getattr(target, "name", "") or ""), query)
+        limited = sql + " LIMIT 1"
+        loader = getattr(target, "_load_sql", None)
+        if callable(loader):
+            rows = loader(limited, params)
+            if inspect.isawaitable(rows):
+                await rows
+            return
+        fetch = getattr(target, "_fetch_rows", None)
+        if callable(fetch):
+            fetch(limited, params)
+            return
+        await self._probe_find(target, query)
+
+    async def _probe_find(self, target, query):
+        find = getattr(target, "find", None)
+        if find is None:
+            return
+        cursor = find(query, {"_id": 1})
+        if hasattr(cursor, "limit"):
+            limited = cursor.limit(1)
+            if limited is not None:
+                cursor = limited
+        if hasattr(cursor, "to_list"):
+            rows = cursor.to_list(1)
+            if inspect.isawaitable(rows):
+                await rows
+            return
+        if inspect.isawaitable(cursor):
+            await cursor
+
+    async def _probe(self):
+        """Yazmadan önce her depoda sorguyu çalıştır. Derleme hatası yazmaz."""
+        if self._legacy is not None:
+            await self._probe_one(self._legacy, self._legacy_query)
+        for _cid, coll, part_query in self._parts:
+            await self._probe_one(coll, part_query)
+
+    def _log_partial(self, operation: str, applied, failed: str) -> None:
+        _job_logger().warning(
+            "bölünmüş yazma kısmi op=%s uygulanan=%s uygulanmayan=%s",
+            operation,
+            ",".join(_safe_company(item) for item in applied) or "-",
+            _safe_company(failed),
+        )
+
+    async def _apply(self, operation: str, legacy_method, legacy_args, legacy_kwargs, part_method, part_args, part_kwargs):
+        await self._probe()
+        applied: list[str] = []
         results = []
-        legacy = await self._legacy_call("update_many", (update,), {"upsert": upsert})
-        if legacy is not None:
-            results.append(legacy)
-        for coll, part_query in self._parts:
-            results.append(await self._call(coll, "update_many", part_query, (update,), {"upsert": upsert}))
+        failed = ""
+        try:
+            if self._legacy is not None:
+                failed = self._legacy_companies[0] if self._legacy_companies else ""
+                legacy = await self._legacy_call(legacy_method, legacy_args, legacy_kwargs)
+                if legacy is not None:
+                    results.append(legacy)
+                applied.extend(self._legacy_companies)
+                failed = ""
+            for cid, coll, part_query in self._parts:
+                failed = str(cid)
+                results.append(await self._call(coll, part_method, part_query, part_args, part_kwargs))
+                applied.append(str(cid))
+                failed = ""
+        except PartialWriteError:
+            raise
+        except Exception:
+            if not applied:
+                raise
+            self._log_partial(operation, applied, failed)
+            raise PartialWriteError(applied, failed, operation=operation) from None
+        return results
+
+    async def update_many(self, query, update, upsert: bool = False):
+        results = await self._apply(
+            "update_many",
+            "update_many",
+            (update,),
+            {"upsert": upsert},
+            "update_many",
+            (update,),
+            {"upsert": upsert},
+        )
         return _sum_update(results)
 
     async def delete_many(self, query):
-        results = []
-        legacy = await self._legacy_call("delete_many", (), {})
-        if legacy is not None:
-            results.append(legacy)
-        for coll, part_query in self._parts:
-            results.append(await self._call(coll, "delete_many", part_query, (), {}))
+        results = await self._apply(
+            "delete_many",
+            "delete_many",
+            (),
+            {},
+            "delete_many",
+            (),
+            {},
+        )
         return _sum_delete(results)
 
 
@@ -1248,9 +1373,12 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
     """Ham legacy yazmayı kilit ve güncel kipe göre bırakır, yönlendirir veya reddeder.
 
     Bayrak kapalıyken None döner ve katalog okunmaz. Dönüş None ise yazma
-    bu koleksiyonda sürer. Koleksiyon dönerse yazma oraya gider. Birden
+    bu koleksiyonda sürer. Koleksiyon dönerse yazma oraya gider.     Birden
     fazla arşiv şirketine yayılan update_many/delete_many her şirketin
-    canlı deposuna uygulanır ve sayılar toplanır. Diğer çoklu yazmalar
+    canlı deposuna uygulanır ve sayılar toplanır. Yazmadan önce her
+    hedefte sorgu çalışır; bu kontrol düşerse hiçbir yazma yapılmaz.
+    Yazının bir kısmı kalırsa PartialWriteError uygulanmış şirketleri
+    söyler. Depolar arası tek işlem yoktur. Diğer çoklu yazmalar
     uygulanmadan hata verir. Çağıranın sorgu sözlüğü değişmez.
     """
     if not enabled() or _PASSTHROUGH.get():
@@ -1302,10 +1430,10 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
     for cid, (mode, _epoch, _locked) in views:
         if mode == LEGACY:
             continue
-        parts.append((collection_for_mode(db, mode, cid, name), copy.deepcopy(query)))
+        parts.append((cid, collection_for_mode(db, mode, cid, name), copy.deepcopy(query)))
     legacy_coll = coll if legacy else None
     legacy_query = narrow_legacy_query(query, archived) if legacy else None
-    return SplitWrite(legacy_coll, legacy_query, parts)
+    return SplitWrite(legacy_coll, legacy_query, legacy, parts)
 
 
 def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None):

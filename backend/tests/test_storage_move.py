@@ -1327,3 +1327,189 @@ def test_archived_writes_reach_the_live_store(tmp_path, monkeypatch):
         assert live_both["note"] == "yok"
     finally:
         _close_world(world)
+
+
+def _isolation(conn) -> str:
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT @@tx_isolation")
+    except Exception:
+        cursor.execute("SELECT @@transaction_isolation")
+    value = str(cursor.fetchone()[0])
+    conn.commit()
+    return value
+
+
+def test_move_keeps_application_isolation(tmp_path, monkeypatch):
+    if not _base_dsn():
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+    world = _open_world("mariadb", tmp_path, monkeypatch)
+    shared_conn = world.shared_conn
+    pool = storage_dedicated._pools[world.company_id]
+    dedicated_conn = pool.session.conn
+
+    def levels():
+        return _isolation(shared_conn), _isolation(dedicated_conn)
+
+    async def run():
+        await _seed(world, "legacy")
+        seen = [levels()]
+        moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert moved.ok, moved.errors
+        seen.append(levels())
+        back = await storage_move.rollback_move(world.db, moved.move_id)
+        assert back.ok, back.errors
+        seen.append(levels())
+        again = await storage_move.apply_move(world.db, world.company_id, "dedicated")
+        assert again.ok, again.errors
+        seen.append(levels())
+        restored = await storage_move.rollback_move(world.db, again.move_id)
+        assert restored.ok, restored.errors
+        seen.append(levels())
+        return seen
+
+    try:
+        seen = asyncio.run(run())
+        assert storage_shared_v2.get_store().conn is shared_conn
+        assert pool.session.conn is dedicated_conn
+        for shared_level, dedicated_level in seen:
+            assert shared_level.upper().replace("_", "-") == "REPEATABLE-READ"
+            assert dedicated_level.upper().replace("_", "-") == "REPEATABLE-READ"
+            assert not getattr(shared_conn, "_storage_move_rc", False)
+            assert not getattr(dedicated_conn, "_storage_move_rc", False)
+    finally:
+        _close_world(world)
+
+
+def test_split_write_is_explicit_when_a_later_store_fails(tmp_path, monkeypatch, caplog):
+    import logging
+
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert moved.ok, moved.errors
+        storage_router.forget_mode(world.company_id)
+        query = {}
+        routed = await storage_router.route_legacy_write(
+            world.db.products,
+            "update_many",
+            query=query,
+            update={"$set": {"note": "kismi"}, "$inc": {"price": 1}},
+        )
+        assert query == {}
+        assert isinstance(routed, storage_router.SplitWrite)
+        target = routed._parts[0][1]
+
+        async def boom(query, update, upsert=False):
+            raise RuntimeError("kesildi gAAAA-sır 12345678901 11111111-1111-1111-1111-111111111111")
+
+        target.update_many = boom
+        try:
+            await routed.update_many(query, {"$set": {"note": "kismi"}, "$inc": {"price": 1}})
+            raise AssertionError("kısmi yazma hata vermedi")
+        except storage_router.PartialWriteError as exc:
+            partial = exc
+        other = await world.db.products.find_one({"_id": "other-p"})
+        leftover = await world.db.products.find_one({"_id": "p1"})
+        shared = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "products")
+        live = await shared.find_one({"_id": "p1"})
+        query2 = {}
+        routed_probe = await storage_router.route_legacy_write(
+            world.db.products,
+            "update_many",
+            query=query2,
+            update={"$set": {"note": "yok"}},
+        )
+        assert query2 == {}
+        assert isinstance(routed_probe, storage_router.SplitWrite)
+        probe_target = routed_probe._parts[0][1]
+
+        def broken_plan(*_args, **_kwargs):
+            raise RuntimeError("derleme")
+
+        probe_target._read_plan = broken_plan
+        try:
+            await routed_probe.update_many(query2, {"$set": {"note": "yok"}})
+            raise AssertionError("ön kontrol yazdı")
+        except storage_router.PartialWriteError:
+            raise AssertionError("ön kontrol kısmi sayıldı")
+        except RuntimeError as exc:
+            if str(exc) != "derleme":
+                raise
+        other_after = await world.db.products.find_one({"_id": "other-p"})
+        live_after = await shared.find_one({"_id": "p1"})
+        return partial, other, leftover, live, other_after, live_after, query2
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="storage_router"):
+            partial, other, leftover, live, other_after, live_after, query2 = asyncio.run(run())
+        assert world.other_id in partial.applied
+        assert partial.failed == world.company_id
+        assert "kısmen uygulandı" in str(partial)
+        assert "çift etki" in str(partial)
+        assert other["note"] == "kismi"
+        assert other["price"] == 1
+        assert leftover.get("note") != "kismi"
+        assert leftover["price"] == 12
+        assert live.get("note") != "kismi"
+        assert live["price"] == 12
+        assert other_after["note"] == "kismi"
+        assert live_after.get("note") != "yok"
+        assert query2 == {}
+        text = caplog.text
+        assert "kısmi" in text
+        assert world.company_id in text
+        assert "gAAAA" not in text
+        assert "12345678901" not in text
+        assert "11111111-1111-1111-1111-111111111111" not in text
+    finally:
+        _close_world(world)
+
+
+def test_noncolumn_split_write_on_mariadb(tmp_path, monkeypatch):
+    if not _base_dsn():
+        pytest.skip("STORAGE_MARIADB_DSN / STORAGE_SHARED_V2_TEST_DSN yok")
+    world = _open_world("mariadb", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert moved.ok, moved.errors
+        storage_router.forget_mode(world.company_id)
+        await world.db.products.update_one({"_id": "other-p"}, {"$set": {"note": "n"}})
+        await world.db.products.update_one({"_id": "p1"}, {"$set": {"note": "n"}})
+        shared = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "products")
+        with storage_router.bypass_write_lock(world.company_id):
+            await shared.update_one({"_id": "p1"}, {"$set": {"note": "n"}})
+        query = {"note": "n"}
+        routed = await storage_router.route_legacy_write(
+            world.db.products,
+            "update_many",
+            query=query,
+            update={"$set": {"tag": "t"}, "$inc": {"price": 1}},
+        )
+        assert query == {"note": "n"}
+        assert isinstance(routed, storage_router.SplitWrite)
+        result = await routed.update_many(query, {"$set": {"tag": "t"}, "$inc": {"price": 1}})
+        other = await world.db.products.find_one({"_id": "other-p"})
+        leftover = await world.db.products.find_one({"_id": "p1"})
+        live = await shared.find_one({"_id": "p1"})
+        found = await shared.find({"note": "n"}).to_list(5)
+        return result, other, leftover, live, found
+
+    try:
+        result, other, leftover, live, found = asyncio.run(run())
+        assert result.matched_count == 2
+        assert result.modified_count == 2
+        assert other["tag"] == "t"
+        assert other["price"] == 1
+        assert leftover.get("tag") != "t"
+        assert leftover["price"] == 12
+        assert live["tag"] == "t"
+        assert live["price"] == 13
+        assert live["note"] == "n"
+        assert [doc["_id"] for doc in found] == ["p1"]
+    finally:
+        _close_world(world)

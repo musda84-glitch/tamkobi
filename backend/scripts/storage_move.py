@@ -14,11 +14,16 @@ Yazma kilidi katalogdadır. Kopyadan önce ve kip değiştikten sonra, diğer
 süreçlerin önbelleği dolsun diye en az TTL kadar beklenir. Dosya
 (disk) içerikleri taşınmaz: yol belgenin içindedir, baytlar ortak
 diskte kalır. Bağlantı ayarı okunur, yazdırılmaz.
+
+Taşıma shared_v2 ve dedicated okuma/yazmasını kendi bağlantısında yapar.
+Uygulama bağlantısının izolasyon düzeyi değişmez. Taşıma bağlantısı
+READ COMMITTED'dir ve her okumadan sonra işlemi kapatır.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextvars
 import copy
 import hashlib
 import inspect
@@ -29,6 +34,7 @@ import socket
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -46,6 +52,11 @@ BATCH = 50
 _MOVER_ROWS = frozenset({"storage_moves", "storage_move_locks", "sync_tombstones"})
 LOCKS = "storage_move_locks"
 _OWNER_MEMORY = asyncio.Lock()
+_MOVER_DEPTH: "contextvars.ContextVar[int]" = contextvars.ContextVar(
+    "storage_mover_depth",
+    default=0,
+)
+_PRIVATE_SQL_MODE = "STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
 _ID_MAX = 191
 _COMPANY_MAX = 64
 _CONTROL = None  # storage_router yüklendikten sonra dolar
@@ -195,51 +206,204 @@ def _without_mover(name: str, docs, move_ids) -> list:
     return kept
 
 
-def _end_mysql_snapshot(conn) -> None:
-    """Açık REPEATABLE READ görüntüsünü kapat. Sonraki okuma taze olsun."""
-    if conn is None:
-        return
+def _prepare_private_mysql(conn) -> None:
+    """Yalnız taşımanın kendi bağlantısı. Uygulama oturumuna yazılmaz."""
+    cursor = conn.cursor()
+    cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+    cursor.execute(f"SET SESSION sql_mode='{_PRIVATE_SQL_MODE}'")
+    conn.commit()
+
+
+def _as_text(value, encoding: str = "utf-8") -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode(encoding, "replace")
+    return str(value)
+
+
+def _clone_mysql(conn):
+    import pymysql
+
+    return pymysql.connect(
+        host=_as_text(getattr(conn, "host", None)) or "127.0.0.1",
+        port=int(getattr(conn, "port", None) or 3306),
+        user=_as_text(getattr(conn, "user", None)),
+        password=_as_text(getattr(conn, "password", None), "latin1"),
+        database=_as_text(getattr(conn, "db", None)),
+        charset="utf8mb4",
+        autocommit=False,
+        connect_timeout=5,
+    )
+
+
+def _shared_kind() -> str:
+    """Uygulama bağlantısını açmadan shared lehçesi. mysql, sqlite veya boş."""
+    app = storage_shared_v2.get_store()
+    if app.conn is not None:
+        return app.dialect if app.dialect in ("mysql", "sqlite") else ""
+    dsn = os.environ.get(storage_shared_v2.ENV_DSN, "").strip()
+    if not dsn:
+        return ""
+    scheme = dsn.split("://", 1)[0].lower()
+    if scheme in ("mysql", "mariadb") or scheme.startswith("mysql+") or scheme.startswith("mariadb+"):
+        return "mysql"
+    if scheme in ("sqlite", "sqlite3"):
+        return "sqlite"
+    return ""
+
+
+def _open_private_shared():
+    """MySQL shared için ayrı bağlantı. SQLite uygulama bağlantısında kalır."""
+    if _shared_kind() != "mysql":
+        return None
+    app = storage_shared_v2.get_store()
+    owned = True
+    if app.conn is not None:
+        try:
+            conn = _clone_mysql(app.conn)
+        except Exception:
+            raise MoveError("Taşıma bağlantısı açılmadı.") from None
+    else:
+        dsn = os.environ.get(storage_shared_v2.ENV_DSN, "").strip()
+        try:
+            conn, dialect, owned = storage_shared_v2._connect(dsn)
+        except Exception:
+            raise MoveError("Taşıma bağlantısı açılmadı.") from None
+        if dialect != "mysql":
+            if owned and conn is not None:
+                conn.close()
+            raise MoveError("Taşıma bağlantısı açılmadı.")
     try:
-        if not getattr(conn, "_storage_move_rc", False):
-            cursor = conn.cursor()
-            cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            conn._storage_move_rc = True
-        conn.commit()
+        _prepare_private_mysql(conn)
     except Exception:
         try:
-            conn.rollback()
+            conn.close()
         except Exception:
             pass
+        raise MoveError("Taşıma bağlantısı açılmadı.") from None
+    store = storage_shared_v2.SharedV2Store()
+    store.attach(conn, "mysql", owned=owned)
+    store.indexes = app.indexes
+    return store
 
 
-def _refresh_reads(mode: str, company_id: str = "") -> None:
-    """Taşımanın shared/dedicated okumasından önce ve sonra işlemi bitir.
+def _open_private_dedicated(company_id: str, company: dict):
+    from storage_migrations.session import connect
 
-    Bağlantı yoksa açılmaz. SQLite autocommit'tir, dokunulmaz.
-    """
-    if mode == storage_router.SHARED_V2:
-        store = storage_shared_v2.get_store()
-        conn = getattr(store, "conn", None)
-        if conn is None or getattr(store, "dialect", "") != "mysql":
-            return
-        _end_mysql_snapshot(conn)
-        return
-    if mode != storage_router.DEDICATED or not company_id:
-        return
-    pool = storage_dedicated._pools.get(str(company_id))
-    if pool is None or getattr(pool, "closed", True) or getattr(pool, "session", None) is None:
-        return
-    session = pool.session
-    if getattr(session, "dialect", "") != "mysql" or getattr(session, "conn", None) is None:
-        return
-    lock = getattr(pool, "op_lock", None)
-    if lock is not None and not lock.acquire(blocking=False):
-        return
     try:
-        _end_mysql_snapshot(session.conn)
-    finally:
-        if lock is not None:
-            lock.release()
+        session = connect(_dedicated_dsn(company), write=True)
+    except MoveError:
+        raise
+    except Exception:
+        raise MoveError("Taşıma bağlantısı açılmadı.") from None
+    if getattr(session, "dialect", "") == "mysql" and getattr(session, "conn", None) is not None:
+        try:
+            _prepare_private_mysql(session.conn)
+        except Exception:
+            try:
+                session.close()
+            except Exception:
+                pass
+            raise MoveError("Taşıma bağlantısı açılmadı.") from None
+    return session
+
+
+def _finish_private_reads() -> None:
+    """Taşıma bağlantısının işlemini kapat. Uygulama bağlantısına dokunma."""
+    store = storage_shared_v2.read_store()
+    if store is not None and getattr(store, "conn", None) is not None and store.dialect == "mysql":
+        try:
+            store.commit_locked()
+        except Exception:
+            try:
+                with store.op_lock:
+                    store.conn.rollback()
+            except Exception:
+                pass
+    session = storage_dedicated.read_session()
+    if session is not None and getattr(session, "conn", None) is not None and getattr(session, "dialect", "") == "mysql":
+        try:
+            session.commit()
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+
+
+class _MoverIO:
+    """Taşımanın shared ve dedicated bağlantıları. İç içe çağrı yenisini açmaz."""
+
+    def __init__(self, company_id: str, company, modes):
+        self.company_id = str(company_id or "")
+        self.company = company if isinstance(company, dict) else None
+        self.modes = {storage_router.normalize_mode(item) for item in modes if item}
+        if self.company is not None:
+            self.modes.add(storage_router.normalize_mode(self.company.get(storage_router.MODE_FIELD)))
+        self.nested = False
+        self.shared = None
+        self.shared_token = None
+        self.dedicated = None
+        self.dedicated_token = None
+        self._depth_token = None
+
+    def __enter__(self):
+        if _MOVER_DEPTH.get():
+            self.nested = True
+            self._depth_token = _MOVER_DEPTH.set(_MOVER_DEPTH.get() + 1)
+            return self
+        self._depth_token = _MOVER_DEPTH.set(1)
+        try:
+            if _shared_kind() == "mysql":
+                self.shared = _open_private_shared()
+                self.shared_token = storage_shared_v2.use_read_store(self.shared)
+            if storage_router.DEDICATED in self.modes and self.company is not None:
+                self.dedicated = _open_private_dedicated(self.company_id, self.company)
+                self.dedicated_token = storage_dedicated.use_read_session(self.company_id, self.dedicated)
+        except Exception:
+            self._close()
+            _MOVER_DEPTH.reset(self._depth_token)
+            self._depth_token = None
+            raise
+        return self
+
+    def _close(self) -> None:
+        if self.shared_token is not None:
+            storage_shared_v2.reset_read_store(self.shared_token)
+            self.shared_token = None
+        if self.dedicated_token is not None:
+            storage_dedicated.reset_read_session(self.dedicated_token)
+            self.dedicated_token = None
+        shared = self.shared
+        self.shared = None
+        if shared is not None:
+            try:
+                shared.close()
+            except Exception:
+                pass
+        dedicated = self.dedicated
+        self.dedicated = None
+        if dedicated is not None:
+            try:
+                dedicated.close()
+            except Exception:
+                pass
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._depth_token is not None:
+            _MOVER_DEPTH.reset(self._depth_token)
+            self._depth_token = None
+        if not self.nested:
+            self._close()
+        return False
+
+
+@contextmanager
+def _mover_io(company_id: str, company, *modes):
+    io = _MoverIO(company_id, company, modes)
+    with io:
+        yield io
 
 
 def _belongs(doc: dict, name: str, company_id: str) -> bool:
@@ -424,7 +588,7 @@ async def _collect(cursor):
 
 async def _read(db, mode: str, company_id: str, name: str, company: dict, ignore_moves=()):
     """Her okuma kendi işlemini kapatır. Kaynak ve hedef ayrı taze okumadır."""
-    _refresh_reads(mode, company_id)
+    _finish_private_reads()
     try:
         coll = _open(db, mode, company_id, name, company)
         kind = _kind(name)
@@ -434,7 +598,7 @@ async def _read(db, mode: str, company_id: str, name: str, company: dict, ignore
         else:
             docs = await _collect(coll.find({"company_id": company_id}))
     finally:
-        _refresh_reads(mode, company_id)
+        _finish_private_reads()
     return _without_mover(name, docs, ignore_moves)
 
 
@@ -513,7 +677,7 @@ def _public_names(names) -> list[str]:
 
 
 async def _names(db, mode: str, company_id: str, company: dict, route_mode: str = "", ignore_moves=()) -> list[str]:
-    _refresh_reads(mode, company_id)
+    _finish_private_reads()
     try:
         if mode == storage_router.LEGACY:
             names = _public_names(await _legacy_names(db, company_id, route_mode or mode, ignore_moves))
@@ -530,7 +694,7 @@ async def _names(db, mode: str, company_id: str, company: dict, route_mode: str 
             except Exception as exc:
                 raise MoveError(_safe(exc)) from None
     finally:
-        _refresh_reads(mode, company_id)
+        _finish_private_reads()
     if not _ignore_set(ignore_moves):
         return names
     kept = []
@@ -699,7 +863,8 @@ async def plan_move(db, company_id: str, to_mode: str) -> MoveReport:
         report = _empty(cid, mode, "Şirket bulunamadı.", dry_run=True)
         return report
     try:
-        report = await _inspect(db, company, cid, mode if mode in storage_router.KNOWN_MODES else str(to_mode or ""))
+        with _mover_io(cid, company, mode):
+            report = await _inspect(db, company, cid, mode if mode in storage_router.KNOWN_MODES else str(to_mode or ""))
     except Exception as exc:
         report = _empty(cid, str(to_mode or ""), _safe(exc), dry_run=True)
     report.dry_run = True
@@ -761,7 +926,7 @@ def _fetch_unique(company_id: str, names: list) -> list:
         return []
     import storage_tables
 
-    _refresh_reads(storage_router.SHARED_V2, company_id)
+    _finish_private_reads()
     store = storage_shared_v2.get_store()
     try:
         conn = store.connection()
@@ -786,7 +951,7 @@ def _fetch_unique(company_id: str, names: list) -> list:
     except Exception:
         return []
     found = [tuple(str(part) for part in row) for row in rows]
-    _refresh_reads(storage_router.SHARED_V2, company_id)
+    _finish_private_reads()
     return found
 
 
@@ -818,9 +983,10 @@ def _write_unique_row(company_id: str, collection: str, field_name: str, field_v
     adapted = sql.replace("?", "%s") if getattr(store, "dialect", "") == "mysql" else sql
     params = (company_id, collection, field_name, field_value, value_hash, doc_id)
     if getattr(store, "dialect", "") == "mysql":
-        cur = conn.cursor()
-        cur.execute(adapted, params)
-        conn.commit()
+        with store.op_lock:
+            cur = conn.cursor()
+            cur.execute(adapted, params)
+            conn.commit()
     else:
         conn.execute(adapted, params)
 
@@ -1298,10 +1464,17 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
     copied: dict = {}
     company = None
     source = ""
+    mover_io = None
     try:
         await _acquire_lock(db, cid, move_id, mode)
         held = True
         company = await _company(db, cid)
+        if company:
+            mover_io = _mover_io(cid, company, mode)
+            try:
+                mover_io.__enter__()
+            except MoveError as exc:
+                return _empty(cid, mode, str(exc), dry_run=False)
         report = await _inspect(db, company, cid, mode, (move_id,))
         report.dry_run = False
         report.move_id = move_id
@@ -1401,6 +1574,9 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         )
     finally:
         await _stop_pulse(pulse)
+        if mover_io is not None:
+            mover_io.__exit__(None, None, None)
+            mover_io = None
         if opened and not lost and not committed:
             try:
                 if await _commit_owner(db, cid, move_id, unlock=True):
@@ -1594,6 +1770,7 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
     journal: list = []
     company = None
     rollback_id = uuid.uuid4().hex
+    mover_io = None
     try:
         await _acquire_lock(db, cid, rollback_id, source)
         held = True
@@ -1607,6 +1784,11 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
             report.from_mode = current
             return report
         counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
+        mover_io = _mover_io(cid, company, source, current)
+        try:
+            mover_io.__enter__()
+        except MoveError as exc:
+            return _empty(cid, source, str(exc), dry_run=False)
         if not await _source_intact(db, company, cid, source, counts, current, (mid, rollback_id)):
             report = _empty(cid, source, "Kaynak veri durmuyor.", dry_run=False)
             report.move_id = mid
@@ -1693,6 +1875,9 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         )
     finally:
         await _stop_pulse(pulse)
+        if mover_io is not None:
+            mover_io.__exit__(None, None, None)
+            mover_io = None
         if opened and not lost and not committed:
             try:
                 if await _commit_owner(db, cid, rollback_id, unlock=True):
@@ -1741,9 +1926,10 @@ def _delete_unique_ids(company_id: str, copied: dict) -> None:
         params = (company_id, name, *ids)
         try:
             if getattr(store, "dialect", "") == "mysql":
-                cur = conn.cursor()
-                cur.execute(adapted, params)
-                conn.commit()
+                with store.op_lock:
+                    cur = conn.cursor()
+                    cur.execute(adapted, params)
+                    conn.commit()
             else:
                 conn.execute(adapted, params)
         except Exception:
@@ -1802,7 +1988,8 @@ async def recover_move(db, move_id: str) -> MoveReport:
     if own is not None and _lock_stale(own):
         if live == source and copied:
             try:
-                await _wipe(db, company, cid, target, copied)
+                with _mover_io(cid, company, target):
+                    await _wipe(db, company, cid, target, copied)
             except Exception as exc:
                 return _empty(cid, source, _safe(exc), dry_run=False)
         await _clear_flag(db, cid)
@@ -1817,7 +2004,8 @@ async def recover_move(db, move_id: str) -> MoveReport:
     elif not rows:
         if live == source and copied:
             try:
-                await _wipe(db, company, cid, target, copied)
+                with _mover_io(cid, company, target):
+                    await _wipe(db, company, cid, target, copied)
             except Exception as exc:
                 return _empty(cid, source, _safe(exc), dry_run=False)
         await _clear_flag(db, cid)

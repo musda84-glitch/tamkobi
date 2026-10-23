@@ -951,3 +951,110 @@ def test_mariadb_migration_twice_and_concurrent_unique():
         storage_shared_v2.SharedV2Collection._sync_unique = original
         storage_shared_v2.reset_store()
         setup.close()
+
+
+def test_noncolumn_sql_resolves_dialect_before_sqlite_syntax():
+    store = storage_shared_v2.SharedV2Store()
+    assert store._dialect_pinned is False
+
+    def connection():
+        store.attach(sqlite3.connect(":memory:"), "mysql", owned=True)
+        return store.conn
+
+    store.connection = connection
+    coll = storage_shared_v2.SharedV2Collection(store, CO, "products")
+    sql = coll._nonscalar_sql("note")
+    assert "JSON_TYPE(JSON_EXTRACT(doc, '$.note'))" in sql
+    assert "json_type(doc" not in sql
+    store.close()
+
+
+def test_mariadb_noncolumn_find_and_update_many():
+    dsn = _mariadb_dsn()
+    if not dsn:
+        pytest.skip("STORAGE_SHARED_V2_TEST_DSN yok")
+    import pymysql
+    from urllib.parse import unquote, urlparse
+
+    from storage_migrations.engine import apply
+    from storage_migrations.session import connect
+
+    parsed = urlparse(dsn.replace("mariadb://", "mysql://", 1))
+    database = (parsed.path or "/").lstrip("/").split("?")[0]
+    session = connect(dsn, write=True)
+    try:
+        session.execute(
+            "SET SESSION sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        )
+        session.commit()
+        apply(session, confirm=True, dry_run=False)
+    finally:
+        session.close()
+
+    admin = pymysql.connect(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 3306,
+        user=unquote(parsed.username or ""),
+        password=unquote(parsed.password or ""),
+        database=database,
+        charset="utf8mb4",
+        autocommit=True,
+        connect_timeout=5,
+    )
+    try:
+        with admin.cursor() as cur:
+            cur.execute(
+                "DELETE FROM docs_v2 WHERE company_id=%s AND collection=%s",
+                (CO, "products"),
+            )
+            cur.execute(
+                "INSERT INTO docs_v2 (company_id, collection, id, doc) VALUES (%s, %s, %s, %s)",
+                (CO, "products", "p-note", json.dumps({
+                    "_id": "p-note",
+                    "company_id": CO,
+                    "name": "Kalem",
+                    "note": "bir",
+                    "qty": 2,
+                })),
+            )
+    finally:
+        admin.close()
+
+    store = storage_shared_v2.SharedV2Store()
+    assert store._dialect_pinned is False
+
+    def opener():
+        conn = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=database,
+            charset="utf8mb4",
+            autocommit=False,
+            connect_timeout=5,
+        )
+        return conn, "mysql", True
+
+    store._opener = opener
+    coll = storage_shared_v2.SharedV2Collection(store, CO, "products")
+
+    async def run():
+        found = await coll.find({"note": "bir"}).to_list(5)
+        updated = await coll.update_many(
+            {"note": "bir"},
+            {"$set": {"note": "iki"}, "$inc": {"qty": 1}},
+        )
+        again = await coll.find({"note": "iki"}).to_list(5)
+        return found, updated, again
+
+    try:
+        found, updated, again = asyncio.run(run())
+    finally:
+        store.close()
+    assert [doc["_id"] for doc in found] == ["p-note"]
+    assert updated.matched_count == 1
+    assert updated.modified_count == 1
+    assert len(again) == 1
+    assert again[0]["note"] == "iki"
+    assert again[0]["qty"] == 3
