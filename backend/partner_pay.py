@@ -906,7 +906,43 @@ async def accrue_monthly_salaries(
     }
 
 
+async def _accrue_due_routed(db, as_of: Optional[str] = None) -> Dict[str, Any]:
+    """Bayrak açık: her şirketin kendi deposundaki ortaklar. Bir depo düşünce diğerleri sürer."""
+    import storage_router
+
+    seen = set()
+    posted = 0
+    companies = 0
+    async for cid, store in storage_router.iter_company_stores(db):
+        if cid in seen:
+            continue
+        seen.add(cid)
+        try:
+            cursor = store.partners.find({"company_id": cid})
+            partners = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
+            due = False
+            for p in partners:
+                try:
+                    if float(p.get("monthly_salary") or 0) > 0:
+                        due = True
+                        break
+                except (TypeError, ValueError):
+                    continue
+            if not due:
+                continue
+            companies += 1
+            r = await accrue_monthly_salaries(store, cid, as_of=as_of)
+            posted += int(r.get("posted_count") or 0)
+        except Exception as exc:
+            storage_router.log_store_failure(cid, exc)
+    return {"posted_count": posted, "companies": companies}
+
+
 async def accrue_due_for_all_companies(db, as_of: Optional[str] = None) -> Dict[str, Any]:
+    import storage_router
+
+    if storage_router.enabled():
+        return await _accrue_due_routed(db, as_of=as_of)
     # tenant-ok: zamanlayıcı, vadesi gelen ortak maaşını tüm şirketlerde tarar; her şirket kendi company_id'si ile işlenir
     cursor = db.partners.find({})
     partners = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)

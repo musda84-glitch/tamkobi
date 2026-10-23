@@ -70,8 +70,8 @@ COLLECTIONS = {
     },
     "companies": {
         "scope": SCOPE_PLATFORM,
-        "description": "Kiracı firmalar (vergi, adres, lisans, üst şirket, B2B ve yazdırma ayarları).",
-        "keys": ("_id", "name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "license_id", "parent_company_id", "onboarding"),
+        "description": "Kiracı firmalar (vergi, adres, lisans, üst şirket, B2B ve yazdırma ayarları). storage_mode boşsa legacy. dedicated_dsn_ref Fernet ile mühürlü DSN referansıdır; düz metin yazılmaz ve düz metin okunmaz.",
+        "keys": ("_id", "name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "license_id", "parent_company_id", "onboarding", "storage_mode", "dedicated_dsn_ref"),
         "refs": ("company_licenses._id via license_id", "companies._id via parent_company_id"),
     },
     "roles": {

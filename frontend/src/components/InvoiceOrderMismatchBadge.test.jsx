@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
-import { InvoiceOrderMismatchBadge } from "./InvoiceOrderMismatchBadge";
+import { InvoiceOrderMismatchBadge, mismatchWarningText } from "./InvoiceOrderMismatchBadge";
 
 let host;
 beforeEach(() => {
@@ -31,6 +31,21 @@ test("order list shows invoice mismatch badge", () => {
   const badge = host.querySelector("[data-testid='invoice-order-mismatch-B2B-2026-0080']");
   expect(badge).not.toBeNull();
   expect(badge.textContent).toBe("Fatura siparişten farklı (Fatura: 1.250,50 TL)");
+});
+
+test("hidden prices drop the amount from the mismatch warning", () => {
+  const warning = "Fatura siparişten farklı (Fatura: 1.250,50 TL)";
+  expect(mismatchWarningText(warning, true)).toBe("Fatura siparişten farklı");
+  expect(mismatchWarningText(warning, true)).not.toMatch(/1\.250,50|TL/);
+  render(
+    <InvoiceOrderMismatchBadge
+      hideAmount
+      ord={{ order_number: "B2B-2026-0080", invoice_mismatch_warning: warning }}
+    />,
+  );
+  const badge = host.querySelector("[data-testid='invoice-order-mismatch-B2B-2026-0080']");
+  expect(badge.textContent).toBe("Fatura siparişten farklı");
+  expect(badge.textContent).not.toMatch(/1\.250,50|TL/);
 });
 
 test("matching totals omit the badge", () => {

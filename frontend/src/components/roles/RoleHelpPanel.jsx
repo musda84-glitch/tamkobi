@@ -1,10 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
-import { RoleHelpImage } from "./RoleHelpImage";
-import { ROLE_HELP_LEVELS, ROLE_HELP_SECTIONS, roleHelpImageSrc } from "./roleHelpContent";
-import "./RoleHelpPanel.css";
+import { ROLE_HELP_SECTIONS } from "./roleHelpContent";
 
 const LEVEL_TONE = {
   none: "border-slate-200 bg-white",
@@ -13,132 +10,167 @@ const LEVEL_TONE = {
   delete: "border-rose-100 bg-rose-50",
 };
 
-function HelpNote({ text, kind = "note" }) {
-  const important = kind === "important";
-  return (
-    <p
-      className={important
-        ? "mt-2 rounded-[10px] border border-rose-200 bg-rose-50 px-2.5 py-2 text-[12px] leading-relaxed text-rose-900"
-        : "mt-2 rounded-[10px] border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] leading-relaxed text-amber-950"}
-      data-testid={important ? "role-help-important" : "role-help-note"}
-    >
-      <span className="font-extrabold">{important ? "Önemli: " : "Not: "}</span>
-      {text}
-    </p>
-  );
-}
-
-function HelpShot({ image }) {
+export function RoleHelpFigure({ image }) {
+  const [missing, setMissing] = useState(!image?.src);
   if (!image) return null;
+  if (missing) {
+    return (
+      <div
+        className="mt-2.5 flex min-h-[150px] items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 text-center text-xs text-slate-400"
+        data-testid={`role-help-shot-placeholder-${image.id}`}
+      >
+        <div>
+          <div>Ekran görüntüsü yer tutucu</div>
+          {image.caption ? <div className="mt-1">{image.caption}</div> : null}
+        </div>
+      </div>
+    );
+  }
   return (
-    <RoleHelpImage
-      src={roleHelpImageSrc(image.file)}
+    <img
+      src={image.src}
       alt={image.alt}
       width={image.width}
       height={image.height}
+      loading="lazy"
+      decoding="async"
+      onError={() => setMissing(true)}
+      className="mt-2.5 h-auto w-full rounded-xl border border-slate-200 bg-slate-50"
+      data-testid={`role-help-shot-${image.id}`}
     />
   );
 }
 
-export function RoleHelpPanel({ onClose }) {
+function NoteList({ notes, id }) {
+  if (!notes?.length) return null;
+  return notes.map((note, index) => (
+    <p
+      key={`${id}-${index}`}
+      className={`mt-2 rounded-[10px] border px-2.5 py-2 text-[11px] leading-relaxed ${note.kind === "important" ? "border-amber-300 bg-amber-50 text-amber-950" : "border-rose-200 bg-rose-50 text-rose-800"}`}
+      data-testid={`role-help-note-${id}-${index}`}
+    >
+      <span className="font-bold">{note.kind === "important" ? "Önemli. " : "Not. "}</span>
+      {note.text}
+    </p>
+  ));
+}
+
+function LevelList({ levels }) {
+  return (
+    <div className="mt-2 space-y-1.5" data-testid="role-help-levels">
+      {levels.map((level) => (
+        <div
+          key={level.key}
+          className={`rounded-[10px] border px-2.5 py-2 leading-relaxed text-slate-800 ${LEVEL_TONE[level.key] || LEVEL_TONE.none}`}
+          data-testid={`role-help-level-${level.key}`}
+        >
+          <b>{level.label}</b>
+          {" — "}
+          {level.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HelpBlock({ id, title, paragraphs, image, notes }) {
+  return (
+    <div data-testid={`role-help-item-${id}`}>
+      <h3 className="text-[15px] font-bold text-slate-900">{title}</h3>
+      {(paragraphs || []).map((paragraph) => (
+        <p key={paragraph} className="mt-1.5 leading-relaxed text-slate-700">{paragraph}</p>
+      ))}
+      <RoleHelpFigure image={image} />
+      <NoteList notes={notes} id={id} />
+    </div>
+  );
+}
+
+/**
+ * Roller sayfası yardım paneli.
+ * Masaüstünde sağdan, dar ekranda alttan tam ekran açılır.
+ */
+export function RoleHelpPanel({ open, onClose, sections = ROLE_HELP_SECTIONS }) {
+  const onCloseRef = useRef(onClose);
   const closeRef = useRef(null);
-  const bodyRef = useRef(null);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
-    const prev = document.body.style.overflow;
+    if (!open) return undefined;
+    const onKey = (event) => {
+      if (event.key === "Escape") onCloseRef.current?.();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     closeRef.current?.focus();
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
     return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
     };
-  }, [onClose]);
+  }, [open]);
 
-  const jump = (id) => {
-    const el = bodyRef.current?.querySelector(`#role-help-${id}`);
-    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "start" });
-  };
+  if (!open || typeof document === "undefined") return null;
 
   return createPortal(
     <>
-      <div className="role-help-backdrop" data-testid="role-help-backdrop" {...backdropDismissProps(onClose)} />
       <div
-        className="role-help-panel"
+        className="fixed inset-0 z-[70] bg-slate-900/35"
+        data-testid="role-help-backdrop"
+        {...backdropDismissProps(() => onCloseRef.current?.())}
+      />
+      <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="role-help-title"
         data-testid="role-help-panel"
+        className="fixed z-[80] flex w-full flex-col overflow-hidden bg-white text-[13px] text-slate-900 shadow-[-10px_0_30px_rgba(15,23,42,.12)] inset-x-0 bottom-0 h-[100dvh] md:inset-y-0 md:left-auto md:right-0 md:h-full md:w-[440px] md:border-l md:border-slate-200"
       >
-        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white">
-          <div className="flex items-start justify-between gap-3 px-5 pb-2 pt-4">
-            <div>
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-slate-500">Yardım</div>
-              <h2 id="role-help-title" className="text-lg font-bold leading-tight">Roller ve yetkiler</h2>
-            </div>
-            <button
-              type="button"
-              ref={closeRef}
-              onClick={onClose}
-              className="rounded-lg p-1 text-slate-600 hover:bg-slate-100"
-              aria-label="Kapat"
-              data-testid="role-help-close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <nav className="flex gap-1.5 overflow-x-auto px-5 pb-3" aria-label="Yardım bölümleri">
-            {ROLE_HELP_SECTIONS.map((section) => (
-              <button
-                key={section.id}
-                type="button"
-                onClick={() => jump(section.id)}
-                className="shrink-0 rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-                data-testid={`role-help-jump-${section.id}`}
-              >
-                {section.title}
-              </button>
-            ))}
-          </nav>
+        <div className="flex justify-center pt-2 md:hidden" aria-hidden="true">
+          <div className="h-1.5 w-10 rounded-full bg-slate-300" data-testid="role-help-handle" />
         </div>
-        <div ref={bodyRef} className="role-help-body">
-          {ROLE_HELP_SECTIONS.map((section) => (
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+          <div id="role-help-title" className="text-[11px] font-extrabold uppercase tracking-[.06em] text-slate-500">
+            Yardım · Roller ve yetkiler
+          </div>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={() => onCloseRef.current?.()}
+            aria-label="Kapat"
+            data-testid="role-help-close"
+            className="font-bold text-slate-700"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4" data-testid="role-help-body">
+          {(sections || []).map((section) => (
             <section
               key={section.id}
               id={`role-help-${section.id}`}
-              className="mt-5 border-t border-slate-100 pt-4 first:mt-0 first:border-t-0 first:pt-0"
               data-testid={`role-help-section-${section.id}`}
+              className="mt-5 border-t border-slate-100 pt-4 first:mt-0 first:border-t-0 first:pt-0"
             >
-              <div className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-slate-500">{section.eyebrow}</div>
-              <h3 className="mt-0.5 text-[17px] font-bold text-slate-900">{section.title}</h3>
-              {section.lead ? <p className="mt-2 text-[13px] leading-relaxed text-slate-700">{section.lead}</p> : null}
-              {section.showLevels ? (
-                <div className="mt-2 space-y-1.5" data-testid="role-help-levels">
-                  {ROLE_HELP_LEVELS.map((lv) => (
-                    <div
-                      key={lv.key}
-                      className={`rounded-[10px] border px-2.5 py-2 text-[13px] leading-relaxed ${LEVEL_TONE[lv.key]}`}
-                      data-testid={`role-help-level-${lv.key}`}
-                    >
-                      <b>{lv.title}</b>
-                      <span> — {lv.body}</span>
-                    </div>
+              {section.kicker ? (
+                <div className="text-[11px] font-extrabold uppercase tracking-[.06em] text-slate-500" data-testid={`role-help-kicker-${section.id}`}>
+                  {section.kicker}
+                </div>
+              ) : null}
+              <h2 className="mt-1 text-lg font-bold text-slate-900">{section.title}</h2>
+              {(section.paragraphs || []).map((paragraph) => (
+                <p key={paragraph} className="mt-2 leading-relaxed text-slate-700">{paragraph}</p>
+              ))}
+              {section.levels ? <LevelList levels={section.levels} /> : null}
+              <RoleHelpFigure image={section.image} />
+              <NoteList notes={section.notes} id={section.id} />
+              {(section.items || []).length > 0 ? (
+                <div className="mt-4 space-y-4">
+                  {section.items.map((entry) => (
+                    <HelpBlock key={entry.id} {...entry} />
                   ))}
                 </div>
               ) : null}
-              <HelpShot image={section.image} />
-              {section.note ? <HelpNote text={section.note} kind={section.noteKind} /> : null}
-              {(section.modules || []).map((mod) => (
-                <div key={mod.id} className="mt-4" data-testid={`role-help-module-${mod.id}`}>
-                  <h4 className="text-[15px] font-bold text-slate-900">{mod.title}</h4>
-                  <p className="mt-1 text-[13px] leading-relaxed text-slate-700">{mod.body}</p>
-                  <HelpShot image={mod.image} />
-                  {mod.note ? <HelpNote text={mod.note} kind={mod.noteKind} /> : null}
-                </div>
-              ))}
             </section>
           ))}
         </div>

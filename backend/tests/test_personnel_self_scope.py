@@ -453,7 +453,7 @@ def test_personel_sees_only_own_rows(api):
 
     pending = client.get("/api/personnel/pending-requests", params=params, headers=headers)
     assert pending.status_code == 403, pending.text
-    assert pending.json()["detail"] == personnel_scope.PENDING_FORBIDDEN
+    assert pending.json()["detail"] == "Bu işlem için yetkiniz yok (Personel rolü: /personnel)."
 
     employees = client.get("/api/personnel/employees", params=params, headers=headers)
     assert employees.status_code == 200, employees.text

@@ -206,6 +206,9 @@ test("shows admin email, membership and sends password reset", async () => {
   expect(host.querySelector('[data-testid="drawer-admin-mail"]')?.textContent).toContain("admin@matek.test");
   expect(host.querySelector('[data-testid="drawer-co-email"]')?.textContent).toContain("info@matek.test");
   expect(host.querySelector('[data-testid="drawer-membership"]')).not.toBeNull();
+  const mode = host.querySelector('[data-testid="drawer-storage-mode"]');
+  expect(mode?.textContent).toContain("Legacy");
+  expect(mode?.parentElement?.querySelector("input, select, textarea, button")).toBeNull();
   const resetBtn = host.querySelector('[data-testid="drawer-admin-reset"]');
   expect(resetBtn).not.toBeNull();
   await act(async () => { resetBtn.click(); });
@@ -213,6 +216,21 @@ test("shows admin email, membership and sends password reset", async () => {
   const call = axios.post.mock.calls.find((c) => String(c[0]).includes("send-password-reset"));
   expect(call).toBeTruthy();
   expect(call[1]).toMatchObject({ email: "admin@matek.test", user_id: "usr_1" });
+});
+
+test("shows a non-legacy storage mode as read-only text", async () => {
+  companyPayload.storage_mode = "shared_v2";
+  companyPayload.dedicated_dsn_ref = "gAAAA-should-not-render";
+  try {
+    await renderDrawer();
+    const mode = host.querySelector('[data-testid="drawer-storage-mode"]');
+    expect(mode?.textContent).toContain("Shared v2");
+    expect(host.textContent).not.toContain("gAAAA-should-not-render");
+    expect(mode?.parentElement?.querySelector("input, select, textarea")).toBeNull();
+  } finally {
+    delete companyPayload.storage_mode;
+    delete companyPayload.dedicated_dsn_ref;
+  }
 });
 
 test("renders management tabs including Depolama and Yapay zekâ", async () => {

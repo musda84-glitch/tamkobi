@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import notify
@@ -14,6 +15,7 @@ from notify import (
     notification_doc,
     notification_visible,
     pick_unread_for_push,
+    push_visible,
     remove_push_token,
     replay_unread_to_token,
     role_label,
@@ -633,3 +635,134 @@ def test_concurrent_stamps_keep_both_device_ids():
     assert right["pushed_device_ids"] == ["phone-old", "phone-b"]
     assert set(stored["pushed_device_ids"]) == {"phone-old", "phone-a", "phone-b"}
     assert stored["pushed_at"]
+
+
+def _hours_ago(hours: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+
+def test_push_visible_ignores_admin_sees_all_shortcut():
+    admin = {"_id": "usr_adm", "id": "usr_adm", "role": "admin"}
+    super_admin = {"_id": "usr_root", "role": "sales", "is_super_admin": True}
+    staff_admin = {"role": "admin", "id": "u1", "employee_id": "emp_1"}
+    other = notification_doc(
+        "c1", "attendance_checkout_reminder", "Çıkış hatırlatması", "19:00",
+        user_id="usr_emp", employee_id="emp_1", roles=[],
+    )
+    own = notification_doc("c1", "task_assigned", "Görev", "sana", user_id="usr_adm", roles=[])
+    bank = notification_doc("c1", "bank_sync", "Banka", "3 hareket")
+    assert notification_visible(other, admin)
+    assert notification_visible(other, super_admin)
+    assert filter_notifications([other, own, bank], admin) == [other, own, bank]
+    assert not push_visible(other, admin)
+    assert not push_visible(other, super_admin)
+    assert push_visible(own, admin)
+    assert push_visible(bank, admin)
+    assert push_visible(bank, staff_admin)
+    assert not push_visible({"type": "order_pick_missing"}, staff_admin)
+    assert not notify.replay_note_current(other)
+    assert not notify.replay_note_current({**bank, "created_at": _hours_ago(3)})
+    assert notify.replay_note_current(bank)
+
+
+def test_admin_replay_skips_other_staff_and_stale_reminders():
+    """Personel kartı olmayan yönetici, başkasının hatırlatmasını ve 2 saatten eski kaydı almaz."""
+    db = _PushDB()
+    admin = db.add_user("usr_adm", "admin")
+    db.add_user("usr_emp", "personel", employee_id="emp_1")
+    db.add_token(PER, "usr_emp")
+    other = notification_doc(
+        "c1", "attendance_checkout_reminder", "Çıkış hatırlatması", "19:00",
+        user_id="usr_emp", employee_id="emp_1", roles=[],
+    )
+    foreign = notification_doc(
+        "c1", "task_assigned", "Başkasının görevi", "personel",
+        user_id="usr_emp", employee_id="emp_1", roles=[],
+    )
+    own = notification_doc("c1", "task_assigned", "Görev", "sana", user_id="usr_adm", roles=[])
+    bank = notification_doc("c1", "bank_sync", "Banka", "3 hareket")
+    stale = notification_doc("c1", "order_new", "Eski sipariş", "saatler önce")
+    stale["created_at"] = _hours_ago(3)
+    own_reminder = notification_doc(
+        "c1", "attendance_checkin_reminder", "Giriş hatırlatması", "şimdi",
+        user_id="usr_adm", roles=[],
+    )
+    for note in (other, foreign, own, bank, stale, own_reminder):
+        db.notifications.docs[note["_id"]] = note
+
+    async def go():
+        saved = await upsert_push_token(
+            db, user_id="usr_adm", company_id="c1", token=ADM, device_id="admin-phone",
+        )
+        batches = []
+
+        async def fake_send(messages):
+            batches.append(list(messages))
+            return _ok_tickets(messages)
+
+        with patch.object(notify, "send_expo_push", fake_send):
+            live = await notify.dispatch_push(db, other)
+            replay = await replay_unread_to_token(
+                db, user=admin, company_id="c1", token=ADM, device_id="admin-phone",
+            )
+        return saved, live, replay, batches
+
+    saved, live, replay, batches = _run(go())
+    assert saved["replay"] is True
+    assert live["sent"] == 1
+    assert [m["to"] for m in batches[0]] == [PER]
+    replayed = batches[1]
+    assert {m["title"] for m in replayed} == {"Görev", "Banka"}
+    assert {m["to"] for m in replayed} == {ADM}
+    assert {m["data"]["user_id"] for m in replayed} == {"usr_adm"}
+    assert replay["count"] == 2
+    listed = filter_notifications(
+        list(db.notifications.docs.values()), admin,
+    )
+    assert other["_id"] in {n["_id"] for n in listed}
+    assert foreign["_id"] in {n["_id"] for n in listed}
+
+
+def test_same_device_token_refresh_does_not_replay_again():
+    db = _PushDB()
+    user = db.add_user("usr_mgr", "manager")
+    batches = []
+
+    async def fake_send(messages):
+        batches.append(list(messages))
+        return _ok_tickets(messages)
+
+    async def register(token, device):
+        out = await upsert_push_token(
+            db, user_id="usr_mgr", company_id="c1", token=token, device_id=device,
+        )
+        sent = 0
+        if out.get("replay"):
+            with patch.object(notify, "send_expo_push", fake_send):
+                result = await replay_unread_to_token(
+                    db, user=user, company_id="c1", token=token, device_id=device,
+                )
+                sent = int(result.get("sent") or 0)
+        return out, sent
+
+    async def go():
+        first_note = notification_doc("c1", "order_new", "İlk", "sipariş")
+        db.notifications.docs[first_note["_id"]] = first_note
+        first = await register(MGR, "phone-a")
+        missed = notification_doc("c1", "order_new", "Arada", "kaçan")
+        db.notifications.docs[missed["_id"]] = missed
+        second = await register(AGAIN, " phone-a ")
+        third = await register(FRESH, "phone-b")
+        row = await db.push_tokens.find_one({"token": AGAIN, "company_id": "c1"})
+        original = await db.push_tokens.find_one({"token": MGR, "company_id": "c1"})
+        return first, second, third, row, original
+
+    first, second, third, row, original = _run(go())
+    assert first[0]["replay"] is True and first[1] == 1
+    assert second[0]["replay"] is False and second[1] == 0
+    assert third[0]["replay"] is True and third[1] == 2
+    assert row["device_id"] == "phone-a"
+    assert row["replayed_at"] == original["replayed_at"]
+    assert [len(batch) for batch in batches] == [1, 2]
+    assert batches[0][0]["title"] == "İlk"
+    assert {m["title"] for m in batches[1]} == {"İlk", "Arada"}

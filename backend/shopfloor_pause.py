@@ -220,66 +220,85 @@ async def run_auto_pause_work_orders(company_id: Optional[str] = None) -> list:
     db = att._db
     if db is None:
         return []
+    import storage_router
+
     results = []
     q = {"_id": company_id} if company_id else {}
     async for company in db.companies.find(q):
-        base = att.merge_schedule(company)
-        now = att.local_now(base)
-        today = now.strftime("%Y-%m-%d")
-        now_s = now.strftime("%H:%M")
-        emps = await db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(500)
-        for emp in emps:
-            sch = att.merge_schedule(company, emp)
-            cid = company["_id"]
-            if cid:
-                plan = await db.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
-                rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
-            else:
-                plan = None
-                rec = {}
-            if not should_auto_pause_now(schedule=sch, rec=rec, date=today, plan=plan, now_hm=now_s):
+        routed = storage_router.enabled()
+        raw_id = company.get("_id") if routed else company["_id"]
+        cid = str(raw_id or "").strip() if routed else raw_id
+        if routed and not cid:
+            continue
+        token = None
+        src = db
+        if routed:
+            try:
+                store = await storage_router.open_company_store(db, cid)
+                token = storage_router.use_store(store)
+                src = store
+            except Exception as exc:
+                storage_router.log_store_failure(cid, exc)
                 continue
-            name = str(emp.get("full_name") or "").strip()
-            eid = str(emp.get("_id") or "").strip()
-            if not name and not eid:
-                continue
-            wos = await db.work_orders.find(
-                {
-                    "company_id": company["_id"],
-                    "status": "in_progress",
-                    "$or": [
-                        {"operator_employee_id": eid},
-                        {"operator_name": name},
-                        {"assigned_name": name},
-                    ],
-                }
-            ).to_list(200)
-            wos = [row for row in wos if work_order_matches_employee(row, emp)]
-            if not wos:
-                continue
-            now_iso = datetime.now(timezone.utc).isoformat()
-            ids = [w["_id"] for w in wos]
-            await db.work_orders.update_many(
-                {"_id": {"$in": ids}, "company_id": company["_id"]},
-                {
-                    "$set": {"status": "paused", "paused_at": now_iso, "auto_paused": True},
-                    "$push": {
-                        "logs": {
-                            "at": now_iso,
-                            "action": "pause",
-                            "by": name,
-                            "note": AUTO_PAUSE_REASON,
-                        }
+        try:
+            base = att.merge_schedule(company)
+            now = att.local_now(base)
+            today = now.strftime("%Y-%m-%d")
+            now_s = now.strftime("%H:%M")
+            emps = await src.employees.find({"company_id": cid, "status": "active"}).to_list(500)
+            for emp in emps:
+                sch = att.merge_schedule(company, emp)
+                if not routed and not cid:
+                    plan = None
+                    rec = {}
+                else:
+                    plan = await src.shift_plans.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid})
+                    rec = await src.attendance.find_one({"employee_id": emp["_id"], "date": today, "company_id": cid}) or {}
+                if not should_auto_pause_now(schedule=sch, rec=rec, date=today, plan=plan, now_hm=now_s):
+                    continue
+                name = str(emp.get("full_name") or "").strip()
+                eid = str(emp.get("_id") or "").strip()
+                if not name and not eid:
+                    continue
+                wos = await src.work_orders.find(
+                    {
+                        "company_id": cid,
+                        "status": "in_progress",
+                        "$or": [
+                            {"operator_employee_id": eid},
+                            {"operator_name": name},
+                            {"assigned_name": name},
+                        ],
+                    }
+                ).to_list(200)
+                wos = [row for row in wos if work_order_matches_employee(row, emp)]
+                if not wos:
+                    continue
+                now_iso = datetime.now(timezone.utc).isoformat()
+                ids = [w["_id"] for w in wos]
+                await src.work_orders.update_many(
+                    {"_id": {"$in": ids}, "company_id": cid},
+                    {
+                        "$set": {"status": "paused", "paused_at": now_iso, "auto_paused": True},
+                        "$push": {
+                            "logs": {
+                                "at": now_iso,
+                                "action": "pause",
+                                "by": name,
+                                "note": AUTO_PAUSE_REASON,
+                            }
+                        },
                     },
-                },
-            )
-            results.append(
-                {
-                    "company_id": company["_id"],
-                    "employee_id": emp["_id"],
-                    "employee_name": name,
-                    "paused": len(ids),
-                    "work_order_ids": ids,
-                }
-            )
+                )
+                results.append(
+                    {
+                        "company_id": cid,
+                        "employee_id": emp["_id"],
+                        "employee_name": name,
+                        "paused": len(ids),
+                        "work_order_ids": ids,
+                    }
+                )
+        finally:
+            storage_router.reset_bound(token)
     return results

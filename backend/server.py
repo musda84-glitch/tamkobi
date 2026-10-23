@@ -2253,7 +2253,17 @@ async def sync_einvoice_incoming(company_id: Optional[str] = None, days: int = 1
 
 async def _run_einvoice_inbox_auto_tick() -> None:
     """Tek tur: auto_pull açık n11 / İşNet şirketlerinde çek; auto_process açıksa içeri al."""
-    for s in await db.einvoice_settings.find({"provider": {"$in": ["n11faturam", "isnet", "isnet_portal"]}, "status": "configured"}).to_list(200):
+    import storage_router
+
+    query = {"provider": {"$in": ["n11faturam", "isnet", "isnet_portal"]}, "status": "configured"}
+    if storage_router.enabled():
+        groups = await storage_router.collect_company_rows(db, "einvoice_settings", query, limit=200)
+        settings_rows = []
+        for _cid, found in groups:
+            settings_rows.extend(found)
+    else:
+        settings_rows = await db.einvoice_settings.find(query).to_list(200)
+    for s in settings_rows:
         if not s.get("auto_pull", True):
             continue
         cid = s.get("company_id")
@@ -2276,8 +2286,11 @@ async def _run_einvoice_inbox_auto_tick() -> None:
                 await edocs.process_pending_for_company(cid)
         except HTTPException as e:
             logger.warning("e-fatura otomatik gelen kutu atlandı %s: %s", cid, e.detail)
-        except Exception:
-            logger.exception("e-fatura otomatik gelen kutu hatası: %s", cid)
+        except Exception as exc:
+            if storage_router.enabled():
+                storage_router.log_store_failure(cid, exc)
+            else:
+                logger.exception("e-fatura otomatik gelen kutu hatası: %s", cid)
 
 
 async def _einvoice_inbox_auto_loop(interval_s: int = 600):
@@ -20253,7 +20266,24 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
     await _a.sleep(interval_s)
     while True:
         try:
-            for cfg in await db.integration_configs.find({"is_active": True, "channel": "trendyol"}).to_list(50):
+            import storage_router
+
+            if storage_router.enabled():
+                groups = await storage_router.collect_company_rows(
+                    db,
+                    "integration_configs",
+                    {"is_active": True, "channel": "trendyol"},
+                    limit=50,
+                )
+                configs = []
+                for cid, rows in groups:
+                    for cfg in rows:
+                        cfg = dict(cfg)
+                        cfg.setdefault("company_id", cid)
+                        configs.append(cfg)
+            else:
+                configs = await db.integration_configs.find({"is_active": True, "channel": "trendyol"}).to_list(50)
+            for cfg in configs:
                 auto_on = cfg.get("auto_sync_orders")
                 if auto_on is None:
                     auto_on = cfg.get("auto_sync", True)
@@ -20262,14 +20292,31 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
                         await _sync_ecommerce_channel_core(cfg["_id"], days=3)
                     except HTTPException:
                         pass
+                    except Exception as exc:
+                        if not storage_router.enabled():
+                            raise
+                        storage_router.log_store_failure(cfg.get("company_id"), exc)
         except Exception:
             logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
         await _a.sleep(interval_s)
 
 async def _run_bank_auto_sync_tick():
     from bank_auto_sync import should_background_sync
-    # tenant-ok: zamanlayıcı auto_sync açık bağlantıları tüm şirketlerde tarar; her bağlantı kendi company_id'si ile işlenir, company_id boşsa atlanır
-    conns = await db.bank_connections.find({"auto_sync": {"$ne": False}}).to_list(200)
+    import storage_router
+
+    if storage_router.enabled():
+        groups = await storage_router.collect_company_rows(
+            db, "bank_connections", {"auto_sync": {"$ne": False}}, limit=200,
+        )
+        conns = []
+        for cid, rows in groups:
+            for row in rows:
+                item = dict(row)
+                item.setdefault("company_id", cid)
+                conns.append(item)
+    else:
+        # tenant-ok: zamanlayıcı auto_sync açık bağlantıları tüm şirketlerde tarar; her bağlantı kendi company_id'si ile işlenir, company_id boşsa atlanır
+        conns = await db.bank_connections.find({"auto_sync": {"$ne": False}}).to_list(200)
     skipped_no_company = 0
     for c in conns:
         cid = str(c.get("company_id") or "").strip()
@@ -20282,8 +20329,11 @@ async def _run_bank_auto_sync_tick():
             await _sync_bank_connection_core(c["_id"], company_id=cid)
         except HTTPException:
             pass
-        except Exception:
-            logger.exception("banka otomatik senkron %s", c.get("_id"))
+        except Exception as exc:
+            if storage_router.enabled():
+                storage_router.log_store_failure(cid, exc)
+            else:
+                logger.exception("banka otomatik senkron %s", c.get("_id"))
     if skipped_no_company:
         logger.warning(
             "banka otomatik senkron: firma bilgisi olmayan bağlantı sayısı %s",
@@ -23356,13 +23406,29 @@ def _production_kpi_from_orders(rows: List[Dict[str, Any]], month: str) -> Dict[
 async def production_order_kpis(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Hafif sayaçlar — MySQL'de COUNT(*) (JSON yüklemeden); eksik bildirim Python filtresi."""
     cid = tenant_access.resolve_company_id(user, company_id)
-    month = _tr_now().strftime("%Y-%m")
-    open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
-        db.production_orders.count_documents({"company_id": cid, "status": {"$in": ["planned", "in_production"]}}),
+    now = _tr_now()
+    month = now.strftime("%Y-%m")
+    today = now.strftime("%Y-%m-%d")
+    open_status = {"$in": ["planned", "in_production"]}
+    # Çip sayıları kesik listeden değil. Geciken: açık ve plan tarihi bugünden önce; boş tarih gecikmez.
+    late_q = {
+        "company_id": cid,
+        "status": open_status,
+        "$and": [
+            {"planned_date": {"$gt": ""}},
+            {"planned_date": {"$lt": today}},
+        ],
+    }
+    open_n, in_prod, done_month, recipes_n, missing_n, late_n, completed_n, cancelled_n, all_n = await asyncio.gather(
+        db.production_orders.count_documents({"company_id": cid, "status": open_status}),
         db.production_orders.count_documents({"company_id": cid, "status": "in_production"}),
         db.production_orders.count_documents({"company_id": cid, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
         db.recipes.count_documents({"company_id": cid}),
         db.notifications.count_documents({"company_id": cid, "type": "order_pick_missing", "is_read": False}),
+        db.production_orders.count_documents(late_q),
+        db.production_orders.count_documents({"company_id": cid, "status": "completed"}),
+        db.production_orders.count_documents({"company_id": cid, "status": "cancelled"}),
+        db.production_orders.count_documents({"company_id": cid}),
     )
     return {
         "open": open_n,
@@ -23370,6 +23436,10 @@ async def production_order_kpis(company_id: Optional[str] = None, user: dict = D
         "completed_this_month": done_month,
         "recipes": recipes_n,
         "missing_notifications": missing_n,
+        "late": late_n,
+        "completed": completed_n,
+        "cancelled": cancelled_n,
+        "all": all_n,
     }
 
 def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -23390,6 +23460,13 @@ def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
             "done": is_done,
             "current": is_current,
             "operator_name": w.get("operator_name") or None,
+            "station": w.get("station") or None,
+            "started_at": w.get("started_at") or None,
+            "finished_at": w.get("finished_at") or None,
+            "material_name": w.get("material_name") or None,
+            "material_stock_deducted": bool(w.get("material_stock_deducted")),
+            "material_stock_qty": w.get("material_stock_qty") if w.get("material_stock_deducted") else None,
+            "finish_unit": w.get("finish_unit") or None,
         })
     return {
         "done": done,
@@ -23437,23 +23514,53 @@ async def list_production_orders(
     include_steps: bool = False,
     user: dict = Depends(get_current_user),
 ):
-    """status=open → planned + in_production. include_steps=1 → adım özeti (ayrı work-orders çağrısı gerekmez)."""
+    """status=open → planned + in_production, sınır yok.
+
+    Süzgeç yokken açık emirlerin tümü gelir; 300 sınırı yalnız kapalı emirlere uygulanır.
+    Böylece yeni tamamlananlar eski açık emri listeden düşürmez. include_steps=1 → adım özeti.
+    """
     cid = tenant_access.resolve_company_id(user, company_id)
-    q: Dict[str, Any] = {"company_id": cid}
+    product_clause = {"finished_product_id": product_id} if product_id else {}
+    open_status = {"$in": ["planned", "in_production"]}
     if status == "open":
-        q["status"] = {"$in": ["planned", "in_production"]}
+        rows = await db.production_orders.find(
+            {"status": open_status, **product_clause, "company_id": cid},
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(None)
     elif status:
-        q["status"] = {"$in": status.split(",")} if "," in status else status
-    if product_id:
-        q["finished_product_id"] = product_id
-    rows = await db.production_orders.find(q, _PO_LIST_PROJ).sort("created_at", -1).to_list(300)
+        rows = await db.production_orders.find(
+            {
+                "status": {"$in": status.split(",")} if "," in status else status,
+                **product_clause,
+                "company_id": cid,
+            },
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(300)
+    else:
+        opens = await db.production_orders.find(
+            {"status": open_status, **product_clause, "company_id": cid},
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(None)
+        closed = await db.production_orders.find(
+            {"status": {"$nin": ["planned", "in_production"]}, **product_clause, "company_id": cid},
+            _PO_LIST_PROJ,
+        ).sort("created_at", -1).to_list(300)
+        rows = sorted(
+            [*opens, *closed],
+            key=lambda row: str(row.get("created_at") or ""),
+            reverse=True,
+        )
     if include_steps and rows:
         oids = [r["_id"] for r in rows]
         # company_id ile daralt — MySQL idx_docs_coll_company + order_id $in
         wos = await db.work_orders.find(
             {"company_id": cid, "order_id": {"$in": oids}},
-            {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
-        ).to_list(2000)
+            {
+                "order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1,
+                "station": 1, "started_at": 1, "finished_at": 1, "material_name": 1,
+                "material_stock_deducted": 1, "material_stock_qty": 1, "finish_unit": 1,
+            },
+        ).to_list(None)
         by: Dict[str, list] = {}
         for w in wos:
             by.setdefault(w.get("order_id"), []).append(w)

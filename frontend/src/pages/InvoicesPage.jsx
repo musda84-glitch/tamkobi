@@ -200,6 +200,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [products, setProducts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [filterType, setFilterType] = useState(initialType);
+  const canCreateInvoice = filterType === "dispatch" ? can("/dispatches", "edit") : canIssueInv;
   const [showCancelled, setShowCancelled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [gibBusy, setGibBusy] = useState("");
@@ -606,6 +607,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const editParam = searchParams.get("edit") || searchParams.get("open");
   useEffect(() => {
     if (!newParam) return;
+    if (!canCreateInvoice) {
+      setSearchParams({}, { replace: true });
+      return;
+    }
     if (newContactParam && contacts.length === 0) return;
     const c = contacts.find((x) => x.id === newContactParam);
     setFormData((fd) => ({
@@ -624,7 +629,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }));
     setShowNewModal(true);
     setSearchParams({}, { replace: true });
-  }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
+  }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams, canCreateInvoice]);
 
   const loadCatalog = useCallback(async () => {
     if (!companyId) return;
@@ -1591,6 +1596,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           if (!cid) { toast.error("Firma yükleniyor, bir saniye sonra tekrar deneyin."); return; }
           setShowAiImport(true);
         }} className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-violet-600/20 transition" data-testid="ai-import-btn"><Sparkles className="w-4 h-4" /><span>{(filterType === "sales" || filterType === "export") ? "PDF/XML Satış Aktar (AI)" : "PDF'den Aktar (AI)"}</span></button>}
+        {canCreateInvoice && (
         <button
           onClick={() => { if (filterType === "dispatch") setFormData((fd) => ({ ...fd, invoice_type: "dispatch", e_type: "e_dispatch" })); setShowNewModal(true); }}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold shadow-md shadow-emerald-600/20 transition self-start sm:self-auto"
@@ -1599,6 +1605,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           <Plus className="w-4 h-4" />
           <span>{filterType === "dispatch" ? "Yeni İrsaliye" : filterType === "purchase" ? "Alış Faturası Gir" : "Yeni Fatura Kes"}</span>
         </button>
+        )}
         </div>
       </div>
       {showAiImport && addonOn("ai.invoice") && (activeCompany?.id || activeCompany?._id) && (

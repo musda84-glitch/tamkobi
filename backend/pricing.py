@@ -159,24 +159,25 @@ async def compute_prices(req: Dict[str, Any], user: Any = Depends(_user_dep)):
 DEFAULT_SUMMARY = {"enabled": False, "time": "08:00", "emails": [], "whatsapp_numbers": [], "include": {"orders": True, "low_stock": True, "shipments": True, "receivables": True}}
 
 
-async def build_summary(company_id: str) -> Dict[str, Any]:
+async def build_summary(company_id: str, source=None) -> Dict[str, Any]:
+    db = source or _db
     now = datetime.now(TR_TZ); since = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
-    orders = await _db.orders.find({"company_id": company_id, "$or": [{"created_at": {"$gte": since}}, {"order_date": {"$gte": since}}]}).to_list(2000)
+    orders = await db.orders.find({"company_id": company_id, "$or": [{"created_at": {"$gte": since}}, {"order_date": {"$gte": since}}]}).to_list(2000)
     by_ch: Dict[str, Dict[str, float]] = {}
     for o in orders:
         c = by_ch.setdefault(o.get("channel") or "manual", {"count": 0, "total": 0.0})
         c["count"] += 1; c["total"] += float(o.get("total_amount") or 0)
-    pending_ship = await _db.orders.count_documents({"company_id": company_id, "order_status": {"$in": ["approved", "preparing"]}, "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}, {"cargo_tracking_number": {"$exists": False}}]})
+    pending_ship = await db.orders.count_documents({"company_id": company_id, "order_status": {"$in": ["approved", "preparing"]}, "$or": [{"cargo_tracking_number": None}, {"cargo_tracking_number": ""}, {"cargo_tracking_number": {"$exists": False}}]})
     low_query = stock_critical.critical_stock_query(company_id)
     low_fields = {"name": 1, "sku": 1, "stock_quantity": 1, "min_stock_alert": 1}
-    low_docs = [p async for p in _db.products.find(low_query, low_fields).limit(morning_summary_email.LOW_STOCK_FETCH)]
+    low_docs = [p async for p in db.products.find(low_query, low_fields).limit(morning_summary_email.LOW_STOCK_FETCH)]
     low_docs.sort(key=morning_summary_email.stock_sort_key)
     low = low_docs[:morning_summary_email.LOW_STOCK_KEEP]
-    low_count = await _db.products.count_documents(low_query)
+    low_count = await db.products.count_documents(low_query)
     today = now.strftime("%Y-%m-%d")
-    overdue = await _db.invoices.find({"company_id": company_id, "invoice_type": "sales", "payment_status": {"$in": ["unpaid", "partially_paid"]}, "due_date": {"$lt": today}, "status": {"$ne": "cancelled"}}, {"grand_total": 1, "paid_amount": 1, "contact_name": 1}).to_list(500)
+    overdue = await db.invoices.find({"company_id": company_id, "invoice_type": "sales", "payment_status": {"$in": ["unpaid", "partially_paid"]}, "due_date": {"$lt": today}, "status": {"$ne": "cancelled"}}, {"grand_total": 1, "paid_amount": 1, "contact_name": 1}).to_list(500)
     overdue_total = sum(float(i.get("grand_total") or 0) - float(i.get("paid_amount") or 0) for i in overdue)
-    claims = await _db.marketplace_claims.count_documents({"company_id": company_id, "status": {"$nin": ["resolved", "closed", "Accepted", "Rejected"]}}) if "marketplace_claims" in await _db.list_collection_names() else 0
+    claims = await db.marketplace_claims.count_documents({"company_id": company_id, "status": {"$nin": ["resolved", "closed", "Accepted", "Rejected"]}}) if "marketplace_claims" in await db.list_collection_names() else 0
     return {"date": now.strftime("%d.%m.%Y"), "orders_total": len(orders), "orders_amount": round(sum(c["total"] for c in by_ch.values()), 2), "orders_by_channel": by_ch, "pending_shipments": pending_ship, "low_stock_count": low_count,
             "low_stock": [{"name": p["name"], "sku": p.get("sku"), "qty": p.get("stock_quantity"), "min": p.get("min_stock_alert")} for p in low], "overdue_count": len(overdue), "overdue_total": round(overdue_total, 2), "open_claims": claims}
 
@@ -197,8 +198,9 @@ def render_text(s: Dict[str, Any], company_name: str) -> str:
     return "\n".join(lines)
 
 
-async def summary_settings_payload(company_id: str):
-    d = await _db.morning_summary_settings.find_one({"company_id": company_id}) or {}
+async def summary_settings_payload(company_id: str, source=None):
+    db = source or _db
+    d = await db.morning_summary_settings.find_one({"company_id": company_id}) or {}
     return {**DEFAULT_SUMMARY, **{k: d[k] for k in DEFAULT_SUMMARY if k in d}, "last_sent": d.get("last_sent"), "last_result": d.get("last_result")}
 
 
@@ -249,9 +251,10 @@ def _scheduled_email_retries(stored: dict, today: str) -> int:
         return 0
 
 
-async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
-    st = await summary_settings_payload(company_id)
-    stored = await _db.morning_summary_settings.find_one({"company_id": company_id}) or {}
+async def send_summary(company_id: str, manual: bool = False, source=None) -> Dict[str, Any]:
+    db = source or _db
+    st = await summary_settings_payload(company_id, source=db)
+    stored = await db.morning_summary_settings.find_one({"company_id": company_id}) or {}
     today = datetime.now(TR_TZ).strftime("%Y-%m-%d")
     prior_retries = 0 if manual else _scheduled_email_retries(stored, today)
     if not manual and prior_retries >= EMAIL_QUEUE_RETRY_LIMIT:
@@ -265,7 +268,7 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
             },
             "text": "",
         }
-    s = await build_summary(company_id)
+    s = await build_summary(company_id, source=db)
     comp = await _db.companies.find_one({"_id": company_id}) or {}
     text = render_text(s, comp.get("name") or "TamKobi")
     result: Dict[str, Any] = {"at": datetime.now(timezone.utc).isoformat(), "email": None, "whatsapp": None}
@@ -345,10 +348,10 @@ async def send_summary(company_id: str, manual: bool = False) -> Dict[str, Any]:
             )
     else:
         sent_fields["last_sent_day"] = today
-    await _db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": sent_fields}, upsert=True)
+    await db.morning_summary_settings.update_one({"company_id": company_id}, {"$set": sent_fields}, upsert=True)
     day_closed = (not queue_failed) or sent_fields.get("email_retry_count", 0) >= EMAIL_QUEUE_RETRY_LIMIT
     if manual or prior_retries == 0 or day_closed:
-        await _db.morning_summary_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "manual": manual, "text": text, **result})
+        await db.morning_summary_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "manual": manual, "text": text, **result})
     return {"status": "success" if not result.get("error") else "error", "message": result.get("error") or "Sabah özeti gönderildi.", "result": result, "text": text}
 
 
@@ -358,15 +361,39 @@ async def send_summary_now(req: Dict[str, Any], user: dict = Depends(_user_dep))
     return await send_summary(cid, manual=True)
 
 
+async def _morning_routed() -> None:
+    """Bayrak açık: sabah özeti ayarı her şirketin kendi deposunda."""
+    import storage_router
+
+    now = datetime.now(TR_TZ)
+    async for cid, store in storage_router.iter_company_stores(_db):
+        token = storage_router.use_store(store)
+        try:
+            st = await store.morning_summary_settings.find_one({"company_id": cid, "enabled": True})
+            if not st:
+                continue
+            if st.get("time", "08:00") <= now.strftime("%H:%M") and st.get("last_sent_day") != now.strftime("%Y-%m-%d"):
+                await send_summary(cid, source=store)
+        except Exception as exc:
+            storage_router.log_store_failure(cid, exc)
+        finally:
+            storage_router.reset_bound(token)
+
+
 async def scheduler_loop():
     """Her dakika: etkin şirketlerde saat geldiyse ve bugün gönderilmediyse özeti gönder."""
+    import storage_router
+
     await asyncio.sleep(20)
     while True:
         try:
-            now = datetime.now(TR_TZ)
-            async for st in _db.morning_summary_settings.find({"enabled": True}):
-                if st.get("time", "08:00") <= now.strftime("%H:%M") and st.get("last_sent_day") != now.strftime("%Y-%m-%d"):
-                    await send_summary(st["company_id"])
+            if storage_router.enabled():
+                await _morning_routed()
+            else:
+                now = datetime.now(TR_TZ)
+                async for st in _db.morning_summary_settings.find({"enabled": True}):
+                    if st.get("time", "08:00") <= now.strftime("%H:%M") and st.get("last_sent_day") != now.strftime("%Y-%m-%d"):
+                        await send_summary(st["company_id"])
         except Exception as e:  # noqa: BLE001
             logger.warning(f"morning summary scheduler: {e}")
         await asyncio.sleep(60)

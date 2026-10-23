@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import rbac
+import storage_router
 import user_numbers
 import company_numbers
 import applog
@@ -22,7 +23,7 @@ _current_user = None
 _cache: Dict[str, Any] = {}
 CACHE_TTL = 15
 
-CORE_MODULES = {"/", "/settings", "/trash"}
+CORE_MODULES = {"/", "/settings", "/trash", "/kontor", "/company-share"}
 # Etiketler frontend/src/navGroups.js NAV_GROUPS ile aynı kalmalı (ERP menü, paket editörü, web vitrin).
 # Sidebar pages that used to inherit a parent license key (LICENSE_KEY aliases).
 # Only self-service Personelim inherits Mesaim license/role; other panel modules are first-class.
@@ -879,6 +880,7 @@ async def _company_row(c: dict) -> Dict[str, Any]:
         "license_companies": siblings,
         "protected": c["_id"] in PROTECTED_COMPANY_IDS,
         "allow_platform_access": allow_panel,
+        **storage_router.company_storage_view(c),
         "admin": admin_brief,
         "membership": {
             "plan_id": lic.get("plan_id"),

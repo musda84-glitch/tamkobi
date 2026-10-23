@@ -389,7 +389,12 @@ def test_view_prices_masks_post_json_and_exports(monkeypatch):
     user = _user("sales")
 
     async def _closed(_user_doc, company_id=None):
-        return _role("sales", _perms(**{"/invoices": "edit"}), features={"view_prices": False}, name="Satış")
+        return _role(
+            "sales",
+            _perms(**{"/invoices": "edit", "/accountant": "view", "/reports": "view"}),
+            features={"view_prices": False},
+            name="Satış",
+        )
 
     mw = _install(monkeypatch, user, _closed)
     status, body, n, masked = _hit(mw, "POST", "/api/invoices", payload={"ok": True, "grand_total": 250, "invoice_number": "F-1"})

@@ -20,6 +20,17 @@ const TAB_IDS = COMPANY_DETAIL_TAB_IDS;
 
 const cred = { withCredentials: true };
 
+const STORAGE_MODE_LABELS = {
+  legacy: "Legacy",
+  shared_v2: "Shared v2",
+  dedicated: "Dedicated",
+};
+
+function storageModeLabel(mode) {
+  const key = String(mode || "legacy").trim().toLowerCase() || "legacy";
+  return STORAGE_MODE_LABELS[key] || key;
+}
+
 const limLabel = (n) => (!n ? "∞" : String(n));
 const billingLabel = (p) => (p === "yearly" ? "Yıllık" : "Aylık");
 const ROOT_TESTID = "company-license-drawer";
@@ -380,6 +391,11 @@ export const CompanyLicenseDrawer = ({
               <div><span className="text-slate-500">Depolama</span><div className="font-semibold text-slate-800">{fmtBytes(mem.storage_bytes ?? d.usage?.storage_bytes ?? 0)}{mem.storage_limit_mb || lic.storage_limit_mb ? ` / ${mem.storage_limit_mb || lic.storage_limit_mb} MB` : ""}</div></div>
               <div><span className="text-slate-500">Fatura / sipariş</span><div className="font-semibold text-slate-800">{mem.invoice_count ?? d.usage?.invoices ?? 0} fatura · {mem.order_count ?? d.usage?.orders ?? 0} sipariş</div></div>
               <div><span className="text-slate-500">Platform erişimi</span><div className="font-semibold text-slate-800">{d.allow_platform_access === false ? "Kapalı (gizlilik)" : "Açık"}</div></div>
+              <div>
+                <span className="text-slate-500">Depolama kipi</span>
+                <div className="font-semibold text-slate-800" data-testid="drawer-storage-mode">{storageModeLabel(d.storage_mode)}</div>
+                <p className="text-[10px] text-slate-400">Salt okunur. Bu ekrandan değiştirilmez.</p>
+              </div>
               {mem.notes || lic.notes ? <div className="sm:col-span-2"><span className="text-slate-500">Lisans notu</span><div className="font-semibold text-slate-800">{mem.notes || lic.notes}</div></div> : null}
             </div>
           </section>

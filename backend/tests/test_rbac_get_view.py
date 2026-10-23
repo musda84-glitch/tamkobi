@@ -1,4 +1,4 @@
-"""GET/HEAD görünürlük kararı. Gölge mod engellemez; red yalnız loglanır."""
+"""GET/HEAD görünürlük kararı. Varsayılan enforce 403; shadow yalnız loglar."""
 import asyncio
 import hashlib
 import json
@@ -170,11 +170,18 @@ def test_get_extra_does_not_change_mutation_mapping():
     assert rbac.module_for_path("/api/expense-budgets") == "/expenses"
     assert rbac.module_for_get_path("/api/marketplace/products") == "/ecommerce"
     assert rbac.module_for_path("/api/marketplace/claims/c1/approve") == "/orders"
-    assert rbac.module_for_get_path("/api/account/gib-credits") == "/settings"
+    assert rbac.module_for_get_path("/api/account/gib-credits") == "/kontor"
+    assert rbac.module_for_get_path("/api/account/profile") == "/settings"
     assert rbac.module_for_get_path("/api/label-templates") == "/stock"
     assert rbac.module_for_path("/api/label-templates") == "/stock"
     assert rbac.module_for_get_path("/api/personnel/attendance") == "/personnel"
     assert rbac.module_for_path("/api/personnel/attendance/att_1/confirm") == "/personnel"
+    assert rbac.module_for_get_path("/api/companies/co_a/b2b-settings") == "/b2b-yonetim"
+    assert rbac.module_for_get_path("/api/contacts/c1/b2b-portal") == "/b2b-yonetim"
+    assert rbac.module_for_path("/api/companies/co_a/b2b-settings") == "/b2b-yonetim"
+    assert rbac.module_for_get_path("/api/demo/status") == "/"
+    assert rbac.module_for_path("/api/demo/load") == "/settings"
+    assert rbac.module_for_path("/api/fx/rates") == "/settings"
 
 
 def _http(method, path, query, token):
@@ -249,7 +256,7 @@ def _install_middleware(monkeypatch, role):
 
 
 def test_shadow_deny_returns_200_without_secrets(monkeypatch, caplog):
-    monkeypatch.delenv("RBAC_GET_ENFORCE", raising=False)
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "shadow")
     role = _role(permissions=_perms(**{"/edoc-inbox": "none", "/invoices": "none"}))
     mw = _install_middleware(monkeypatch, role)
     calls = {"n": 0}
@@ -329,6 +336,25 @@ def test_head_uses_view_shadow_not_mutation(monkeypatch, caplog):
     assert "route=/api/invoices" in lines[0]
     assert "ada@example.com" not in lines[0]
     assert "super-secret-token" not in lines[0]
+
+
+def test_default_enforce_blocks_without_env(monkeypatch):
+    monkeypatch.delenv("RBAC_GET_ENFORCE", raising=False)
+    assert rbac.rbac_get_enforce_mode() == "enforce"
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "")
+    assert rbac.rbac_get_enforce_mode() == "enforce"
+    monkeypatch.setenv("RBAC_GET_ENFORCE", "banana")
+    assert rbac.rbac_get_enforce_mode() == "enforce"
+    role = _role(permissions=_perms(**{"/invoices": "none"}))
+    mw = _install_middleware(monkeypatch, role)
+
+    async def _next(_request):
+        return _json({"ok": True})
+
+    request = _http("GET", "/api/invoices", "", "super-secret-token")
+    request.scope["route"] = SimpleNamespace(path="/api/invoices")
+    resp = asyncio.run(mw.dispatch(request, _next))
+    assert resp.status_code == 403
 
 
 def test_enforce_blocks_and_off_skips_the_log(monkeypatch, caplog):

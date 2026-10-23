@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 
+import storage_router
 import tenant_access
 from tenant_scope import (
     TenantScope,
@@ -217,13 +218,51 @@ def merge_required_eq(query, field: str, value: str) -> dict:
 class ScopedCollection:
     """Kiracı koleksiyonu. MySQLCollection imzalarını aynen taşır."""
 
-    def __init__(self, raw, scope: TenantScope):
+    def __init__(self, raw, scope: TenantScope, owner=None):
         self._raw = raw
         self.scope = scope
+        self._owner = owner
         self.name = getattr(raw, "name", None)
 
     def _filter(self, query):
         return merge_company_filter(query, self.scope)
+
+    def _catalog(self):
+        raw = self._raw
+        for attr in ("_catalog_db", "_db", "db"):
+            value = getattr(raw, attr, None)
+            if value is not None and not isinstance(value, (str, bytes, int, float)):
+                return value
+        return None
+
+    async def _align(self):
+        """Yazmadan önce kilit ve epoch. Bayrak kapalıyken katalog okunmaz."""
+        if not storage_router.enabled():
+            return
+        if storage_router._writer.get() == self.scope.company_id:
+            return
+        mode, epoch, locked = await storage_router.load_view(self._catalog(), self.scope.company_id)
+        if locked:
+            raise storage_router.StorageWriteLocked(
+                storage_router.WRITE_LOCK_MESSAGE, company_id=self.scope.company_id,
+            )
+        owner = self._owner
+        if owner is None:
+            return
+        if owner._storage_mode != mode or getattr(owner, "_storage_epoch", None) != epoch:
+            owner._storage_mode = mode
+            owner._storage_epoch = epoch
+            self._raw = storage_router.collection_for_mode(
+                owner._db, mode, self.scope.company_id, str(self.name or ""),
+            )
+
+    async def _write(self, fn):
+        await self._align()
+        try:
+            return await fn()
+        except storage_router.StorageEpochStale:
+            await self._align()
+            return await fn()
 
     def find(self, query=None, projection=None):
         return self._raw.find(self._filter(query), projection)
@@ -251,56 +290,62 @@ class ScopedCollection:
         return self._raw.aggregate(scoped)
 
     async def insert_one(self, doc):
-        return await self._raw.insert_one(stamp_company(doc, self.scope))
+        body = stamp_company(doc, self.scope)
+        return await self._write(lambda: self._raw.insert_one(body))
 
     async def insert_many(self, docs, ordered: bool = True):
         prepared = [stamp_company(doc, self.scope) for doc in list(docs or [])]
-        fn = self._raw.insert_many
-        if _accepts(fn, "ordered"):
-            return await fn(prepared, ordered=ordered)
-        return await fn(prepared)
+
+        async def run():
+            fn = self._raw.insert_many
+            if _accepts(fn, "ordered"):
+                return await fn(prepared, ordered=ordered)
+            return await fn(prepared)
+
+        return await self._write(run)
 
     async def update_one(self, query, update, upsert: bool = False):
-        return await self._raw.update_one(
+        return await self._write(lambda: self._raw.update_one(
             self._filter(query),
             guard_update(update, self.scope, upsert=upsert),
             upsert=upsert,
-        )
+        ))
 
     async def update_one_atomic(self, query, update):
-        return await self._raw.update_one_atomic(
+        return await self._write(lambda: self._raw.update_one_atomic(
             self._filter(query),
             guard_update(update, self.scope, upsert=False),
-        )
+        ))
 
     async def update_many(self, query, update, upsert: bool = False):
-        return await self._raw.update_many(
+        return await self._write(lambda: self._raw.update_many(
             self._filter(query),
             guard_update(update, self.scope, upsert=upsert),
             upsert=upsert,
-        )
+        ))
 
     async def replace_one(self, query, replacement, upsert: bool = False):
-        return await self._raw.replace_one(
+        body = stamp_company(replacement, self.scope)
+        return await self._write(lambda: self._raw.replace_one(
             self._filter(query),
-            stamp_company(replacement, self.scope),
+            body,
             upsert=upsert,
-        )
+        ))
 
     async def find_one_and_update(self, query, update, upsert: bool = False, return_document=True, projection=None):
-        return await self._raw.find_one_and_update(
+        return await self._write(lambda: self._raw.find_one_and_update(
             self._filter(query),
             guard_update(update, self.scope, upsert=upsert),
             upsert=upsert,
             return_document=return_document,
             projection=projection,
-        )
+        ))
 
     async def delete_one(self, query):
-        return await self._raw.delete_one(self._filter(query))
+        return await self._write(lambda: self._raw.delete_one(self._filter(query)))
 
     async def delete_many(self, query):
-        return await self._raw.delete_many(self._filter(query))
+        return await self._write(lambda: self._raw.delete_many(self._filter(query)))
 
 
 class _ReadScoped:
@@ -364,17 +409,38 @@ class _ReadScoped:
 
 
 class TenantDB:
-    """Kapsama göre koleksiyon seçer. Platform ve token ham geçer."""
+    """Kapsama göre koleksiyon seçer. Platform ve token ham geçer.
 
-    def __init__(self, db, scope: TenantScope):
+    Bayrak açıksa depolama kipi kuruluşta okunur. Yazma, katalog epoch'u
+    ile karşılaştırır; farklıysa yeni kipe yönlenir. Okuma aynı örneği kullanır.
+    """
+
+    def __init__(self, db, scope: TenantScope, storage_mode=storage_router.UNSET):
         self._db = db
         self.scope = scope
+        if storage_mode is not storage_router.UNSET:
+            self._storage_mode = storage_mode
+            cached = storage_router._cache.get(str(scope.company_id or ""))
+            self._storage_epoch = int(cached[2]) if cached else 0
+        elif storage_router.enabled():
+            self._storage_mode = storage_router.mode_for_handle(db, scope.company_id)
+            cached = storage_router._cache.get(str(scope.company_id or ""))
+            self._storage_epoch = int(cached[2]) if cached else 0
+        else:
+            self._storage_mode = None
+            self._storage_epoch = None
 
     def _collection(self, name: str):
+        # Bayrak kapalıyken (varsayılan) bugünkü yol: doğrudan self._db[name].
+        if self._storage_mode is None:
+            raw = self._db[name]
+        else:
+            raw = storage_router.collection_for_mode(
+                self._db, self._storage_mode, self.scope.company_id, name,
+            )
         kind = collection_kind(name)
-        raw = self._db[name]
         if kind in ("tenant", "unknown"):
-            return ScopedCollection(raw, self.scope)
+            return ScopedCollection(raw, self.scope, self)
         if kind == "membership":
             return _ReadScoped(raw, self.scope, "company_ids")
         if kind == "company":
@@ -421,14 +487,24 @@ def _scope_for_user(user: dict, requested: Optional[str]) -> TenantScope:
     )
 
 
+async def _pinned_storage(company_id: str):
+    """Bayrak açıksa kipi yükler. Dedicated ise mühürlü referansı hatırlar."""
+    if not storage_router.enabled():
+        return storage_router.UNSET
+    mode = await storage_router.load_mode(_db, company_id)
+    await storage_router.prepare_dedicated(_db, company_id, mode)
+    return mode
+
+
 async def get_tenant_db(request: Request):
     """İstek dependency'si. Kapsamı yanıt sonunda bırakır. Rotalar henüz kullanmaz."""
     user = await _load_user(request)
     requested = request.query_params.get("company_id") if request is not None else None
     scope = _scope_for_user(user, requested)
+    pinned = await _pinned_storage(scope.company_id)
     token = bind(scope)
     try:
-        yield TenantDB(_db, scope)
+        yield TenantDB(_db, scope, storage_mode=pinned)
     finally:
         reset(token)
 
@@ -449,9 +525,10 @@ async def for_company(cid: str, reason: str):
         actor_id="",
         reason=why,
     )
+    pinned = await _pinned_storage(text)
     token = bind(scope)
     try:
-        yield TenantDB(_db, scope)
+        yield TenantDB(_db, scope, storage_mode=pinned)
     finally:
         reset(token)
 
@@ -471,9 +548,10 @@ async def from_b2b_contact(contact: Optional[dict]):
         reason="b2b",
         contact_id=contact_id,
     )
+    pinned = await _pinned_storage(cid)
     token = bind(scope)
     try:
-        yield TenantDB(_db, scope)
+        yield TenantDB(_db, scope, storage_mode=pinned)
     finally:
         reset(token)
 

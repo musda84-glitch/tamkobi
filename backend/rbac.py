@@ -40,6 +40,8 @@ MODULES = [
     ("/b2b-yonetim", "B2B Portal Yönetimi"),
     ("/installments", "Taksitler"),
     ("/reports", "Raporlar"),
+    ("/kontor", "Kontör"),
+    ("/company-share", "Şirketler arası paylaşım"),
     ("/banking", "Banka & Kasa & POS"),
     ("/expenses", "Masraflar"),
     ("/loans", "Krediler"),
@@ -79,7 +81,9 @@ MODULE_HELP = {
     "/contacts": "Müşteri/tedarikçi kartları, ekstre, bakiye; mobil cari ve tahsilat.",
     "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi, sipariş onayı (web + mobil B2B).",
     "/installments": "Taksitli satış ve ödeme planları.",
-    "/reports": "Satış, alış, stok, nakit akışı, KDV ve kârlılık raporları.",
+    "/reports": "Satış, alış, stok, nakit akışı, KDV ve kârlılık raporları ile Excel dışa aktarım.",
+    "/kontor": "GİB e-belge kontör bakiyesi ve hareketleri. Gönderim kontör harcar.",
+    "/company-share": "Aynı lisans altındaki şirketler arasında cari, stok, fiyat ve fatura okuma bağlantısı.",
     "/banking": "Banka, kasa, POS, virman, canlı banka eşleme; mobil kasa işlemleri.",
     "/expenses": "Masraf fişleri ve bütçe; mobil masraf girişi.",
     "/loans": "Kredi ve kredi kartı takibi.",
@@ -112,10 +116,10 @@ MODULE_HELP = {
 LEVELS = ("none", "view", "edit", "delete")
 LEVEL_RANK = {"none": 0, "view": 1, "edit": 2, "delete": 3}
 LEVEL_META = [
-    {"key": "none", "label": "Yok", "help": "Menüde görünmez; API erişimi engellenir."},
-    {"key": "view", "label": "Görüntüle", "help": "Liste ve detay okunur; oluşturma/düzenleme/silme kapalı."},
-    {"key": "edit", "label": "Düzenle", "help": "Ekleme ve güncelleme; silme kapalı (web + mobil)."},
-    {"key": "delete", "label": "Sil", "help": "Tam işlem: ekleme, güncelleme, silme ve onaylar (web + mobil)."},
+    {"key": "none", "label": "Kapalı", "help": "Menüde görünmez ve ekranlar açılmaz."},
+    {"key": "view", "label": "Görür", "help": "Liste ve detay okunur, PDF açılır. Yeni kayıt, düzenleme ve silme kapalı."},
+    {"key": "edit", "label": "Ekler/Düzenler", "help": "Yeni kayıt açar ve mevcut kaydı günceller. Silemez."},
+    {"key": "delete", "label": "Siler", "help": "Ekleme ve düzenlemenin yanında kayıt silebilir. Silinen kayıt çöp kutusuna gider."},
 ]
 
 
@@ -197,6 +201,8 @@ PORTAL_API_RULES = (
     ("POST", "/api/production/work-orders/{id}/finish", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/shopfloor-next", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/shopfloor-filters", "portal_atolye", "/atolye"),
+    # Operatör seçici. Atölye ekranı listeyle birlikte bunu da okur.
+    ("GET", "/api/production/work-orders/shopfloor-operators", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/partial-count", "portal_atolye", "/atolye"),
     ("POST", "/api/production/work-orders/{id}/undo-finish", "portal_atolye", "/atolye"),
     ("GET", "/api/production/work-orders/{id}/drawing", "portal_atolye", "/atolye"),
@@ -456,7 +462,7 @@ MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "unit_price_incl", "
               "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider", "cheque_bond_balance", "portfolio", "issued_open", "due_this_week", "overdue_received", "overdue_issued", "meal_allowance", "transport_allowance", "unpaid_payroll", "unpaid_expenses", "meal_due", "transport_due", "bonus_pending", "advances",
               "cost_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider", "meal_allowance", "transport_allowance", "unpaid_payroll", "unpaid_expenses", "meal_due", "transport_due", "bonus_pending", "advances",
               "value", "incoming", "outgoing", "collections", "payments", "not_due", "overdue", "payable", "receivable", "deductible", "calculated", "vat", "week", "today", "month_total", "yearly", "cash", "bank", "pos", "kdv", "ciro", "kar", "profit_amount", "spent_amount", "limit", "avg_order", "average",
-              "unit_cost", "total_cost", "material_cost", "estimated_total_cost", "total_estimated_cost", "sale_price_excl_vat", "list_price_incl", "b2b_price", "wholesale_price"}
+              "unit_cost", "total_cost", "material_cost", "estimated_total_cost", "total_estimated_cost", "sale_price_excl_vat", "list_price_incl", "b2b_price", "wholesale_price", "invoice_grand_total"}
 
 
 def _money_scalar(v) -> bool:
@@ -483,9 +489,30 @@ def _money_scalar(v) -> bool:
     return False
 
 
+def redact_mismatch_warning(text: str) -> str:
+    """Fiyat gizliyken uyarı metnindeki fatura tutarını düşürür."""
+    import re
+    raw = str(text or "")
+    stripped = re.sub(r"\s*\([^)]*\d[^)]*\)", "", raw)
+    stripped = re.sub(r"\d[\d.]*,\d{2}\s*TL", "", stripped, flags=re.IGNORECASE).strip()
+    if stripped:
+        return stripped
+    if raw.strip():
+        return "Fatura siparişten farklı"
+    return ""
+
+
+def _mask_field(key, value):
+    if key == "invoice_mismatch_warning" and isinstance(value, str):
+        return redact_mismatch_warning(value)
+    if key in MONEY_KEYS and _money_scalar(value):
+        return 0
+    return mask_money(value)
+
+
 def mask_money(obj):
     if isinstance(obj, dict):
-        return {k: (0 if (k in MONEY_KEYS and _money_scalar(v)) else mask_money(v)) for k, v in obj.items()}
+        return {k: _mask_field(k, v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [mask_money(x) for x in obj]
     return obj
@@ -899,7 +926,12 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   # Menüde ayrı duran modüller. Okuma module_for_get_path'te personelde kalır.
                   ("/api/personnel/attendance", "/mesai"),
                   ("/api/saha", "/saha"),
-                  ("/api/b2b-yonetim", "/b2b-yonetim")]
+                  ("/api/b2b-yonetim", "/b2b-yonetim"),
+                  # Kontör, hesap ayarlarından ayrı. /api/account önekinden uzun olduğu için kazanır.
+                  ("/api/account/gib-credits", "/kontor"),
+                  # {company_id} tek segment. api-key yolları bu şablona girmez.
+                  ("/api/license/companies/{company_id}/links", "/company-share"),
+                  ("/api/license/companies/{company_id}/link-invites", "/company-share")]
 # Yalnız GET/HEAD görünürlük. Yazma module_for_path API_MODULE_MAP'i okur.
 # Aynı uzunluktaki GET_EXTRA yazma eşlemesini ezer. Etiket şablonları iki tarafta da /stock.
 # En uzun önek kazanır: /api/integrations/cargo ve /api/integrations/ecommerce
@@ -911,6 +943,8 @@ GET_EXTRA_MODULE_MAP = (
     ("/api/integrations", "/settings"),
     ("/api/account", "/settings"),
     ("/api/label-templates", "/stock"),
+    # Demo kartı pano kabuğudur. Yükle/sil yazması /api/demo önekiyle /settings kalır.
+    ("/api/demo/status", "/"),
 )
 # Modül yetkisi (RBAC) kontrolü atlanır — yine de oturum gerekebilir.
 SKIP_PREFIXES = ("/api/auth", "/api/setup", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/version", "/api/mobile", "/api/system", "/api/platform", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/me", "/api/personnel/messages", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/reminder-prefs", "/api/personnel/attendance/geo", "/api/personnel/attendance/early-leave-request", "/api/personnel/attendance/intraday-leave-request", "/api/personnel/leaves/self", "/api/personnel/leaves/me", "/api/personnel/bonuses/self")
@@ -1131,9 +1165,48 @@ def backfill_permissions(perms: Optional[Dict[str, str]]) -> Dict[str, str]:
     p.setdefault("/purchase-orders", p.get("/stock", "none"))
     # Eski üretim rollerinde /atolye anahtarı yoksa üretim seviyesini miras al
     p.setdefault("/atolye", p.get("/production", "none"))
+    # Yeni anahtarlar. Kayıtta yoksa okuma anında türetilir; ensure_roles bunları yazmaz.
+    p.setdefault("/kontor", p.get("/settings", "none"))
+    p.setdefault("/company-share", p.get("/settings", "none"))
     for m, _ in MODULES:
         p.setdefault(m, "none")
     return p
+
+
+# Canlı role belgelerine toplu yazılmaz. Kullanıcı Kaydet derse update_role saklar.
+READ_TIME_KEYS = frozenset({"/kontor", "/company-share"})
+
+
+def permissions_to_store(raw: Optional[Dict[str, str]], filled: Dict[str, str]) -> Dict[str, str]:
+    """Kayıtta olmayan yeni anahtarları yazma kümesinden düşür.
+
+    Okuma `backfill_permissions` ile doldurur. Burada yalnız daha önce saklanmış
+    değer korunur; miras türevi diske yazılmaz.
+    """
+    stored = dict(raw or {})
+    out = dict(filled)
+    for key in READ_TIME_KEYS:
+        if key not in stored:
+            out.pop(key, None)
+        else:
+            out[key] = stored[key]
+    return out
+
+
+def present_permissions(role: Optional[dict]) -> Dict[str, str]:
+    """Rol yanıtı ve denetim için bellek içi yetki. Diske yazmaz."""
+    role = role or {}
+    if role.get("code") == "admin":
+        return _all("delete")
+    perms = backfill_permissions(role.get("permissions"))
+    if role.get("is_system"):
+        perms = apply_forced_system_permissions(role.get("code"), perms)
+    return perms
+
+
+def module_is_wired(key: str) -> bool:
+    """Modülün en az bir API öneki var. Bağsız satır düzenleyicide gösterilmez."""
+    return any(mod == key for _prefix, mod in API_MODULE_MAP)
 
 
 async def ensure_roles(company_id: str):
@@ -1186,7 +1259,8 @@ async def ensure_roles(company_id: str):
         if not cur.get("perm_levels_v2"):
             filled = {k: ("delete" if v == "edit" else v) for k, v in filled.items()}
             upd["perm_levels_v2"] = True
-        if filled != raw:
+        filled = permissions_to_store(raw, filled)
+        if filled != {k: v for k, v in raw.items() if k not in READ_TIME_KEYS or k in filled}:
             upd["permissions"] = filled
         if upd:
             await _db.roles.update_one({"_id": cur["_id"]}, {"$set": {**upd, "updated_at": _now()}})
@@ -1263,12 +1337,38 @@ def _b2b_admin_path(path: str) -> bool:
     return p.endswith("/b2b-settings") or p.endswith("/b2b-access") or p.endswith("/b2b-portal")
 
 
+def _template_prefix(path: str, prefix: str) -> bool:
+    """`{param}` tek segment. Şablon, yolun başını tutar; artan segmentler kalır."""
+    tparts = [part for part in prefix.split("/") if part]
+    pparts = [part for part in path.split("/") if part]
+    if len(pparts) < len(tparts):
+        return False
+    for tp, pp in zip(tparts, pparts):
+        if len(tp) >= 2 and tp[0] == "{" and tp[-1] == "}":
+            if not pp:
+                return False
+            continue
+        if tp != pp:
+            return False
+    return True
+
+
+def _prefix_hit(path: str, prefix: str) -> bool:
+    if "{" in prefix:
+        return _template_prefix(path, prefix)
+    return path.startswith(prefix)
+
+
 def _longest_module(path: str, rows) -> Optional[str]:
     best = None
     for prefix, mod in rows:
-        if path.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
+        if _prefix_hit(path, prefix) and (best is None or len(prefix) > len(best[0])):
             best = (prefix, mod)
     return best[1] if best else None
+
+
+def _company_share_path(path: str) -> bool:
+    return _longest_module(_portal_norm_path(path), API_MODULE_MAP) == "/company-share"
 
 
 def module_for_path(path: str) -> Optional[str]:
@@ -1331,6 +1431,7 @@ MUTATION_UNMAPPED_ALLOWLIST = (
     ("POST", "/api/desktop/kiosk-exit"),
     ("POST", "/api/storage/me/ensure"),
     ("POST", "/api/storage/me/folders"),
+    ("POST", "/api/storage/me/increase-request"),
 )
 _WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 
@@ -1460,8 +1561,9 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
 
 # Oturum açmış herkesin okuyabildiği GET'ler. Modül view aranmaz.
 # `{param}` tek yol parçasıdır (_portal_template_match). `...` kaydı kökün kendisi
-# ve alt yollarıdır. Uç içinde rol süzmeyen manager-summary, b2b-settings, privacy
-# ve print-templates burada değildir; / veya /settings modülünde kalır.
+# ve alt yollarıdır. Uç içinde rol süzmeyen manager-summary, ops-alerts, privacy
+# burada değildir. b2b-settings okuması /b2b-yonetim modülündedir.
+# print-templates paylaşılan listede değildir; belge modülü veya /settings view.
 # /api/logs diye bir uç yok; istemci logu /api/mobile/logs (SKIP_PREFIXES /api/mobile).
 # robots.txt ve sitemap.xml /api altında değil (seo_router kök); middleware /api
 # dışında erken çıkar. Kayıtlı yol yazılır, ölü /api/robots.txt satırı eklenmez.
@@ -1514,6 +1616,26 @@ READ_SHARED_GET_ALLOWLIST = (
     ("GET", "/robots.txt"),
     # Site kökü sitemap. /api öneki yok; middleware bu yola girmez.
     ("GET", "/sitemap.xml"),
+    # Üst çubuk kurları ve belgelerdeki kur sözlüğü. Yazma /settings kalır.
+    ("GET", "/api/fx/currencies"),
+    ("GET", "/api/fx/rates"),
+    ("GET", "/api/fx/quote"),
+    # Masraf kategorisi adları. Banka eşleme ve masraf formu birlikte okur.
+    ("GET", "/api/expenses/categories"),
+    # Kabuk: açık yönetim paneli oturumu. Kapatma yazması admin ucundadır.
+    ("GET", "/api/companies/{id}/support-session"),
+    # Personel listeleri handler'da kendi kartına iner (personnel_scope).
+    # Bekleyen talep, kart ve cihaz uçları bu listede değildir; /personnel view ister.
+    ("GET", "/api/personnel/leaves"),
+    ("GET", "/api/personnel/bonuses"),
+    ("GET", "/api/personnel/payrolls"),
+    ("GET", "/api/personnel/attendance"),
+    ("GET", "/api/personnel/overtime-preview"),
+    ("GET", "/api/personnel/shifts"),
+    # Pozisyon seçicisi. Uç, ayar yetkisi aramadığını söyler.
+    ("GET", "/api/personnel/role-options"),
+    # Vardiya şablon adları. Yazma /personnel kalır.
+    ("GET", "/api/personnel/shift-templates"),
 )
 
 # Ürün seçicisi. Personelde /stock FORCE ile none kaldığı için portal satırı şart.
@@ -1562,6 +1684,14 @@ CROSS_MODULE_VIEW = (
     ("GET", "/api/personnel/employees", _CROSS_EMPLOYEE_MODULES, (), True),
     # İstasyon listesi. portal_orders herhangi bir rolde yeter.
     ("GET", "/api/production/work-orders/stations", ("/atolye", "/production"), ("portal_orders",), False),
+    # Vergi no sözlüğü. Yerel cari yalnız bu modüllerde döner.
+    ("GET", "/api/gib/lookup", ("/invoices", "/contacts", "/edoc-inbox"), (), True),
+    # Mesai saati. Yazma /settings kalır; personel kartı ve puantaj okur.
+    ("GET", "/api/companies/{id}/work-schedule", ("/personnel", "/mesai", "/settings"), (), True),
+    # Yazdırma şablonu. Ayar yazması /settings; belge ekranları okur.
+    ("GET", "/api/companies/{id}/print-templates", ("/invoices", "/quotes", "/orders", "/settings"), (), True),
+    # Saha sipariş listesi. Ayrıntı /orders veya portal_orders. Yazma portal_saha.
+    ("GET", "/api/orders", ("/orders", "/saha"), (), True),
 )
 
 _RBAC_GET_ENFORCE_VALUES = ("off", "shadow", "enforce")
@@ -1571,10 +1701,13 @@ _RBAC_GET_DENY_LOG_INTERVAL = 60.0
 
 
 def rbac_get_enforce_mode() -> str:
-    """RBAC_GET_ENFORCE: off | shadow | enforce. Boş veya bilinmeyen değer shadow."""
-    raw = str(os.environ.get("RBAC_GET_ENFORCE", "shadow") or "shadow").strip().lower()
+    """RBAC_GET_ENFORCE: off | shadow | enforce. Boş veya bilinmeyen değer enforce.
+
+    shadow eski davranıştır: red loglanır, istek düşmez.
+    """
+    raw = str(os.environ.get("RBAC_GET_ENFORCE", "enforce") or "enforce").strip().lower()
     if raw not in _RBAC_GET_ENFORCE_VALUES:
-        return "shadow"
+        return "enforce"
     return raw
 
 
@@ -1642,21 +1775,24 @@ def cross_module_view_matches(path: str, method: str = "GET") -> bool:
 def module_for_get_path(path: str) -> Optional[str]:
     """GET/HEAD modülü. API_MODULE_MAP + GET_EXTRA; en uzun önek kazanır.
 
+    B2B ayar/erişim okuması yazmayla aynı modüldedir (/b2b-yonetim).
     Puantaj okuması /personnel kalır (yazma /mesai). Aynı uzunlukta GET_EXTRA,
     yazma eşlemesini ezer (etiket şablonları: yazma /settings, okuma /stock).
     """
     p = _portal_norm_path(path)
+    if _b2b_admin_path(p):
+        return "/b2b-yonetim"
     if _attendance_tree(p):
         return "/personnel"
     best = None
     best_prefix = ""
     for prefix, mod in list(API_MODULE_MAP) + list(GET_EXTRA_MODULE_MAP):
-        if p.startswith(prefix) and (best is None or len(prefix) > len(best_prefix)):
+        if _prefix_hit(p, prefix) and (best is None or len(prefix) > len(best_prefix)):
             best = mod
             best_prefix = prefix
     if best is not None:
         for prefix, mod in GET_EXTRA_MODULE_MAP:
-            if p.startswith(prefix) and len(prefix) == len(best_prefix):
+            if _prefix_hit(p, prefix) and len(prefix) == len(best_prefix):
                 return mod
     return best
 
@@ -1699,7 +1835,8 @@ def _cross_view_allows(user: Optional[dict], role: Optional[dict], path: str, me
 def get_view_route_bucket(path: str) -> Optional[str]:
     """GET rotasının karar kovası. None ise fail-closed; route-walk testi bunu yakalar."""
     p = _portal_norm_path(path)
-    if p.startswith(SKIP_PREFIXES) or is_public_api_path(p, "GET"):
+    # /api/license atlanır. Şirketler arası bağlantı kendi modülünde kalır.
+    if (p.startswith(SKIP_PREFIXES) and not _company_share_path(p)) or is_public_api_path(p, "GET"):
         return "skip_or_public"
     if _shared_get_matches(p, "GET"):
         return "shared_get"
@@ -1726,7 +1863,7 @@ def get_view_decision(user: Optional[dict], role: Optional[dict], path: str, met
         if user and user.get("is_super_admin"):
             return "allow", "super_admin"
         return "allow", "admin_role"
-    if p.startswith(SKIP_PREFIXES):
+    if p.startswith(SKIP_PREFIXES) and not _company_share_path(p):
         return "allow", "skip_prefix"
     if is_public_api_path(p, raw_method):
         return "allow", "public_api"
@@ -1963,7 +2100,11 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         if not user and not is_public_api_path(path, request.method, query_t):
             return JSONResponse({"detail": "Giriş yapmanız gerekiyor."}, status_code=401)
 
-        skip_rbac = path.startswith(SKIP_PREFIXES) or is_public_api_path(path, request.method, query_t)
+        # Lisans ağacı SKIP. Şirketler arası bağlantı kendi modülüne bağlıdır.
+        skip_rbac = (
+            (path.startswith(SKIP_PREFIXES) or is_public_api_path(path, request.method, query_t))
+            and not _company_share_path(path)
+        )
         if skip_rbac and not user:
             return await call_next(request)
 
@@ -2155,7 +2296,10 @@ async def list_roles(company_id: Optional[str] = None, user: dict = Depends(_use
     company = await _db.companies.find_one({"_id": cid}) or {}
     policies = {"cash_dual_approval": bool(company.get("cash_dual_approval"))}
     return {
-        "modules": [{"key": k, "label": l, "help": MODULE_HELP.get(k, "")} for k, l in MODULES],
+        "modules": [
+            {"key": k, "label": l, "help": MODULE_HELP.get(k, ""), "wired": module_is_wired(k)}
+            for k, l in MODULES
+        ],
         "levels": list(LEVELS),
         "level_meta": list(LEVEL_META),
         "features": [
@@ -2168,7 +2312,12 @@ async def list_roles(company_id: Optional[str] = None, user: dict = Depends(_use
             for k, l, h in FEATURES
         ],
         "policies": policies,
-        "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles],
+        "roles": [{
+            **r,
+            "permissions": present_permissions(r),
+            "features": role_features(r),
+            "user_count": counts.get(r["code"], 0),
+        } for r in roles],
     }
 
 
