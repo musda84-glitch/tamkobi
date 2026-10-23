@@ -1273,6 +1273,7 @@ async def _gap_apis(db, company_id: str, prefix: str, rounds: int) -> list:
         actor_id="proc",
         reason="test",
     )
+    await storage_router.set_company_maintenance(db, company_id, False)
     handle = tenant_db.TenantDB(db, scope)
     store = await storage_router.open_company_store(db, company_id)
     rows = []

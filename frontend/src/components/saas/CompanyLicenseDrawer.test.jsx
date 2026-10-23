@@ -464,3 +464,20 @@ test("Yapay zekâ tab shows status and toggles addon API", async () => {
   expect(call).toBeTruthy();
   expect(call[1]).toMatchObject({ enabled: true });
 });
+
+test("posts maintenance toggle for the company", async () => {
+  companyPayload.storage_write_lock = true;
+  try {
+    await renderDrawer();
+    expect(host.querySelector('[data-testid="company-maintenance-note"]')?.textContent).toContain("Bakım yapılıyor, kayıt geçici olarak kapalı");
+    const btn = host.querySelector('[data-testid="company-maintenance-btn"]');
+    expect(btn?.textContent).toContain("Bakımı kapat");
+    await act(async () => { btn.click(); });
+    await flush();
+    const call = axios.post.mock.calls.find((c) => String(c[0]).includes("/system/companies/comp_matek/maintenance"));
+    expect(call).toBeTruthy();
+    expect(call[1]).toEqual({ enabled: false });
+  } finally {
+    delete companyPayload.storage_write_lock;
+  }
+});

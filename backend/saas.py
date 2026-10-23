@@ -881,6 +881,7 @@ async def _company_row(c: dict) -> Dict[str, Any]:
         "protected": c["_id"] in PROTECTED_COMPANY_IDS,
         "allow_platform_access": allow_panel,
         **storage_router.company_storage_view(c),
+        "storage_write_lock": bool(c.get(storage_router.WRITE_LOCK_FIELD)),
         "admin": admin_brief,
         "membership": {
             "plan_id": lic.get("plan_id"),

@@ -14,6 +14,8 @@ export type Company = {
   iban?: string;
   bank_name?: string;
   price_decimals?: number;
+  /** Süper yönetici bakımı. Yazma kapalı, okuma açık. */
+  storage_write_lock?: boolean;
 };
 
 export type User = {

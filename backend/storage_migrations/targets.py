@@ -140,9 +140,15 @@ def _dedicated_dsn(db, company_id: str) -> str:
 
 
 def _find_company(db, company_id: str) -> dict:
+    cid = storage_router.canonical_company_id(company_id)
+    fallback = None
     for doc in company_documents(db):
-        if str(doc.get("_id") or "") == company_id:
+        if storage_router._same_company(doc.get("_id"), cid):
             return doc
+        if fallback is None and storage_router._same_company(doc.get("id"), cid):
+            fallback = doc
+    if fallback is not None:
+        return fallback
     raise CatalogError("Firma yok.")
 
 

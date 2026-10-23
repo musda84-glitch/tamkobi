@@ -373,6 +373,14 @@ async def startup_event():
         if not installed:
             logger.info("TamKobi is not installed. Open /kurulum to finish setup.")
         else:
+            try:
+                import storage_router as _storage_router
+                await _storage_router.warm_dedicated_refs(db)
+            except Exception as _warm_exc:
+                logger.warning(
+                    "dedicated ref kontrolü atlandı: %s",
+                    type(_warm_exc).__name__,
+                )
             await seed_all_data(db)
             await seed_partners(db)
             await seed_shopfloor_pins(db)
@@ -643,6 +651,87 @@ class _ShopfloorAccountGuard(BaseHTTPMiddleware):
 
 # add_middleware başa ekler ve bu kapıyı CORS'un dışına alırdı. Son sıra 403'e ACAO yazar.
 app.user_middleware.append(Middleware(_ShopfloorAccountGuard))
+
+
+_MAINTENANCE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _maintenance_toggle_path(path: str) -> bool:
+    parts = [part for part in (path or "").split("/") if part]
+    return (
+        len(parts) == 5
+        and parts[0] == "api"
+        and parts[1] == "system"
+        and parts[2] == "companies"
+        and parts[4] == "maintenance"
+    )
+
+
+def _maintenance_request_skips(path: str) -> bool:
+    """Oturum ve bakım anahtarı yazılır. Sipariş çekme kuyruğa bırakır, 423 yemez."""
+    if (path or "").startswith("/api/auth/"):
+        return True
+    if _maintenance_toggle_path(path):
+        return True
+    if "/integrations/ecommerce/" in (path or "") and path.rstrip("/").endswith("/sync-now"):
+        return True
+    return False
+
+
+def _maintenance_target_ids(request: Request) -> list:
+    found = []
+    query_id = request.query_params.get("company_id")
+    if isinstance(query_id, str) and query_id.strip():
+        found.append(query_id.strip())
+    parts = [part for part in (request.url.path or "").split("/") if part]
+    if len(parts) >= 4 and parts[0] == "api" and parts[1] == "system" and parts[2] == "companies":
+        if parts[3] not in found:
+            found.append(parts[3])
+    return found
+
+
+class _MaintenanceWriteGuard(BaseHTTPMiddleware):
+    """Bakım açıkken yazma 423. Okuma sürer. Gövde okunmaz.
+
+    company_id sorgu veya /api/system/companies/{id} yolundan gelir.
+    Oturum varsa aktif şirket de bakılır. Kilit storage_write_lock'tur.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path or ""
+        if request.method not in _MAINTENANCE_METHODS or not path.startswith("/api"):
+            return await call_next(request)
+        if _maintenance_request_skips(path):
+            return await call_next(request)
+        import storage_router
+
+        targets = _maintenance_target_ids(request)
+        has_auth = bool(request.headers.get("authorization") or request.cookies.get("access_token"))
+        if has_auth:
+            try:
+                user = await get_current_user(request)
+            except Exception:
+                user = None
+            active = str((user or {}).get("active_company_id") or "").strip()
+            if active and active not in targets:
+                targets.append(active)
+        for cid in targets:
+            if await storage_router.maintenance_locked(db, cid):
+                return JSONResponse(
+                    status_code=423,
+                    content={"detail": storage_router.MAINTENANCE_DETAIL},
+                )
+        return await call_next(request)
+
+
+app.user_middleware.append(Middleware(_MaintenanceWriteGuard))
+
+
+@app.exception_handler(__import__("storage_router").StorageWriteLocked)
+async def _maintenance_write_locked(_request: Request, exc):
+    import storage_router
+
+    return JSONResponse(status_code=423, content={"detail": storage_router.MAINTENANCE_DETAIL})
 
 
 # ----------------- AUTH ENDPOINTS -----------------
@@ -1865,6 +1954,58 @@ async def save_einvoice_settings(req: Dict[str, Any], user: Any = Depends(get_cu
 async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
     await einvoice_assign.assign_company_provider(db, company_id, (req.get("provider") or ""))
     return await _einvoice_settings_payload(company_id)
+
+
+class CompanyMaintenanceBody(BaseModel):
+    enabled: bool
+
+
+@api_router.post("/system/companies/{company_id}/maintenance")
+async def system_company_maintenance(
+    company_id: str,
+    req: CompanyMaintenanceBody,
+    request: Request,
+    user: dict = Depends(saas.require_super_admin),
+):
+    """Bakım (salt okunur). Aynı storage_write_lock. Kapanınca bekleyen sipariş yeniden yazılır."""
+    import platform_store
+    import storage_router
+
+    cid = storage_router.canonical_company_id(company_id)
+    company = await db.companies.find_one({"_id": cid})
+    if company is None and cid != str(company_id or "").strip():
+        company = await db.companies.find_one({"_id": str(company_id or "").strip()})
+    if company is None:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    stored = str(company.get("_id") or cid)
+    result = await storage_router.set_company_maintenance(db, stored, bool(req.enabled))
+    replayed = None
+    if not req.enabled:
+        replayed = await _replay_marketplace_holds(result["company_id"])
+    action = "company_maintenance_on" if req.enabled else "company_maintenance_off"
+    await platform_store.write_audit(
+        actor_type="superadmin",
+        actor_id=str(user.get("_id") or user.get("id") or ""),
+        ip=request_ip(request),
+        action=action,
+        target_type="company",
+        target_id=result["company_id"],
+        details={"maintenance": bool(req.enabled)},
+    )
+    body = {
+        "status": "success",
+        "company_id": result["company_id"],
+        "maintenance": result["maintenance"],
+    }
+    if isinstance(replayed, dict):
+        summary = {}
+        for key in ("inserted", "updated", "held"):
+            count = int(replayed.get(key) or 0)
+            if count:
+                summary[key] = count
+        if summary:
+            body["replayed"] = summary
+    return body
 
 
 def _einvoice_password(settings: dict) -> str:
@@ -10434,33 +10575,146 @@ def _purchase_tracks_stock(inv: dict) -> bool:
     return inv.get("stock_effects_applied") is not None
 
 
+async def _guard_effect_storage(company_id: str) -> None:
+    """Çok adımlı cari/stok yazısından önce dedicated ref'i doğrula. Yazmaz.
+
+    DSN yoksa ilk bakiye satırından önce DedicatedStorageError. Kilitli şirkette
+    de aynı şekilde, kısmi etki kalmaz.
+    """
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    import storage_router
+
+    if not storage_router.enabled():
+        return
+    mode, _epoch, locked = await storage_router.load_view(db, cid)
+    if locked:
+        raise storage_router.StorageWriteLocked(storage_router.WRITE_LOCK_MESSAGE, company_id=cid)
+    if mode != storage_router.DEDICATED:
+        return
+    import storage_dedicated
+
+    storage_dedicated.collection(db, cid, "invoices")
+
+
+async def _undo_contact_balance(company_id: str, contact_id: str, delta: float) -> None:
+    """Uygulanan cari farkının tersi. Eşzamanlı bakiyeyi ezmez."""
+    if not company_id or not contact_id:
+        return
+    await db.contacts.update_one(
+        {"_id": contact_id, "company_id": company_id},
+        {"$inc": {"balance": -float(delta)}},
+    )
+
+
+async def _undo_product_stock(company_id: str, product_id: str, delta: float) -> None:
+    """Uygulanan stok farkının tersi."""
+    if not company_id or not product_id:
+        return
+    await db.products.update_one(
+        {"_id": product_id, "company_id": company_id},
+        {"$inc": {"stock_quantity": -float(delta)}},
+    )
+
+
+async def _restore_lot_snapshot(company_id: str, lot_id: str, quantity, is_active) -> None:
+    """Seri ve miktar lotlarında yazıdan önceki miktar ve aktiflik."""
+    if not company_id or not lot_id:
+        return
+    await db.stock_lots.update_one(
+        {"_id": lot_id, "company_id": company_id},
+        {"$set": {"quantity": quantity, "is_active": is_active}},
+    )
+
+
+def _note_lot(steps: list, before) -> None:
+    if before is None:
+        return
+    steps.append(("lot", before[0], before[1], before[2], before[3]))
+
+
+async def _lot_before(item: dict, company_id: str):
+    """Lot yazısından önceki miktar. Lot yoksa None; yazılmaz."""
+    lot_id = (item or {}).get("lot_id")
+    try:
+        qty = float((item or {}).get("quantity") or 0)
+    except (TypeError, ValueError):
+        return None
+    cid = str(company_id or "").strip()
+    if not lot_id or qty <= 0 or not cid:
+        return None
+    lot = await db.stock_lots.find_one({"_id": lot_id, "company_id": cid})
+    if not lot:
+        return None
+    return (cid, lot_id, lot.get("quantity"), lot.get("is_active"))
+
+
+async def _undo_effect_step(step) -> None:
+    kind = step[0]
+    if kind == "contact":
+        await _undo_contact_balance(step[1], step[2], step[3])
+    elif kind == "product":
+        await _undo_product_stock(step[1], step[2], step[3])
+    elif kind == "lot":
+        await _restore_lot_snapshot(step[1], step[2], step[3], step[4])
+
+
+async def _compensate_effect_failure(steps: list) -> None:
+    """Cari, stok veya lot yarım kaldıysa uygulanan adımları geri al."""
+    for step in reversed(steps):
+        try:
+            await _undo_effect_step(step)
+        except Exception:
+            logging.getLogger(__name__).exception("Fatura etki telafisi yazılamadı")
+
+
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + satış stok düşümü / alış stok girişi. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
     cid = str(inv.get("company_id") or "").strip()
-    if inv.get("contact_id"):
-        change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
-        await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
-    # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
-    skip_stock = bool(inv.get("stock_effects_from_dispatch"))
-    if inv.get("invoice_type") == "sales" and not skip_stock:
-        for item in inv.get("items", []):
-            pid, qty = _invoice_item_pid_qty(item)
-            if pid:
-                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-            await _apply_lot_delta(item, -1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv) and not skip_stock:
-        # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
-        if inv.get("stock_effects_applied") is False:
+    await _guard_effect_storage(cid)
+    steps = []
+    try:
+        if inv.get("contact_id"):
+            change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
+            await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
+            steps.append(("contact", cid, inv["contact_id"], change))
+        # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
+        skip_stock = bool(inv.get("stock_effects_from_dispatch"))
+        if inv.get("invoice_type") == "sales" and not skip_stock:
             for item in inv.get("items", []):
                 pid, qty = _invoice_item_pid_qty(item)
                 if pid:
-                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-                await _apply_lot_delta(item, +1.0, inv.get("company_id"))
-        if inv.get("_id"):
-            await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
-        inv["stock_effects_applied"] = True
+                    delta = -float(qty or 0)
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                    steps.append(("product", cid, pid, delta))
+                before = await _lot_before(item, cid)
+                try:
+                    await _apply_lot_delta(item, -1.0, inv.get("company_id"))
+                finally:
+                    _note_lot(steps, before)
+        elif _purchase_tracks_stock(inv) and not skip_stock:
+            # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
+            if inv.get("stock_effects_applied") is False:
+                for item in inv.get("items", []):
+                    pid, qty = _invoice_item_pid_qty(item)
+                    if pid:
+                        delta = float(qty or 0)
+                        await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                        steps.append(("product", cid, pid, delta))
+                    before = await _lot_before(item, cid)
+                    try:
+                        await _apply_lot_delta(item, +1.0, inv.get("company_id"))
+                    finally:
+                        _note_lot(steps, before)
+            if inv.get("_id"):
+                await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
+            inv["stock_effects_applied"] = True
+    except Exception:
+        await _compensate_effect_failure(steps)
+        raise
 
 
 async def _reverse_invoice_effects(inv: dict):
@@ -10468,25 +10722,44 @@ async def _reverse_invoice_effects(inv: dict):
     if _is_dispatch_doc(inv):
         return
     cid = str(inv.get("company_id") or "").strip()
-    if inv.get("contact_id"):
-        change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
-        await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
-    skip_stock = bool(inv.get("stock_effects_from_dispatch"))
-    if inv.get("invoice_type") == "sales" and not skip_stock:
-        for item in inv.get("items", []):
-            pid, qty = _invoice_item_pid_qty(item)
-            if pid:
-                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-            await _apply_lot_delta(item, +1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv) and not skip_stock and inv.get("stock_effects_applied") is not False:
-        for item in inv.get("items", []):
-            pid, qty = _invoice_item_pid_qty(item)
-            if pid:
-                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-            await _apply_lot_delta(item, -1.0, inv.get("company_id"))
-        if inv.get("_id"):
-            await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
-        inv["stock_effects_applied"] = False
+    await _guard_effect_storage(cid)
+    steps = []
+    try:
+        if inv.get("contact_id"):
+            change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
+            await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
+            steps.append(("contact", cid, inv["contact_id"], change))
+        skip_stock = bool(inv.get("stock_effects_from_dispatch"))
+        if inv.get("invoice_type") == "sales" and not skip_stock:
+            for item in inv.get("items", []):
+                pid, qty = _invoice_item_pid_qty(item)
+                if pid:
+                    delta = float(qty or 0)
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                    steps.append(("product", cid, pid, delta))
+                before = await _lot_before(item, cid)
+                try:
+                    await _apply_lot_delta(item, +1.0, inv.get("company_id"))
+                finally:
+                    _note_lot(steps, before)
+        elif _purchase_tracks_stock(inv) and not skip_stock and inv.get("stock_effects_applied") is not False:
+            for item in inv.get("items", []):
+                pid, qty = _invoice_item_pid_qty(item)
+                if pid:
+                    delta = -float(qty or 0)
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                    steps.append(("product", cid, pid, delta))
+                before = await _lot_before(item, cid)
+                try:
+                    await _apply_lot_delta(item, -1.0, inv.get("company_id"))
+                finally:
+                    _note_lot(steps, before)
+            if inv.get("_id"):
+                await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
+            inv["stock_effects_applied"] = False
+    except Exception:
+        await _compensate_effect_failure(steps)
+        raise
 
 
 def incoming_purchase_ledger_posted(inv: dict) -> bool:
@@ -10796,19 +11069,38 @@ async def _commit_invoice_effects_update(inv: dict, invoice_id: str, allowed: di
     """
     company_id = inv.get("company_id")
     q = {"_id": invoice_id, "company_id": company_id}
+    allowed = dict(allowed or {})
+    allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
+    reversed_effects = False
     if reapply_effects:
         try:
             await _reverse_invoice_effects(inv)
+            reversed_effects = True
         except Exception:
             logging.getLogger(__name__).exception(
                 "Onaylı fatura düzenleme: eski etkiler geri alınamadı %s", invoice_id
             )
             raise HTTPException(status_code=500, detail="Fatura etkileri geri alınamadı; düzenleme iptal.")
-    await db.invoices.update_one(q, {"$set": allowed})
+    try:
+        await db.invoices.update_one(q, {"$set": allowed})
+    except Exception:
+        if reversed_effects:
+            logging.getLogger(__name__).exception(
+                "Onaylı fatura düzenleme: belge yazılamadı %s", invoice_id
+            )
+            try:
+                await _apply_invoice_effects(inv)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Onaylı fatura düzenleme: belge yazılamadı, eski etkiler geri yazılamadı %s", invoice_id
+                )
+        raise
     updated = await db.invoices.find_one(q)
     if reapply_effects and updated:
+        applied = False
         try:
             await _apply_invoice_effects(updated)
+            applied = True
             paid = float(updated.get("paid_amount") or 0)
             ps = _invoice_payment_status(paid, updated.get("grand_total") or 0)
             if ps != updated.get("payment_status"):
@@ -10819,11 +11111,13 @@ async def _commit_invoice_effects_update(inv: dict, invoice_id: str, allowed: di
                 "Onaylı fatura düzenleme: yeni etkiler uygulanamadı %s — eski hâle dönülüyor", invoice_id
             )
             try:
-                await _reverse_invoice_effects(updated)
-                await db.invoices.update_one(q, {"$set": {
-                    k: inv.get(k) for k in allowed.keys() if k in inv
-                }})
-                await _apply_invoice_effects(inv)
+                if applied:
+                    await _reverse_invoice_effects(updated)
+                restored = {k: inv.get(k) for k in allowed.keys() if k in inv}
+                restored["updated_at"] = datetime.now(timezone.utc).isoformat()
+                await db.invoices.update_one(q, {"$set": restored})
+                if reversed_effects:
+                    await _apply_invoice_effects(inv)
             except Exception:
                 logging.getLogger(__name__).exception(
                     "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
@@ -10864,6 +11158,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
         if not allowed or set(req.keys()) - {"due_date", "notes"}:
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
+        allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id, "company_id": cid}))
     editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code", "post_stock"}
@@ -19290,64 +19585,118 @@ async def _try_shopphp_settlement(order: dict, contact: Optional[dict] = None, i
         logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", (order or {}).get("order_number"))
 
 
+_marketplace_holds: Dict[str, dict] = {}
+
+
+def _marketplace_hold_key(company_id: str, doc: dict) -> str:
+    channel = str((doc or {}).get("channel") or "").strip()
+    number = str((doc or {}).get("order_number") or "").strip()
+    return "\n".join((str(company_id or "").strip(), channel, number))
+
+
+def _remember_marketplace_hold(company_id: str, doc: dict) -> None:
+    """Yazma kilidinde kalmış sipariş. Sonraki senkron aynı işçiden yeniden dener.
+
+    Belge loglanmaz; müşteri adı, VKN ve ETTN yazılmaz.
+    """
+    if not isinstance(doc, dict):
+        return
+    if not str(doc.get("channel") or "").strip() or not str(doc.get("order_number") or "").strip():
+        return
+    try:
+        body = json.loads(json.dumps(doc, default=str))
+    except Exception:
+        body = dict(doc)
+    _marketplace_holds[_marketplace_hold_key(company_id, doc)] = {
+        "company_id": str(company_id or ""),
+        "doc": body,
+    }
+
+
+def _drop_marketplace_hold(company_id: str, doc: dict) -> None:
+    _marketplace_holds.pop(_marketplace_hold_key(company_id, doc), None)
+
+
+def clear_marketplace_holds() -> None:
+    """Testler süreç içi bekleyen siparişi temizler."""
+    _marketplace_holds.clear()
+
+
+def _combine_marketplace_result(replayed: Optional[dict], res: Optional[dict]) -> dict:
+    out = dict(res or {})
+    prior = replayed or {}
+    out["inserted"] = int(out.get("inserted") or 0) + int(prior.get("inserted") or 0)
+    out["updated"] = int(out.get("updated") or 0) + int(prior.get("updated") or 0)
+    out["held"] = int(out.get("held") or 0) + int(prior.get("held") or 0)
+    orders = list(prior.get("inserted_orders") or [])
+    orders.extend(out.get("inserted_orders") or [])
+    out["inserted_orders"] = orders
+    return out
+
+
+async def _replay_marketplace_holds(company_id: str) -> dict:
+    """Bekletilen siparişleri yeniden yazar. Kilit sürerse işaret durur."""
+    cid = str(company_id or "").strip()
+    docs = [row["doc"] for row in _marketplace_holds.values() if row.get("company_id") == cid and isinstance(row.get("doc"), dict)]
+    if not docs:
+        return {"inserted": 0, "updated": 0, "held": 0, "inserted_orders": []}
+    return await _upsert_marketplace_orders(cid, docs)
+
+
+async def _pause_marketplace_cursor(channel_id: str, company_id: str, now: str, res: dict) -> bool:
+    """Kilit yüzünden sipariş kaldıysa last_synced_at ilerlemez."""
+    if int((res or {}).get("held") or 0) <= 0:
+        if isinstance(res, dict):
+            res.pop("held", None)
+        return False
+    import storage_router
+
+    with storage_router.bypass_write_lock(company_id):
+        await db.integration_configs.update_one(
+            {"_id": channel_id, "company_id": company_id},
+            {"$set": {
+                "last_sync_attempt_at": now,
+                "last_error": (
+                    "Bakım yapılıyor, kayıt geçici olarak kapalı. "
+                    "Sipariş kuyrukta bekletildi; bakım bitince yeniden denenecek."
+                ),
+            }},
+        )
+    await _notify_marketplace_inserted(company_id, res)
+    return True
+
+
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
-    inserted = updated = 0
+    """Pazaryeri siparişini yazar. Yazma kilidinde bir kez yeniden dener, kalanı bekletir.
+
+    Bekleyen gövde loglanmaz. Veritabanı çağrıları bu fonksiyonda kalır.
+    """
+    import storage_router
+
+    inserted = updated = held = 0
     inserted_orders: list = []
-    channels = omp_media.marketplace_channels_from_orders(docs or [])
+    items = list(docs or [])
+    channels = omp_media.marketplace_channels_from_orders(items)
     mp_media_idx = await omp_media.load_marketplace_cache_media_index(db, company_id, channels) if channels else {}
-    match_idx = await _load_marketplace_stock_match_index(company_id) if docs else {}
-    for d in docs:
-        channel = d.get("channel")
-        order_number = d.get("order_number")
-        if not channel or not order_number:
-            continue
-        key = {"company_id": company_id, "channel": channel, "order_number": order_number}
-        d = marketplace_providers.normalize_marketplace_order_prices(d)
-        if mp_media_idx:
-            d = omp_media.apply_marketplace_item_media(d, mp_media_idx)
-        d = _apply_stock_matches_to_order(d, match_idx)
-        d["updated_at"] = datetime.now(timezone.utc).isoformat()
-        existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
-        if existing:
-            payload = merge_keep_fields(existing, d)
-            payload = _apply_stock_matches_to_order(payload, match_idx)
-            payload = marketplace_providers.normalize_marketplace_order_prices(payload)
-            await db.orders.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": payload})
-            merged = {**existing, **payload}
-            if not merged.get("contact_id"):
-                await _ensure_order_contact(merged)
-            # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
-            if not merged.get("invoice_id") and not merged.get("is_invoiced"):
-                await _attach_draft_invoice_on_intake(merged, source="marketplace")
-            # Yalnızca bekleyen → onaylı geçişi. Bu değişiklikten önce "Ödendi"
-            # kalmış, tx_id'siz siparişlere geriye dönük hakediş yazılmaz.
-            if (
-                not _marketplace_settlement_payment_ready(existing)
-                and _marketplace_settlement_payment_ready(merged)
-            ):
-                await _try_shopphp_settlement(merged)
-            updated += 1
-            continue
-        d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
-        d["created_at"] = d["updated_at"]
+    match_idx = await _load_marketplace_stock_match_index(company_id) if items else {}
+    index = 0
+    retried = False
+    while index < len(items):
+        d = items[index]
         try:
-            await db.orders.insert_one({**d, "company_id": company_id})
-            contact = await _ensure_order_contact(d)
-            inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
-            await _try_shopphp_settlement(d, contact, inv)
-            inserted += 1
-            inserted_orders.append({
-                "_id": d["_id"],
-                "channel": channel,
-                "order_number": order_number,
-                "grand_total": d.get("grand_total") or d.get("total_amount"),
-                "customer_name": d.get("customer_name"),
-            })
-        except DuplicateKeyError:
-            # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
+            channel = d.get("channel")
+            order_number = d.get("order_number")
+            if not channel or not order_number:
+                retried = False
+                index += 1
+                continue
+            key = {"company_id": company_id, "channel": channel, "order_number": order_number}
+            d = marketplace_providers.normalize_marketplace_order_prices(d)
+            if mp_media_idx:
+                d = omp_media.apply_marketplace_item_media(d, mp_media_idx)
+            d = _apply_stock_matches_to_order(d, match_idx)
+            d["updated_at"] = datetime.now(timezone.utc).isoformat()
             existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
-            if not existing:
-                existing = await db.orders.find_one(key)
             if existing:
                 payload = merge_keep_fields(existing, d)
                 payload = _apply_stock_matches_to_order(payload, match_idx)
@@ -19356,13 +19705,71 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 merged = {**existing, **payload}
                 if not merged.get("contact_id"):
                     await _ensure_order_contact(merged)
+                # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
+                if not merged.get("invoice_id") and not merged.get("is_invoiced"):
+                    await _attach_draft_invoice_on_intake(merged, source="marketplace")
+                # Yalnızca bekleyen → onaylı geçişi. Bu değişiklikten önce "Ödendi"
+                # kalmış, tx_id'siz siparişlere geriye dönük hakediş yazılmaz.
                 if (
                     not _marketplace_settlement_payment_ready(existing)
                     and _marketplace_settlement_payment_ready(merged)
                 ):
                     await _try_shopphp_settlement(merged)
                 updated += 1
-    return {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
+                _drop_marketplace_hold(company_id, items[index])
+                retried = False
+                index += 1
+                continue
+            d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
+            d["created_at"] = d["updated_at"]
+            try:
+                await db.orders.insert_one({**d, "company_id": company_id})
+                contact = await _ensure_order_contact(d)
+                inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
+                await _try_shopphp_settlement(d, contact, inv)
+                inserted += 1
+                inserted_orders.append({
+                    "_id": d["_id"],
+                    "channel": channel,
+                    "order_number": order_number,
+                    "grand_total": d.get("grand_total") or d.get("total_amount"),
+                    "customer_name": d.get("customer_name"),
+                })
+            except DuplicateKeyError:
+                # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
+                existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
+                if not existing:
+                    existing = await db.orders.find_one(key)
+                if existing:
+                    payload = merge_keep_fields(existing, d)
+                    payload = _apply_stock_matches_to_order(payload, match_idx)
+                    payload = marketplace_providers.normalize_marketplace_order_prices(payload)
+                    await db.orders.update_one({"_id": existing["_id"], "company_id": company_id}, {"$set": payload})
+                    merged = {**existing, **payload}
+                    if not merged.get("contact_id"):
+                        await _ensure_order_contact(merged)
+                    if (
+                        not _marketplace_settlement_payment_ready(existing)
+                        and _marketplace_settlement_payment_ready(merged)
+                    ):
+                        await _try_shopphp_settlement(merged)
+                    updated += 1
+            _drop_marketplace_hold(company_id, items[index])
+            retried = False
+            index += 1
+        except storage_router.StorageWriteLocked:
+            if not retried:
+                retried = True
+                continue
+            for pending in items[index:]:
+                _remember_marketplace_hold(company_id, pending)
+            held += len(items) - index
+            break
+    out = {"inserted": inserted, "updated": updated, "inserted_orders": inserted_orders}
+    if held:
+        out["held"] = held
+    return out
+
 
 CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": "Hepsiburada Müşterisi", "amazon": "Amazon Müşterisi", "n11": "n11 Müşterisi", "shopify": "Shopify Müşterisi",
                              "woocommerce": "WooCommerce Müşterisi", "ciceksepeti": "Çiçeksepeti Müşterisi", "shopphp": "ShopPHP Müşterisi", "b2b": "B2B Bayi", "manual": "Genel", "saha": "Saha Müşterisi"}
@@ -20182,6 +20589,7 @@ async def _sync_ecommerce_channel_core(
     if not company_id:
         logger.warning("Pazaryeri senkronu atlandı: kayıtta firma bilgisi yok (%s)", channel_id)
         return {"status": "skipped", "message": "Kayıtta firma bilgisi yok."}
+    replayed = await _replay_marketplace_holds(company_id)
     channel = config.get("channel", "trendyol")
     now = datetime.now(timezone.utc).isoformat()
     sync_days = marketplace_providers.resolve_sync_days(
@@ -20197,6 +20605,9 @@ async def _sync_ecommerce_channel_core(
             await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
+        res = _combine_marketplace_result(replayed, res)
+        if await _pause_marketplace_cursor(channel_id, company_id, now, res):
+            return {"status": "held", "live": True, "channel": channel, "days": sync_days, **res, "message": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener."}
         await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
         await _notify_marketplace_inserted(company_id, res)
         return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
@@ -20229,6 +20640,9 @@ async def _sync_ecommerce_channel_core(
             warnings.append(f"Sorular alınamadı: {type(e).__name__}")
         await client.close()
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_trendyol_order(p, company_id, channel) for p in pkgs])
+        res = _combine_marketplace_result(replayed, res)
+        if await _pause_marketplace_cursor(channel_id, company_id, now, res):
+            return {"status": "held", "live": True, "days": sync_days, **res, "message": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener."}
         new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims]) if claims else 0
         new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions]) if questions else 0
         await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now, "last_sync_warnings": warnings[:5]}, "$inc": {"synced_orders": res["inserted"]}})
@@ -20241,6 +20655,9 @@ async def _sync_ecommerce_channel_core(
                 "message": msg}
     docs = marketplace_providers.simulated_orders(company_id, channel)
     res = await _upsert_marketplace_orders(company_id, docs)
+    res = _combine_marketplace_result(replayed, res)
+    if await _pause_marketplace_cursor(channel_id, company_id, now, res):
+        return {"status": "held", "live": False, "days": sync_days, **res, "message": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener."}
     await db.integration_configs.update_one({"_id": channel_id, "company_id": company_id}, {"$set": {"last_synced_at": now, "live": False}})
     await _notify_marketplace_inserted(company_id, res)
     return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}

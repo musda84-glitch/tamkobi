@@ -1970,10 +1970,12 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
                 watermark=watermark, on_batch=on_batch, move_id=move_id, lost=lost_box, pace=pace,
             )
             await _sleep_mode(db, cid, move_id, lost_box)
-            if not await _commit_owner(db, cid, move_id, mode=mode, unlock=True):
+            # Doğrulama temiz. Kilit açık kalır; süper yönetici kapatır.
+            if not await _commit_owner(db, cid, move_id, mode=mode, unlock=False):
                 raise LockLost("Taşıma kilidi kayboldu.")
             committed = True
             opened = False
+            storage_router.note_write_lock(cid, True)
         except LockLost as exc:
             lost = True
             if not await _foreign_lock(db, cid, move_id):
