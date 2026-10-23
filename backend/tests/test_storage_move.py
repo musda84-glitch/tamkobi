@@ -819,7 +819,8 @@ def test_precopy_delta_follows_source_writes(engine, source, target, tmp_path, m
         _assert_checksums(report)
         assert report.locked_ms <= report.duration_ms
         methods = [step.get("yontem") for step in report.steps if step.get("name") == "fark"]
-        assert methods == ["tombstone" if engine == "mariadb" and source == "legacy" else "tam"]
+        # Bu dosyanın kataloğu MemDB. Tombstone SQL yolu gerçek MySQL katalogda.
+        assert methods == ["tam"]
         storage_router.forget_mode(world.company_id)
         handle = tenant_db.TenantDB(world.db, _scope(world.company_id))
         product = await handle.products.find_one({"_id": "p1"})

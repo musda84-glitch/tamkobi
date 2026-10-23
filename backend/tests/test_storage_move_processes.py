@@ -1483,6 +1483,139 @@ def test_other_process_rollback_sees_gap_writes(tmp_path, monkeypatch):
             _drop(item)
 
 
+def test_mysql_precopy_delta_follows_source_writes(tmp_path, monkeypatch):
+    """Gerçek MySQL katalogda ön kopya sonrası yazılar tombstone farkıyla gelir."""
+    from cryptography.fernet import Fernet
+
+    token = uuid.uuid4().hex[:8]
+    names = [f"smdelta_{token}", f"smdeltas_{token}", f"smdeltad_{token}"]
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("STORAGE_MOVE_LOCK_TTL", "0.05")
+    monkeypatch.setenv("STORAGE_MOVE_MODE_TTL", "0.05")
+    monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    try:
+        import comm_service
+
+        comm_service.reset_fernet_for_tests()
+        catalog = _create(names[0])
+        shared = _create(names[1])
+        dedicated = _create(names[2])
+        _migrate(shared)
+        _migrate(dedicated)
+        monkeypatch.setenv("MYSQL_URL", catalog)
+        monkeypatch.setenv("STORAGE_SHARED_V2_DSN", shared)
+        cid = "co_delta"
+        db = _client(catalog)
+
+        async def seed():
+            try:
+                await db.companies.insert_one({
+                    "_id": cid,
+                    "name": "Delta",
+                    "storage_mode": "legacy",
+                    "dedicated_dsn_ref": storage_router.seal_dedicated_dsn(dedicated),
+                })
+                await db.products.insert_one({
+                    "_id": "p1", "company_id": cid, "name": "Kalem", "sku": "K-1", "price": 12,
+                })
+                await db.orders.insert_one({
+                    "_id": "o1",
+                    "company_id": cid,
+                    "order_number": "S-1",
+                    "order_status": "open",
+                    "order_date": "2026-01-02",
+                    "contact_id": "c1",
+                    "channel": "manual",
+                    "total_amount": 10,
+                })
+                await db.invoices.insert_one({
+                    "_id": "i1",
+                    "company_id": cid,
+                    "invoice_number": "F-1",
+                    "status": "draft",
+                    "issue_date": "2026-01-03",
+                    "contact_id": "c1",
+                    "grand_total": 12,
+                })
+            finally:
+                await db.close()
+
+        asyncio.run(seed())
+
+        async def on_precopy():
+            database = _client(catalog)
+            try:
+                await database.products.update_one({"_id": "p1"}, {"$set": {"name": "Kalem guncel"}})
+                await database.invoices.insert_one({
+                    "_id": "i-yeni",
+                    "company_id": cid,
+                    "invoice_number": "F-yeni",
+                    "status": "draft",
+                    "issue_date": "2026-04-01",
+                    "contact_id": "c1",
+                    "grand_total": 9,
+                })
+                await database.orders.delete_one({"_id": "o1"})
+            finally:
+                await database.close()
+
+        db = _client(catalog)
+
+        async def run():
+            try:
+                return await storage_move.apply_move(
+                    db, cid, "dedicated", on_precopy=on_precopy,
+                )
+            finally:
+                await db.close()
+
+        report = asyncio.run(run())
+        assert report.ok, report.errors
+        assert report.counts["products"]["source"] == report.counts["products"]["target"] == 1
+        assert report.counts["invoices"]["source"] == report.counts["invoices"]["target"] == 2
+        assert report.counts.get("orders", {}).get("source", 0) == 0
+        assert report.checksums["products"]["source"] == report.checksums["products"]["target"]
+        assert report.checksums["invoices"]["source"] == report.checksums["invoices"]["target"]
+        methods = [step.get("yontem") for step in report.steps if step.get("name") == "fark"]
+        assert methods == ["tombstone"]
+        assert report.locked_ms < report.duration_ms
+        db = _client(catalog)
+
+        async def read_back():
+            import storage_dedicated
+
+            try:
+                company = await db.companies.find_one({"_id": cid})
+                products = storage_dedicated.DedicatedCollection(cid, "products", dedicated)
+                invoices = storage_dedicated.DedicatedCollection(cid, "invoices", dedicated)
+                orders = storage_dedicated.DedicatedCollection(cid, "orders", dedicated)
+                product = await products.find_one({"_id": "p1"})
+                invoice = await invoices.find_one({"_id": "i-yeni"})
+                order = await orders.find_one({"_id": "o1"})
+                return company, product, invoice, order
+            finally:
+                await db.close()
+
+        company, product, invoice, order = asyncio.run(read_back())
+        assert company["storage_mode"] == "dedicated"
+        assert product["name"] == "Kalem guncel"
+        assert invoice["invoice_number"] == "F-yeni"
+        assert order is None
+    finally:
+        storage_router.reset()
+        storage_shared_v2.reset_store()
+        try:
+            import comm_service
+
+            comm_service.reset_fernet_for_tests()
+        except Exception:
+            pass
+        for item in names:
+            _drop(item)
+
+
 def test_large_company_apply_shortens_the_write_lock(tmp_path, monkeypatch):
     """Yaklaşık 200 bin satırda kilit, apply süresinin küçük parçasıdır."""
     from cryptography.fernet import Fernet
@@ -1588,8 +1721,9 @@ def test_large_company_apply_shortens_the_write_lock(tmp_path, monkeypatch):
         assert report.counts["products"]["source"] == rows
         assert report.counts["products"]["source"] == report.counts["products"]["target"]
         assert report.checksums["products"]["source"] == report.checksums["products"]["target"]
-        assert report.locked_ms < report.duration_ms
-        assert beats["n"] < 100, (beats["n"], report.duration_ms, report.locked_ms)
+        assert report.locked_ms * 2 < report.duration_ms
+        # Eski yol 50 satırda iki kalp atışıydı (200 bin satırda yaklaşık 8000).
+        assert beats["n"] * 50 < rows, (beats["n"], report.duration_ms, report.locked_ms)
         assert any(
             step.get("name") == "fark" and step.get("yontem") == "tombstone"
             for step in report.steps
