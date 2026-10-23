@@ -790,6 +790,66 @@ def test_rollback_refuses_when_source_is_gone(tmp_path, monkeypatch):
         _close_world(world)
 
 
+@pytest.mark.parametrize("source,target", [("legacy", "dedicated"), ("legacy", "shared_v2"), ("shared_v2", "dedicated")])
+def test_precopy_delta_follows_source_writes(engine, source, target, tmp_path, monkeypatch):
+    """Ön kopya sırasında eklenen, güncellenen ve silinen satır son farkta eşitlenir."""
+    world = _open_world(engine, tmp_path, monkeypatch)
+
+    async def on_precopy():
+        handle = tenant_db.TenantDB(world.db, _scope(world.company_id))
+        await handle.products.update_one({"_id": "p1"}, {"$set": {"name": "Kalem guncel"}})
+        await handle.invoices.insert_one({
+            "_id": "i-yeni",
+            "company_id": world.company_id,
+            "invoice_number": "F-yeni",
+            "status": "draft",
+            "issue_date": "2026-04-01",
+            "contact_id": "c1",
+            "grand_total": 9,
+        })
+        await handle.orders.delete_one({"_id": "o1"})
+
+    async def run():
+        await _seed(world, source)
+        report = await storage_move.apply_move(
+            world.db, world.company_id, target, on_precopy=on_precopy,
+        )
+        assert report.ok, report.errors
+        assert report.status == "completed"
+        _assert_checksums(report)
+        assert report.locked_ms <= report.duration_ms
+        methods = [step.get("yontem") for step in report.steps if step.get("name") == "fark"]
+        assert methods == ["tombstone" if engine == "mariadb" and source == "legacy" else "tam"]
+        storage_router.forget_mode(world.company_id)
+        handle = tenant_db.TenantDB(world.db, _scope(world.company_id))
+        product = await handle.products.find_one({"_id": "p1"})
+        invoice = await handle.invoices.find_one({"_id": "i-yeni"})
+        order = await handle.orders.find_one({"_id": "o1"})
+        company = await world.db.companies.find_one({"_id": world.company_id})
+        record = await world.db.storage_moves.find_one({"_id": report.move_id})
+        copied = record.get("copied") or {}
+        return product, invoice, order, company, copied
+
+    try:
+        product, invoice, order, company, copied = asyncio.run(run())
+        assert product["name"] == "Kalem guncel"
+        assert invoice["invoice_number"] == "F-yeni"
+        assert order is None
+        assert storage_router.normalize_mode((company or {}).get("storage_mode")) == target
+        for spec in copied.values():
+            assert isinstance(spec, dict)
+            assert spec.get("wipe") == "company"
+            assert "ids" not in spec
+    finally:
+        _close_world(world)
+
+
+def test_changed_scan_uses_ordered_index():
+    assert "ORDER BY updated_at ASC, id ASC" in storage_move._CHANGED_SQL
+    assert "company_id=%s" in storage_move._CHANGED_SQL
+    assert storage_move._MOVE_INDEX == "idx_docs_coll_company_upd"
+
+
 def test_apply_waits_lock_ttl_then_mode_ttl(tmp_path, monkeypatch):
     slept = []
     monkeypatch.setattr(storage_move.time, "sleep", lambda seconds: slept.append(seconds))

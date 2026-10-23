@@ -1483,6 +1483,160 @@ def test_other_process_rollback_sees_gap_writes(tmp_path, monkeypatch):
             _drop(item)
 
 
+def test_large_company_apply_shortens_the_write_lock(tmp_path, monkeypatch):
+    """Yaklaşık 200 bin satırda kilit, apply süresinin küçük parçasıdır."""
+    from cryptography.fernet import Fernet
+
+    rows = 200_000
+    token = uuid.uuid4().hex[:8]
+    names = [f"smlock_{token}", f"smlocks_{token}", f"smlockd_{token}"]
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("STORAGE_MOVE_LOCK_TTL", "0.05")
+    monkeypatch.setenv("STORAGE_MOVE_MODE_TTL", "0.05")
+    monkeypatch.setenv("CREDENTIAL_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    storage_router.reset()
+    storage_shared_v2.reset_store()
+    beats = {"n": 0}
+    real_beat = storage_move._beat
+
+    async def _count_beat(*args, **kwargs):
+        beats["n"] += 1
+        return await real_beat(*args, **kwargs)
+
+    monkeypatch.setattr(storage_move, "_beat", _count_beat)
+    try:
+        import comm_service
+
+        comm_service.reset_fernet_for_tests()
+        catalog = _create(names[0])
+        shared = _create(names[1])
+        dedicated = _create(names[2])
+        _migrate(shared)
+        _migrate(dedicated)
+        monkeypatch.setenv("MYSQL_URL", catalog)
+        monkeypatch.setenv("STORAGE_SHARED_V2_DSN", shared)
+        cid = "co_buyuk"
+
+        async def ensure_catalog():
+            database = _client(catalog)
+            try:
+                await database._ensure()
+            finally:
+                await database.close()
+
+        asyncio.run(ensure_catalog())
+        parsed = _parsed_dsn()
+        import pymysql
+        from mysql_store import dumps
+
+        admin = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=names[0],
+            charset="utf8mb4",
+            autocommit=False,
+            connect_timeout=5,
+        )
+        try:
+            cursor = admin.cursor()
+            cursor.execute(
+                "INSERT INTO docs (collection, id, doc) VALUES (%s, %s, %s)",
+                ("companies", cid, dumps({
+                    "_id": cid,
+                    "name": "Buyuk",
+                    "storage_mode": "legacy",
+                    "dedicated_dsn_ref": storage_router.seal_dedicated_dsn(dedicated),
+                })),
+            )
+            batch = []
+            for index in range(rows):
+                ident = f"p{index:06d}"
+                batch.append(("products", ident, dumps({
+                    "_id": ident,
+                    "company_id": cid,
+                    "name": "Kalem",
+                    "sku": ident,
+                    "price": 1,
+                })))
+                if len(batch) == 1000:
+                    cursor.executemany(
+                        "INSERT INTO docs (collection, id, doc) VALUES (%s, %s, %s)",
+                        batch,
+                    )
+                    batch.clear()
+            if batch:
+                cursor.executemany(
+                    "INSERT INTO docs (collection, id, doc) VALUES (%s, %s, %s)",
+                    batch,
+                )
+            admin.commit()
+        finally:
+            admin.close()
+
+        db = _client(catalog)
+
+        async def run():
+            try:
+                return await storage_move.apply_move(db, cid, "dedicated", batch_size=1000)
+            finally:
+                await db.close()
+
+        report = asyncio.run(run())
+        assert report.ok, report.errors
+        assert report.counts["products"]["source"] == rows
+        assert report.counts["products"]["source"] == report.counts["products"]["target"]
+        assert report.checksums["products"]["source"] == report.checksums["products"]["target"]
+        assert report.locked_ms < report.duration_ms
+        assert beats["n"] < 100, (beats["n"], report.duration_ms, report.locked_ms)
+        assert any(
+            step.get("name") == "fark" and step.get("yontem") == "tombstone"
+            for step in report.steps
+        )
+        db = _client(catalog)
+
+        async def index_and_count():
+            try:
+                await db._ensure()
+                async with db._pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SHOW INDEX FROM docs WHERE Key_name=%s", (storage_move._MOVE_INDEX,))
+                        found = await cur.fetchall()
+                return len(found or [])
+            finally:
+                await db.close()
+
+        indexed = asyncio.run(index_and_count())
+        assert indexed >= 1
+        from storage_migrations.session import connect as open_session
+
+        session = open_session(dedicated, write=False)
+        try:
+            counted = session.fetchall(
+                "SELECT COUNT(*) FROM storage_records WHERE collection=%s AND company_id=%s",
+                ("products", cid),
+            )
+        finally:
+            session.close()
+        assert int(counted[0][0]) == rows
+        detail = f"sure_ms={report.duration_ms} kilit_ms={report.locked_ms} beat={beats['n']}"
+        assert report.duration_ms > 0
+        assert report.locked_ms >= 0
+        print(detail)
+    finally:
+        storage_router.reset()
+        storage_shared_v2.reset_store()
+        try:
+            import comm_service
+
+            comm_service.reset_fernet_for_tests()
+        except Exception:
+            pass
+        for item in names:
+            _drop(item)
+
+
 def test_flag_off_keeps_the_original_tombstone_list(tmp_path, monkeypatch):
     from mysql_store import SKIP_TOMBSTONE
 
