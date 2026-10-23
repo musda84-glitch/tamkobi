@@ -373,6 +373,14 @@ async def startup_event():
         if not installed:
             logger.info("TamKobi is not installed. Open /kurulum to finish setup.")
         else:
+            try:
+                import storage_router as _storage_router
+                await _storage_router.warm_dedicated_refs(db)
+            except Exception as _warm_exc:
+                logger.warning(
+                    "dedicated ref kontrolü atlandı: %s",
+                    type(_warm_exc).__name__,
+                )
             await seed_all_data(db)
             await seed_partners(db)
             await seed_shopfloor_pins(db)

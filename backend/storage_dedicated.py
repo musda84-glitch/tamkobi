@@ -206,10 +206,9 @@ async def note_company(db, company_id: str) -> None:
         return
     docs = _memory_docs(db)
     if docs is not None:
-        for doc in docs:
-            if str((doc or {}).get("_id") or "") == cid:
-                _remember_doc(cid, doc)
-                return
+        found = _doc_for_company(docs, cid)
+        if found is not None:
+            _remember_doc(cid, found)
         return
     await _remember_async(db, cid)
 
@@ -337,17 +336,30 @@ def _dsn_for(db, company_id: str) -> str:
         spec = parse_target(spec_name)
         return resolve_dsn(spec, db)
     except CatalogError as exc:
-        if not str(exc).startswith(_MEMORY_ONLY):
+        text = str(exc)
+        if not text.startswith(_MEMORY_ONLY):
+            if "DSN referansı yok" in text:
+                raise DedicatedStorageError(
+                    _missing_ref_message(company_id), company_id=company_id,
+                ) from None
             raise DedicatedStorageError(_public(exc), company_id=company_id) from None
     except (LegacyTargetError, UsageError) as exc:
         raise DedicatedStorageError(_public(exc), company_id=company_id) from None
     sealed = sealed_for_current_epoch(company_id)
     if not sealed:
-        raise DedicatedStorageError("Dedicated DSN referansı yok.", company_id=company_id)
+        raise DedicatedStorageError(_missing_ref_message(company_id), company_id=company_id)
     try:
         return unseal_dedicated_ref(sealed)
     except CatalogError:
         raise DedicatedStorageError("DSN referansı çözülemedi.", company_id=company_id) from None
+
+
+def _missing_ref_message(company_id: str) -> str:
+    """Şirket kimliği logda kalır. Mühür ve DSN metne girmez."""
+    cid = str(company_id or "").strip()
+    if cid and all(ch.isalnum() or ch in "-_" for ch in cid) and len(cid) <= 80:
+        return f"Dedicated DSN referansı yok. company={cid}"
+    return "Dedicated DSN referansı yok."
 
 
 def _public(exc: Exception) -> str:
@@ -362,6 +374,22 @@ def _safe_id(company_id: str) -> str:
     if text and all(ch.isalnum() or ch in "-_" for ch in text) and len(text) <= 80:
         return text
     return "gizli"
+
+
+def _doc_for_company(docs, company_id: str):
+    """Önce `_id`, yoksa JSON `id`. Satır kimliği ile belge kimliği ayrı olabilir."""
+    cid = str(company_id or "")
+    if not cid:
+        return None
+    fallback = None
+    for doc in docs or []:
+        if not isinstance(doc, dict):
+            continue
+        if str(doc.get("_id") or "") == cid:
+            return doc
+        if fallback is None and str(doc.get("id") or "") == cid:
+            fallback = doc
+    return fallback
 
 
 def _memory_docs(db):
@@ -476,14 +504,7 @@ async def _remember_async(db, company_id: str) -> None:
     if find_one is None:
         return
     try:
-        found = find_one(
-            {"_id": company_id},
-            {
-                storage_router.DSN_FIELD: 1,
-                storage_router.MODE_FIELD: 1,
-                storage_router.EPOCH_FIELD: 1,
-            },
-        )
+        found = find_one({"_id": company_id})
         if inspect.isawaitable(found):
             found = await found
     except Exception:

@@ -645,3 +645,154 @@ def test_invoice_edit_stamps_updated_at(monkeypatch):
         asyncio.run(run())
     finally:
         server.db = previous
+
+
+class StartupCompanies:
+    """docs listesi yok. Projeksiyon dedicated_dsn_ref alanını düşürür.
+
+    Sorgudaki `_id` belge `_id` veya JSON `id` ile eşleşir.
+    """
+
+    def __init__(self, rows: list):
+        self.rows = [dict(row) for row in rows]
+
+    def _hit(self, doc: dict, want: str) -> bool:
+        return str(doc.get("_id") or "") == want or str(doc.get("id") or "") == want
+
+    def _shape(self, doc: dict, projection):
+        body = dict(doc)
+        if not projection:
+            return body
+        out = {"_id": body.get("_id")}
+        for key, flag in projection.items():
+            if key == "_id" or not flag or key == storage_router.DSN_FIELD:
+                continue
+            if key in body:
+                out[key] = body[key]
+        return out
+
+    async def find_one(self, query, projection=None):
+        want = str((query or {}).get("_id") or "")
+        for doc in self.rows:
+            if self._hit(doc, want):
+                return self._shape(doc, projection)
+        return None
+
+    def find(self, query=None, projection=None):
+        want = str((query or {}).get("_id") or "")
+        rows = self.rows if not want else [doc for doc in self.rows if self._hit(doc, want)]
+        return [self._shape(doc, projection) for doc in rows]
+
+
+class StartupCatalog:
+    def __init__(self, companies: StartupCompanies):
+        self.companies = companies
+
+    def __getitem__(self, name):
+        if name == "companies":
+            return self.companies
+        raise KeyError(name)
+
+
+def test_fresh_startup_resolves_dsn_without_mode_projection(monkeypatch, tmp_path, caplog):
+    """Taze süreç: kip projeksiyonu mühürü taşımaz, koleksiyon açılışı şirket adıyla düşer.
+
+    Tam belge okununca hem istek yazısı hem açılış ısıtması dedicated depoya gider.
+    Satır kimliği ile JSON id ayrı olsa da ref şirket kimliğine bağlanır.
+    """
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    fresh = "comp_505a96e8"
+    alias = "comp_9039c0ec"
+    missing = "comp_missing"
+    try:
+        path_a = tmp_path / SECRET / "startup-a.db"
+        path_b = tmp_path / SECRET / "startup-b.db"
+        path_a.parent.mkdir()
+        dsn_a = f"sqlite:///{path_a}"
+        dsn_b = f"sqlite:///{path_b}"
+        _migrate(dsn_a)
+        _migrate(dsn_b)
+        sealed_a = storage_router.seal_dedicated_dsn(dsn_a)
+        sealed_b = storage_router.seal_dedicated_dsn(dsn_b)
+        companies = StartupCompanies([
+            {
+                "_id": fresh,
+                "storage_mode": "dedicated",
+                "storage_epoch": 1,
+                "storage_write_lock": False,
+                storage_router.DSN_FIELD: sealed_a,
+            },
+            {
+                "_id": "row_9039",
+                "id": alias,
+                "storage_mode": "dedicated",
+                "storage_epoch": 1,
+                "storage_write_lock": False,
+                storage_router.DSN_FIELD: sealed_b,
+            },
+            {
+                "_id": missing,
+                "storage_mode": "dedicated",
+                "storage_epoch": 1,
+                "storage_write_lock": False,
+            },
+            {"_id": "comp_legacy", "storage_mode": "legacy"},
+        ])
+        db = StartupCatalog(companies)
+        orders = LegacyColl(db, "orders")
+        absent = tmp_path / "absent.db"
+
+        async def run():
+            assert await storage_router.load_mode(db, fresh) == "dedicated"
+            assert storage_dedicated.ref_ready(fresh, 1) is False
+            with pytest.raises(DedicatedStorageError) as first:
+                storage_dedicated.collection(db, fresh, "orders")
+            assert str(first.value) == f"Dedicated DSN referansı yok. company={fresh}"
+            assert await storage_router.load_mode(db, alias) == "dedicated"
+            assert storage_dedicated.ref_ready(alias, 1) is False
+            with pytest.raises(DedicatedStorageError) as second:
+                storage_dedicated.collection(db, alias, "orders")
+            assert str(second.value) == f"Dedicated DSN referansı yok. company={alias}"
+
+            order_a = {"_id": "ord_a", "company_id": fresh, "order_number": "S-A"}
+            routed = await storage_router.route_legacy_write(orders, "insert_one", doc=order_a)
+            await routed.insert_one(order_a)
+            order_b = {"_id": "ord_b", "company_id": alias, "order_number": "S-B"}
+            routed = await storage_router.route_legacy_write(orders, "insert_one", doc=order_b)
+            await routed.insert_one(order_b)
+
+            storage_router.reset()
+            monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+            report = await storage_router.warm_dedicated_refs(db)
+            by_id = {row["company_id"]: row["dedicated_dsn_ref"] for row in report}
+            assert by_id == {fresh: "var", alias: "var", missing: "yok"}
+            assert storage_dedicated.ref_ready(fresh, 1) is True
+            assert storage_dedicated.ref_ready(alias, 1) is True
+            assert storage_dedicated.ref_ready(missing, 1) is False
+            storage_dedicated.collection(db, fresh, "orders")
+            storage_dedicated.collection(db, alias, "products")
+            with pytest.raises(DedicatedStorageError) as third:
+                await storage_router.route_legacy_write(
+                    orders, "insert_one", doc={"_id": "ord_x", "company_id": missing},
+                )
+            assert f"company={missing}" in str(third.value)
+            warmed = {"_id": "ord_a2", "company_id": fresh, "order_number": "S-A2"}
+            routed = await storage_router.route_legacy_write(orders, "insert_one", doc=warmed)
+            await routed.insert_one(warmed)
+            assert orders.writes == []
+
+        with caplog.at_level(logging.INFO):
+            asyncio.run(run())
+        assert len(_bodies(path_a, "orders")) == 2
+        assert len(_bodies(path_b, "orders")) == 1
+        assert not absent.exists()
+        text = caplog.text
+        assert f"dedicated ref kontrol company={fresh} dedicated_dsn_ref=var" in text
+        assert f"dedicated ref kontrol company={alias} dedicated_dsn_ref=var" in text
+        assert f"dedicated ref kontrol company={missing} dedicated_dsn_ref=yok" in text
+        assert SECRET not in text
+        assert "gAAAA" not in text
+        assert "sqlite://" not in text
+    finally:
+        _restore(monkeypatch, previous, comm_service)

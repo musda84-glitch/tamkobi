@@ -140,9 +140,14 @@ def _dedicated_dsn(db, company_id: str) -> str:
 
 
 def _find_company(db, company_id: str) -> dict:
+    fallback = None
     for doc in company_documents(db):
         if str(doc.get("_id") or "") == company_id:
             return doc
+        if fallback is None and str(doc.get("id") or "") == company_id:
+            fallback = doc
+    if fallback is not None:
+        return fallback
     raise CatalogError("Firma yok.")
 
 

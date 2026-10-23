@@ -250,10 +250,15 @@ def _memory_doc(db, company_id: str):
     docs = getattr(companies, "docs", None)
     if not isinstance(docs, list):
         return _UNREAD
+    found = None
     for doc in docs:
-        if str((doc or {}).get("_id") or "") == company_id:
+        if not isinstance(doc, dict):
+            continue
+        if str(doc.get("_id") or "") == company_id:
             return doc
-    return None
+        if found is None and str(doc.get("id") or "") == company_id:
+            found = doc
+    return found
 
 
 def _drive(awaitable):
@@ -303,11 +308,11 @@ def _sql_company(settings: dict, company_id: str):
             **db_ssl.connect_kwargs(settings),
         )
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT doc FROM docs WHERE collection=%s AND id=%s",
-                ("companies", company_id),
-            )
+            cur.execute(_COMPANY_BY_ID_SQL, ("companies", company_id))
             row = cur.fetchone()
+            if not row:
+                cur.execute(_COMPANY_BY_JSON_ID_SQL, ("companies", company_id, company_id))
+                row = cur.fetchone()
     except Exception:
         return _UNREAD
     finally:
@@ -318,17 +323,7 @@ def _sql_company(settings: dict, company_id: str):
                 pass
     if not row:
         return None
-    raw = row[0]
-    if isinstance(raw, (bytes, bytearray)):
-        raw = raw.decode("utf-8")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            return _UNREAD
-    if isinstance(raw, dict):
-        return raw
-    return _UNREAD
+    return _parse_doc_cell(row[0])
 
 
 def _read_company_doc(db, company_id: str):
@@ -653,10 +648,52 @@ async def _catalog_companies(db, company_id: str = ""):
     only = str(company_id or "").strip()
     query = {"_id": only} if only else {}
     try:
-        cursor = coll.find(query, {"_id": 1, MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1, DSN_FIELD: 1})
-    except TypeError:
         cursor = coll.find(query)
+    except TypeError:
+        cursor = coll.find(query, None)
     return await _collect_docs(cursor, _COMPANY_LIST_LIMIT)
+
+
+async def warm_dedicated_refs(db) -> list[dict]:
+    """Açılış kontrolü. Dedicated firmada mühür var mı; değer yazılmaz.
+
+    Tam belge okunur. Kip projeksiyonu bu alanda mühür taşımaz; taze süreç
+    o projeksiyonla koleksiyon açarsa ref boş kalır. Aynı belgedeki `_id`
+    ve `id` birlikte hatırlanır.
+    """
+    if not enabled() or db is None:
+        return []
+    try:
+        docs = await _catalog_companies(db)
+    except Exception as exc:
+        _job_logger().warning("dedicated ref kontrolü okunamadı: %s", type(exc).__name__)
+        return []
+    report = []
+    seen = set()
+    for doc in docs or []:
+        if not isinstance(doc, dict):
+            continue
+        keys = _doc_company_ids(doc)
+        if not keys:
+            continue
+        mode, epoch, locked = _view(doc)
+        for cid in keys:
+            _store(cid, mode, epoch, locked)
+            _capture_dedicated_ref(cid, doc, mode, epoch)
+        if mode != DEDICATED:
+            continue
+        label = next((item for item in keys if item.startswith("comp_")), keys[0])
+        if label in seen:
+            continue
+        seen.add(label)
+        state = _ref_state(doc)
+        report.append({"company_id": label, "dedicated_dsn_ref": state})
+        _job_logger().info(
+            "dedicated ref kontrol company=%s dedicated_dsn_ref=%s",
+            _safe_company(label),
+            state,
+        )
+    return report
 
 
 async def open_company_store(db, company_id: str) -> CompanyStore:
@@ -947,19 +984,38 @@ def _remember_view(company_id: str, doc) -> tuple[str, int, bool]:
     return mode, epoch, locked
 
 
-async def _sql_company_async(db, company_id: str):
-    """Havuzdaki async sürücü. Olay döngüsünde pymysql açılmaz."""
-    await db._ensure()
-    async with db._pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT doc FROM docs WHERE collection=%s AND id=%s",
-                ("companies", company_id),
-            )
-            row = await cur.fetchone()
-    if not row:
+_COMPANY_BY_ID_SQL = "SELECT doc FROM docs WHERE collection=%s AND id=%s"
+_COMPANY_BY_JSON_ID_SQL = (
+    "SELECT doc FROM docs WHERE collection=%s AND ("
+    "JSON_UNQUOTE(JSON_EXTRACT(doc, '$._id'))=%s OR "
+    "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.id'))=%s"
+    ") LIMIT 1"
+)
+
+
+def _doc_company_ids(doc) -> list[str]:
+    """Belge kimliği. `_id` ile JSON `id` aynı firmaysa ikisi de tutulur."""
+    found = []
+    if not isinstance(doc, dict):
+        return found
+    for key in ("_id", "id"):
+        value = str(doc.get(key) or "").strip()
+        if value and value not in found:
+            found.append(value)
+    return found
+
+
+def _ref_state(doc) -> str:
+    """Mührün varlığı. Değer dönmez."""
+    sealed = (doc or {}).get(DSN_FIELD) if isinstance(doc, dict) else None
+    if isinstance(sealed, str) and sealed.strip():
+        return "var"
+    return "yok"
+
+
+def _parse_doc_cell(raw):
+    if not raw:
         return None
-    raw = row[0]
     if isinstance(raw, (bytes, bytearray)):
         raw = raw.decode("utf-8")
     if isinstance(raw, str):
@@ -970,6 +1026,27 @@ async def _sql_company_async(db, company_id: str):
     if isinstance(raw, dict):
         return raw
     return _UNREAD
+
+
+async def _sql_company_async(db, company_id: str):
+    """Havuzdaki async sürücü. Olay döngüsünde pymysql açılmaz.
+
+    Önce satır kimliği. Yoksa JSON `_id` / `id`. Projeksiyon yok; mühür belgenin içindedir.
+    """
+    await db._ensure()
+    async with db._pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(_COMPANY_BY_ID_SQL, ("companies", company_id))
+            row = await cur.fetchone()
+            if not row:
+                await cur.execute(
+                    _COMPANY_BY_JSON_ID_SQL,
+                    ("companies", company_id, company_id),
+                )
+                row = await cur.fetchone()
+    if not row:
+        return None
+    return _parse_doc_cell(row[0])
 
 
 async def read_company_doc_async(db, company_id: str):
@@ -994,10 +1071,7 @@ async def read_company_doc_async(db, company_id: str):
     if find_one is None:
         return _UNREAD
     try:
-        result = find_one(
-            {"_id": company_id},
-            {MODE_FIELD: 1, EPOCH_FIELD: 1, WRITE_LOCK_FIELD: 1, DSN_FIELD: 1},
-        )
+        result = find_one({"_id": company_id})
         if inspect.isawaitable(result):
             result = await result
     except Exception:
