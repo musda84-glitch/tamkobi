@@ -116,10 +116,70 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
     return fixed
 
 
+async def _bank_ids_for_external(db, tx: dict) -> list:
+    """Aynı external_id'ye bağlı banka hareketlerinin kimlikleri."""
+    ids = []
+    own = tx.get("_id")
+    if own:
+        ids.append(own)
+    ext = str(tx.get("external_id") or "").strip()
+    cid = str(tx.get("company_id") or "").strip()
+    if not ext or not cid:
+        return ids
+    rows = await db.bank_transactions.find(
+        {"company_id": cid, "external_id": ext},
+        {"_id": 1},
+    ).to_list(200)
+    for row in rows or []:
+        ident = row.get("_id")
+        if ident and ident not in ids:
+            ids.append(ident)
+    return ids
+
+
+async def _existing_partner_name(db, tx: dict):
+    """Aynı external_id için ortak kaydı varsa adı. Yoksa None."""
+    ext = str(tx.get("external_id") or "").strip()
+    if not ext:
+        return None
+    cid = str(tx.get("company_id") or "").strip()
+    if not cid:
+        return None
+    found = await db.partner_transactions.find_one({
+        "company_id": cid,
+        "external_id": ext,
+        "source": "bank_match",
+    })
+    if not found:
+        ids = await _bank_ids_for_external(db, tx)
+        if ids:
+            found = await db.partner_transactions.find_one({
+                "company_id": cid,
+                "related_bank_tx_id": {"$in": ids},
+            })
+    if not found:
+        return None
+    return str(found.get("partner_name") or "")
+
+
 async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: bool) -> str:
-    """Banka hareketi bakiyede; ortak hesabı nakit-siz sermaye / çekiş ile güncelle."""
+    """Banka hareketi bakiyede; ortak hesabı nakit-siz sermaye / çekiş ile güncelle.
+
+    Aynı external_id için ikinci ortak hareketi açılmaz.
+    """
+    existing = await _existing_partner_name(db, tx)
+    if existing is not None:
+        return existing
     desc = f"{tx.get('account_name') or 'Hesap'}: {tx.get('description') or 'Banka eşleşmesi'}"
     bank_tx_type = "inflow" if is_inflow else "outflow"
+    ext = str(tx.get("external_id") or "").strip()
+    extra = {
+        "related_bank_tx_id": tx.get("_id"),
+        "source": "bank_match",
+        "bank_tx_type": bank_tx_type,
+    }
+    if ext:
+        extra["external_id"] = ext
     return await partner_pay.move(
         db,
         tx["company_id"],
@@ -128,11 +188,7 @@ async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: 
         partner_tx_type_for_bank_match(is_inflow),
         desc,
         date=tx.get("date"),
-        extra={
-            "related_bank_tx_id": tx.get("_id"),
-            "source": "bank_match",
-            "bank_tx_type": bank_tx_type,
-        },
+        extra=extra,
     )
 
 

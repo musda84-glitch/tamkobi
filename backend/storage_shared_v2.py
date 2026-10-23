@@ -30,6 +30,7 @@ from mysql_store import (
     _guard,
     aggregate_rows,
     apply_update,
+    changed_window,
     dumps,
     has_unique_index,
     index_spec_parts,
@@ -468,6 +469,18 @@ class SharedV2Collection:
                 return list(rows)[: int(length)]
 
         return _Cursor()
+
+    async def changed_since(self, since=None, company_id=None, limit: int = 3000):
+        """Firma deposundaki değişen satırlar. Paylaşılan docs tablosu okunmaz."""
+        _guard(self.name, "changed_since", company_id=company_id or self.company_id)
+        requested = str(company_id or "").strip()
+        if requested and requested != self.company_id:
+            import storage_router
+
+            if storage_router.canonical_company_id(requested) != storage_router.canonical_company_id(self.company_id):
+                return [], since, False
+        docs = await self._match_docs({})
+        return changed_window(docs, since, limit)
 
     async def insert_one(self, doc):
         await self._touch_lock()
