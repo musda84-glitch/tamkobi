@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import copy
 import inspect
 import json
 import logging
@@ -1096,51 +1097,104 @@ def _payload_companies(op: str, doc, query, update, name: str = "") -> list[str]
     return found
 
 
-def _query_targets_one_row(query) -> bool:
-    """Tek belge. Geniş company_id'siz yazma arşiv satırını yeni depoya fan-out etmez."""
-    if not isinstance(query, dict):
-        return False
-    ident = query.get("_id")
-    return ident is not None and not isinstance(ident, dict)
-
-
-def _named_company(op: str, doc, query, update) -> bool:
-    """Yazma tek şirketi açıkça seçiyor. Geniş sorgu sayılmaz."""
-    if _query_targets_one_row(query):
-        return True
-    if isinstance(query, dict) and isinstance(query.get("company_id"), str) and query.get("company_id"):
-        return True
-    if op in ("insert_one", "replace_one") and isinstance(doc, dict) and doc.get("company_id"):
-        return True
-    if op == "insert_many" and isinstance(doc, (list, tuple)):
-        ids = {
-            str(item.get("company_id"))
-            for item in doc
-            if isinstance(item, dict) and item.get("company_id")
-        }
-        return len(ids) == 1
-    if isinstance(update, dict):
-        for key in ("$set", "$setOnInsert"):
-            body = update.get(key)
-            if isinstance(body, dict) and body.get("company_id"):
-                return True
-    return False
-
-
-def narrow_legacy_query(query, archived: list[str]) -> None:
-    """Arşiv şirketlerini yerinde dışlar. Legacy satırlar yazılmaya devam eder."""
-    if not isinstance(query, dict) or not archived:
-        return
+def narrow_legacy_query(query, archived: list[str]) -> dict:
+    """Arşiv şirketlerini dışlayan kopya. Çağıranın sözlüğü değişmez."""
+    body = copy.deepcopy(query) if isinstance(query, dict) else {}
+    if not archived:
+        return body
     clause = {"company_id": {"$nin": list(archived)}}
-    if isinstance(query.get("$and"), list):
-        query["$and"].append(clause)
-        return
-    existing = dict(query)
-    query.clear()
-    if existing:
-        query["$and"] = [existing, clause]
-    else:
-        query["$and"] = [clause]
+    if isinstance(body.get("$and"), list):
+        merged = dict(body)
+        merged["$and"] = list(body["$and"]) + [clause]
+        return merged
+    if body:
+        return {"$and": [body, clause]}
+    return {"$and": [clause]}
+
+
+_PASSTHROUGH: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "storage_route_passthrough",
+    default=False,
+)
+_MANY_WRITES = frozenset({"update_many", "delete_many"})
+
+
+def _sum_update(results):
+    from mysql_store import UpdateResult
+
+    matched = 0
+    modified = 0
+    upserted = None
+    for result in results:
+        try:
+            matched += int(getattr(result, "matched_count", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            modified += int(getattr(result, "modified_count", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        if getattr(result, "upserted_id", None):
+            upserted = result.upserted_id
+    return UpdateResult(matched, modified, upserted)
+
+
+def _sum_delete(results):
+    from mysql_store import DeleteResult
+
+    deleted = 0
+    for result in results:
+        try:
+            deleted += int(getattr(result, "deleted_count", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    return DeleteResult(deleted)
+
+
+class SplitWrite:
+    """Arşiv şirketinin canlı deposu ve legacy şirketler. Sorgular kopyadır.
+
+    Toplam matched/modified/deleted, uygulanan her hedefin toplamıdır.
+    """
+
+    def __init__(self, legacy, legacy_query, parts):
+        self._legacy = legacy
+        self._legacy_query = legacy_query
+        self._parts = list(parts)
+
+    async def _call(self, target, method, query, args, kwargs):
+        fn = getattr(target, method)
+        result = fn(query, *args, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    async def _legacy_call(self, method, args, kwargs):
+        if self._legacy is None:
+            return None
+        token = _PASSTHROUGH.set(True)
+        try:
+            return await self._call(self._legacy, method, self._legacy_query, args, kwargs)
+        finally:
+            _PASSTHROUGH.reset(token)
+
+    async def update_many(self, query, update, upsert: bool = False):
+        results = []
+        legacy = await self._legacy_call("update_many", (update,), {"upsert": upsert})
+        if legacy is not None:
+            results.append(legacy)
+        for coll, part_query in self._parts:
+            results.append(await self._call(coll, "update_many", part_query, (update,), {"upsert": upsert}))
+        return _sum_update(results)
+
+    async def delete_many(self, query):
+        results = []
+        legacy = await self._legacy_call("delete_many", (), {})
+        if legacy is not None:
+            results.append(legacy)
+        for coll, part_query in self._parts:
+            results.append(await self._call(coll, "delete_many", part_query, (), {}))
+        return _sum_delete(results)
 
 
 def _company_ids_from_rows(rows, name: str) -> list[str]:
@@ -1194,9 +1248,12 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
     """Ham legacy yazmayı kilit ve güncel kipe göre bırakır, yönlendirir veya reddeder.
 
     Bayrak kapalıyken None döner ve katalog okunmaz. Dönüş None ise yazma
-    bu koleksiyonda sürer. Koleksiyon dönerse yazma oraya gider.
+    bu koleksiyonda sürer. Koleksiyon dönerse yazma oraya gider. Birden
+    fazla arşiv şirketine yayılan update_many/delete_many her şirketin
+    canlı deposuna uygulanır ve sayılar toplanır. Diğer çoklu yazmalar
+    uygulanmadan hata verir. Çağıranın sorgu sözlüğü değişmez.
     """
-    if not enabled():
+    if not enabled() or _PASSTHROUGH.get():
         return None
     db = getattr(coll, "_db", None) or getattr(coll, "db", None)
     name = str(getattr(coll, "name", "") or "")
@@ -1233,18 +1290,30 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
     archived = [cid for cid, (mode, _epoch, _locked) in views if mode != LEGACY]
     if not archived:
         return None
-    if len(archived) == 1 and not legacy and _named_company(op, doc, query, update):
+    if len(archived) == 1 and not legacy:
         cid, (mode, _epoch, _locked) = views[0]
         return collection_for_mode(db, mode, cid, name)
-    if not isinstance(query, dict):
-        raise StorageEpochStale("Yazma birden fazla şirketin kipine dağılmış. Eski depoya yazılmadı.")
-    narrow_legacy_query(query, archived)
-    return None
+    if op not in _MANY_WRITES or not isinstance(query, dict):
+        raise StorageEpochStale(
+            "Yazma birden fazla şirketin deposuna dağılmış. Uygulanmadı.",
+            company_id=archived[0],
+        )
+    parts = []
+    for cid, (mode, _epoch, _locked) in views:
+        if mode == LEGACY:
+            continue
+        parts.append((collection_for_mode(db, mode, cid, name), copy.deepcopy(query)))
+    legacy_coll = coll if legacy else None
+    legacy_query = narrow_legacy_query(query, archived) if legacy else None
+    return SplitWrite(legacy_coll, legacy_query, parts)
 
 
 def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None):
-    """Senkron ham yazma. Olay döngüsünde katalog için pymysql açmaz."""
-    if not enabled():
+    """Senkron ham yazma. Olay döngüsünde katalog için pymysql açmaz.
+
+    Arşiv şirketine denk gelen yazma eski depoda başarı dönmez.
+    """
+    if not enabled() or _PASSTHROUGH.get():
         return None
     db = getattr(coll, "_db", None) or getattr(coll, "db", None)
     name = str(getattr(coll, "name", "") or "")
@@ -1293,19 +1362,12 @@ def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None)
     archived = [cid for cid, (mode, _epoch, _locked) in views if mode != LEGACY]
     if not archived:
         return None
-    if len(archived) == 1 and not legacy and _named_company(op, doc, query, update):
-        raise StorageEpochStale(
-            "Depolama kipi değişti. Senkron yazma eski depoya yapılmadı.",
-            company_id=views[0][0],
-            mode=views[0][1][0],
-        )
-    if isinstance(query, dict):
-        narrow_legacy_query(query, archived)
-        return None
+    chosen = next(item for item in views if item[0] == archived[0])
+    cid, (mode, _epoch, _locked) = chosen
     raise StorageEpochStale(
         "Depolama kipi değişti. Senkron yazma eski depoya yapılmadı.",
-        company_id=views[0][0],
-        mode=views[0][1][0],
+        company_id=cid,
+        mode=mode,
     )
 
 

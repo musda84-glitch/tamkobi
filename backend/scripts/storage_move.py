@@ -41,19 +41,11 @@ import storage_router  # noqa: E402
 import storage_shared_v2  # noqa: E402
 
 BATCH = 50
-# Taşımanın kendi yazdığı sistem satırları kaynak sayılmaz.
-_INTERNAL = frozenset({
-    "storage_moves",
-    "storage_move_locks",
-    "sync_tombstones",
-    "trash",
-    "system_logs",
-    "activity_logs",
-    "login_attempts",
-    "notifications",
-    "meta_indexes",
-})
+# Sağlamada move_id ile ayıklanan satırlar. Koleksiyonun kendisi,
+# router şirket deposuna veriyorsa kopyalanır.
+_MOVER_ROWS = frozenset({"storage_moves", "storage_move_locks", "sync_tombstones"})
 LOCKS = "storage_move_locks"
+_OWNER_MEMORY = asyncio.Lock()
 _ID_MAX = 191
 _COMPANY_MAX = 64
 _CONTROL = None  # storage_router yüklendikten sonra dolar
@@ -164,13 +156,12 @@ def _control_fields() -> tuple:
 
 
 def _routed_away(db, mode: str, company_id: str, name: str) -> bool:
-    """Koleksiyon bu kipte katalog db[name] dışında mı durur?
+    """Router bu adı şirket deposuna veriyorsa True.
 
-    legacy katalogun kendisidir. shared_v2 ve dedicated her adı şirket
-    deposuna alır; company, membership, token ve platform türleri de
-    buraya düşerse kopyalanır. Meta tablolar taşınmaz.
+    Karar collection_for_mode ile aynıdır: dönüş db[name] değilse
+    koleksiyon kopyalanır, sağlanır ve source-intact'e girer.
     """
-    if name in _INTERNAL or mode == storage_router.LEGACY:
+    if mode == storage_router.LEGACY:
         return False
     if mode == storage_router.DEDICATED:
         return True
@@ -178,7 +169,77 @@ def _routed_away(db, mode: str, company_id: str, name: str) -> bool:
         routed = storage_router.collection_for_mode(db, mode, company_id, name)
         return routed is not db[name]
     except Exception:
-        return mode == storage_router.SHARED_V2
+        return True
+
+
+def _ignore_set(move_ids) -> set:
+    return {str(item) for item in (move_ids or ()) if item}
+
+
+def _without_mover(name: str, docs, move_ids) -> list:
+    """Taşımanın kendi storage_moves, kilit ve mezar taşı satırları."""
+    skip = _ignore_set(move_ids)
+    if not skip or name not in _MOVER_ROWS:
+        return list(docs or [])
+    kept = []
+    for doc in docs or []:
+        if not isinstance(doc, dict):
+            continue
+        ident = str(doc.get("_id") or "")
+        mid = str(doc.get("move_id") or "")
+        if name == "storage_moves" and ident in skip:
+            continue
+        if mid in skip:
+            continue
+        kept.append(doc)
+    return kept
+
+
+def _end_mysql_snapshot(conn) -> None:
+    """Açık REPEATABLE READ görüntüsünü kapat. Sonraki okuma taze olsun."""
+    if conn is None:
+        return
+    try:
+        if not getattr(conn, "_storage_move_rc", False):
+            cursor = conn.cursor()
+            cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            conn._storage_move_rc = True
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def _refresh_reads(mode: str, company_id: str = "") -> None:
+    """Taşımanın shared/dedicated okumasından önce ve sonra işlemi bitir.
+
+    Bağlantı yoksa açılmaz. SQLite autocommit'tir, dokunulmaz.
+    """
+    if mode == storage_router.SHARED_V2:
+        store = storage_shared_v2.get_store()
+        conn = getattr(store, "conn", None)
+        if conn is None or getattr(store, "dialect", "") != "mysql":
+            return
+        _end_mysql_snapshot(conn)
+        return
+    if mode != storage_router.DEDICATED or not company_id:
+        return
+    pool = storage_dedicated._pools.get(str(company_id))
+    if pool is None or getattr(pool, "closed", True) or getattr(pool, "session", None) is None:
+        return
+    session = pool.session
+    if getattr(session, "dialect", "") != "mysql" or getattr(session, "conn", None) is None:
+        return
+    lock = getattr(pool, "op_lock", None)
+    if lock is not None and not lock.acquire(blocking=False):
+        return
+    try:
+        _end_mysql_snapshot(session.conn)
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 def _belongs(doc: dict, name: str, company_id: str) -> bool:
@@ -361,13 +422,20 @@ async def _collect(cursor):
     return [dict(row) for row in list(cursor or []) if isinstance(row, dict)]
 
 
-async def _read(db, mode: str, company_id: str, name: str, company: dict):
-    coll = _open(db, mode, company_id, name, company)
-    kind = _kind(name)
-    if mode == storage_router.LEGACY and kind in ("company", "membership", "platform", "token"):
-        rows = await _collect(coll.find({}))
-        return [row for row in rows if _belongs(row, name, company_id)]
-    return await _collect(coll.find({"company_id": company_id}))
+async def _read(db, mode: str, company_id: str, name: str, company: dict, ignore_moves=()):
+    """Her okuma kendi işlemini kapatır. Kaynak ve hedef ayrı taze okumadır."""
+    _refresh_reads(mode, company_id)
+    try:
+        coll = _open(db, mode, company_id, name, company)
+        kind = _kind(name)
+        if mode == storage_router.LEGACY and kind in ("company", "membership", "platform", "token"):
+            rows = await _collect(coll.find({}))
+            docs = [row for row in rows if _belongs(row, name, company_id)]
+        else:
+            docs = await _collect(coll.find({"company_id": company_id}))
+    finally:
+        _refresh_reads(mode, company_id)
+    return _without_mover(name, docs, ignore_moves)
 
 
 def _sql_collections(settings: dict):
@@ -426,38 +494,53 @@ async def _list_names(db) -> list[str]:
     return []
 
 
-async def _legacy_names(db, company_id: str, route_mode: str) -> list[str]:
+async def _legacy_names(db, company_id: str, route_mode: str, ignore_moves=()) -> list[str]:
     found = []
     for name in await _list_names(db):
-        if name in _INTERNAL:
+        if name == "t_row_unique":
             continue
         if route_mode and route_mode != storage_router.LEGACY:
             if not _routed_away(db, route_mode, company_id, name):
                 continue
-        docs = await _read(db, storage_router.LEGACY, company_id, name, {})
+        docs = await _read(db, storage_router.LEGACY, company_id, name, {}, ignore_moves)
         if docs:
             found.append(name)
     return sorted(found)
 
 
 def _public_names(names) -> list[str]:
-    return sorted(name for name in names or [] if name and name not in _INTERNAL and name != "t_row_unique")
+    return sorted(name for name in names or [] if name and name != "t_row_unique")
 
 
-async def _names(db, mode: str, company_id: str, company: dict, route_mode: str = "") -> list[str]:
-    if mode == storage_router.LEGACY:
-        return _public_names(await _legacy_names(db, company_id, route_mode or mode))
-    if mode == storage_router.SHARED_V2:
-        try:
-            return _public_names(storage_shared_v2.list_company_collections(company_id))
-        except Exception as exc:
-            raise MoveError(_safe(exc)) from None
+async def _names(db, mode: str, company_id: str, company: dict, route_mode: str = "", ignore_moves=()) -> list[str]:
+    _refresh_reads(mode, company_id)
     try:
-        return _public_names(storage_dedicated.list_collections(company_id, _dedicated_dsn(company)))
-    except MoveError:
-        raise
-    except Exception as exc:
-        raise MoveError(_safe(exc)) from None
+        if mode == storage_router.LEGACY:
+            names = _public_names(await _legacy_names(db, company_id, route_mode or mode, ignore_moves))
+        elif mode == storage_router.SHARED_V2:
+            try:
+                names = _public_names(storage_shared_v2.list_company_collections(company_id))
+            except Exception as exc:
+                raise MoveError(_safe(exc)) from None
+        else:
+            try:
+                names = _public_names(storage_dedicated.list_collections(company_id, _dedicated_dsn(company)))
+            except MoveError:
+                raise
+            except Exception as exc:
+                raise MoveError(_safe(exc)) from None
+    finally:
+        _refresh_reads(mode, company_id)
+    if not _ignore_set(ignore_moves):
+        return names
+    kept = []
+    for name in names:
+        if name not in _MOVER_ROWS:
+            kept.append(name)
+            continue
+        if await _read(db, mode, company_id, name, company, ignore_moves):
+            kept.append(name)
+    return kept
 
 
 async def _company(db, company_id: str):
@@ -536,7 +619,7 @@ def _empty(company_id: str, to_mode: str, message: str, *, dry_run: bool) -> Mov
     return report
 
 
-async def _inspect(db, company, company_id: str, to_mode: str) -> MoveReport:
+async def _inspect(db, company, company_id: str, to_mode: str, ignore_moves=()) -> MoveReport:
     report = MoveReport(dry_run=True, wrote=False, company_id=company_id, to_mode=to_mode)
     if not company_id:
         report.errors.append("company_id boş")
@@ -568,15 +651,15 @@ async def _inspect(db, company, company_id: str, to_mode: str) -> MoveReport:
         report.status = "reddedildi"
         return report
     try:
-        names = await _names(db, source, company_id, company, to_mode)
+        names = await _names(db, source, company_id, company, to_mode, ignore_moves)
     except MoveError as exc:
         report.errors.append(str(exc))
         report.status = "reddedildi"
         return report
     for name in names:
         try:
-            docs = await _read(db, source, company_id, name, company)
-            target_docs = await _read(db, to_mode, company_id, name, company)
+            docs = await _read(db, source, company_id, name, company, ignore_moves)
+            target_docs = await _read(db, to_mode, company_id, name, company, ignore_moves)
         except MoveError as exc:
             report.errors.append(str(exc))
             continue
@@ -678,6 +761,7 @@ def _fetch_unique(company_id: str, names: list) -> list:
         return []
     import storage_tables
 
+    _refresh_reads(storage_router.SHARED_V2, company_id)
     store = storage_shared_v2.get_store()
     try:
         conn = store.connection()
@@ -701,7 +785,9 @@ def _fetch_unique(company_id: str, names: list) -> list:
             rows = conn.execute(adapted, params).fetchall()
     except Exception:
         return []
-    return [tuple(str(part) for part in row) for row in rows]
+    found = [tuple(str(part) for part in row) for row in rows]
+    _refresh_reads(storage_router.SHARED_V2, company_id)
+    return found
 
 
 def _expected_unique(coll, docs) -> list:
@@ -797,7 +883,7 @@ async def _wipe(db, company, company_id: str, mode: str, copied: dict) -> None:
     """Yalnız verilen kimlikler. Başka taşımanın satırına dokunmaz."""
     own = {}
     for name, ids in (copied or {}).items():
-        if name in _INTERNAL or not ids:
+        if not ids:
             continue
         own[name] = [str(item) for item in ids if item]
         if not own[name]:
@@ -831,7 +917,7 @@ async def _remember_copied(db, company_id: str, move_id: str, copied: dict) -> N
 
 
 async def _copy(db, company, company_id: str, source: str, target: str, copied: dict, *, batch_size: int, on_batch, move_id: str, lost=None):
-    names = await _names(db, source, company_id, company, target)
+    names = await _names(db, source, company_id, company, target, (move_id,))
     counts = {}
     checksums = {}
     steps = [{"name": "kilitle", "status": "tamam"}, {"name": "bekle:kilit", "status": "tamam"}]
@@ -839,31 +925,34 @@ async def _copy(db, company, company_id: str, source: str, target: str, copied: 
     unique_parts = []
     for name in names:
         await _beat(db, company_id, move_id, lost)
-        docs = await _read(db, source, company_id, name, company)
+        docs = await _read(db, source, company_id, name, company, (move_id,))
         prepared = [_prepare(doc, company_id, name) for doc in docs if doc.get("_id")]
         doc_errors, doc_conflicts = _check_docs(name, prepared, company_id)
         if doc_errors or doc_conflicts:
             raise MoveError("Kaynak doğrulanamadı.")
-        existing = await _read(db, target, company_id, name, company)
+        existing = await _read(db, target, company_id, name, company, (move_id,))
         if existing and not (name == "companies" and target == storage_router.LEGACY):
             raise MoveError(f"{name}: hedefte kayıt var")
         if name == "companies" and target == storage_router.LEGACY:
             await _sync_catalog_company(db, company_id, prepared[0] if prepared else {})
-            loaded = await _read(db, target, company_id, name, company)
-            source_sum = _digest(prepared)
-            target_sum = _digest([_prepare(doc, company_id, name) for doc in loaded if doc.get("_id")])
+            loaded = await _read(db, target, company_id, name, company, (move_id,))
+            fresh_source = await _read(db, source, company_id, name, company, (move_id,))
+            source_rows = [_prepare(doc, company_id, name) for doc in fresh_source if doc.get("_id")]
+            target_rows = [_prepare(doc, company_id, name) for doc in loaded if doc.get("_id")]
+            source_sum = _digest(source_rows)
+            target_sum = _digest(target_rows)
             if source_sum != target_sum:
                 raise MoveError("sağlama uyuşmadı")
-            counts[name] = {"source": len(prepared), "target": len(loaded)}
+            counts[name] = {"source": len(source_rows), "target": len(target_rows)}
             checksums[name] = {"source": source_sum, "target": target_sum}
             collections.append({
                 "name": name,
-                "count": len(prepared),
-                "bytes": _bytes(prepared),
+                "count": len(source_rows),
+                "bytes": _bytes(source_rows),
                 "target": _target_table(target, name),
-                "target_count": len(loaded),
+                "target_count": len(target_rows),
             })
-            steps.append({"name": f"kopyala:{name}", "status": "tamam", "count": len(prepared)})
+            steps.append({"name": f"kopyala:{name}", "status": "tamam", "count": len(source_rows)})
             continue
         coll = _open(db, target, company_id, name, company)
         if target == storage_router.SHARED_V2:
@@ -878,26 +967,29 @@ async def _copy(db, company, company_id: str, source: str, target: str, copied: 
             await _remember_copied(db, company_id, move_id, copied)
             await _hook(on_batch, name, written)
             await _beat(db, company_id, move_id, lost)
-        loaded = await _read(db, target, company_id, name, company)
-        source_sum = _digest(prepared)
-        target_sum = _digest([_prepare(doc, company_id, name) for doc in loaded if doc.get("_id")])
-        if len(loaded) != len(prepared) or source_sum != target_sum:
+        fresh_source = await _read(db, source, company_id, name, company, (move_id,))
+        fresh_target = await _read(db, target, company_id, name, company, (move_id,))
+        source_rows = [_prepare(doc, company_id, name) for doc in fresh_source if doc.get("_id")]
+        target_rows = [_prepare(doc, company_id, name) for doc in fresh_target if doc.get("_id")]
+        source_sum = _digest(source_rows)
+        target_sum = _digest(target_rows)
+        if len(source_rows) != len(target_rows) or source_sum != target_sum:
             raise MoveError("sağlama uyuşmadı")
         if target == storage_router.SHARED_V2 or source == storage_router.SHARED_V2:
             side = coll if target == storage_router.SHARED_V2 else _open(db, source, company_id, name, company)
-            digest, count = _ensure_unique(company_id, name, side, prepared if target == storage_router.SHARED_V2 else loaded)
+            digest, count = _ensure_unique(company_id, name, side, target_rows if target == storage_router.SHARED_V2 else source_rows)
             if count:
                 unique_parts.append((name, digest, count))
-        counts[name] = {"source": len(prepared), "target": len(loaded)}
+        counts[name] = {"source": len(source_rows), "target": len(target_rows)}
         checksums[name] = {"source": source_sum, "target": target_sum}
         collections.append({
             "name": name,
-            "count": len(prepared),
-            "bytes": _bytes(prepared),
+            "count": len(source_rows),
+            "bytes": _bytes(source_rows),
             "target": _target_table(target, name),
-            "target_count": len(loaded),
+            "target_count": len(target_rows),
         })
-        steps.append({"name": f"kopyala:{name}", "status": "tamam", "count": len(prepared)})
+        steps.append({"name": f"kopyala:{name}", "status": "tamam", "count": len(source_rows)})
         steps.append({"name": f"sağlama:{name}", "status": "tamam"})
     if unique_parts:
         body = "\n".join(f"{name}|{digest}|{count}" for name, digest, count in unique_parts)
@@ -924,11 +1016,13 @@ async def _lock_docs(db, company_id: str) -> list:
 
 
 async def _release_lock(db, company_id: str, move_id: str) -> None:
+    from mysql_store import tag_tombstone
     from tenant_scope import unscoped
 
-    with unscoped("depolama taşıma kilidi"):
-        with storage_router.bypass_write_lock(company_id):
-            await db[LOCKS].delete_one({"_id": company_id, "move_id": move_id})
+    with tag_tombstone(move_id):
+        with unscoped("depolama taşıma kilidi"):
+            with storage_router.bypass_write_lock(company_id):
+                await db[LOCKS].delete_one({"_id": company_id, "move_id": move_id})
 
 
 async def _takeover_lock(db, company_id: str, old: dict, body: dict) -> None:
@@ -1068,6 +1162,13 @@ async def _commit_owner(db, company_id: str, move_id: str, *, mode: str | None =
 async def _commit_owner_memory(db, company_id: str, move_id: str, *, mode: str | None, unlock: bool) -> bool:
     from tenant_scope import unscoped
 
+    async with _OWNER_MEMORY:
+        return await _commit_owner_memory_locked(db, company_id, move_id, mode=mode, unlock=unlock)
+
+
+async def _commit_owner_memory_locked(db, company_id: str, move_id: str, *, mode: str | None, unlock: bool) -> bool:
+    from tenant_scope import unscoped
+
     with unscoped("depolama taşıma kilidi"):
         with storage_router.bypass_write_lock(company_id):
             result = await db[LOCKS].update_one(
@@ -1201,7 +1302,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         await _acquire_lock(db, cid, move_id, mode)
         held = True
         company = await _company(db, cid)
-        report = await _inspect(db, company, cid, mode)
+        report = await _inspect(db, company, cid, mode, (move_id,))
         report.dry_run = False
         report.move_id = move_id
         if not report.ok:
@@ -1357,16 +1458,16 @@ async def _fail_copy(db, company, company_id: str, mode: str, move_id: str, copi
         )
 
 
-async def _source_intact(db, company, company_id: str, mode: str, counts: dict, route_mode: str = "") -> bool:
+async def _source_intact(db, company, company_id: str, mode: str, counts: dict, route_mode: str = "", ignore_moves=()) -> bool:
     try:
-        live = await _names(db, mode, company_id, company, route_mode)
+        live = await _names(db, mode, company_id, company, route_mode, ignore_moves)
     except Exception:
         return False
     recorded = sorted(key for key in (counts or []) if key != "t_row_unique")
     if sorted(live) != recorded:
         return False
     for name in recorded:
-        docs = await _read(db, mode, company_id, name, company)
+        docs = await _read(db, mode, company_id, name, company, ignore_moves)
         expected = int((counts.get(name) or {}).get("source") or 0)
         if len(docs) != expected:
             return False
@@ -1383,10 +1484,11 @@ async def _restore(db, company, company_id: str, mode: str, journal: list) -> No
                 await coll.insert_one(_prepare(previous, company_id, name))
 
 
-async def _reverse(db, company, company_id: str, source_mode: str, current_mode: str, *, batch_size: int, on_batch, move_id: str = "", lost=None):
+async def _reverse(db, company, company_id: str, source_mode: str, current_mode: str, *, batch_size: int, on_batch, move_id: str = "", lost=None, ignore_moves=()):
     """Güncel kipi eski kipe eşitler. Güncel taraftaki veri silinmez."""
-    current_names = await _names(db, current_mode, company_id, company, current_mode)
-    source_names = await _names(db, source_mode, company_id, company, current_mode)
+    skip = ignore_moves or ((move_id,) if move_id else ())
+    current_names = await _names(db, current_mode, company_id, company, current_mode, skip)
+    source_names = await _names(db, source_mode, company_id, company, current_mode, skip)
     names = sorted(set(current_names) | set(source_names))
     if "companies" in names:
         names = [item for item in names if item != "companies"] + ["companies"]
@@ -1397,15 +1499,15 @@ async def _reverse(db, company, company_id: str, source_mode: str, current_mode:
     collections = []
     for name in names:
         await _beat(db, company_id, move_id, lost)
-        current_docs = await _read(db, current_mode, company_id, name, company)
-        previous_docs = await _read(db, source_mode, company_id, name, company)
+        current_docs = await _read(db, current_mode, company_id, name, company, skip)
+        previous_docs = await _read(db, source_mode, company_id, name, company, skip)
         current_prepared = [_prepare(doc, company_id, name) for doc in current_docs if doc.get("_id")]
         previous_by_id = {str(doc.get("_id")): doc for doc in previous_docs if doc.get("_id")}
         current_by_id = {str(doc.get("_id")): doc for doc in current_prepared}
         if name == "companies" and source_mode == storage_router.LEGACY:
             await _sync_catalog_company(db, company_id, current_prepared[0] if current_prepared else {})
-            loaded = await _read(db, source_mode, company_id, name, company)
-            fresh = await _read(db, current_mode, company_id, name, company)
+            loaded = await _read(db, source_mode, company_id, name, company, skip)
+            fresh = await _read(db, current_mode, company_id, name, company, skip)
             left = _digest([_prepare(doc, company_id, name) for doc in loaded])
             right = _digest([_prepare(doc, company_id, name) for doc in fresh])
             if left != right:
@@ -1446,8 +1548,8 @@ async def _reverse(db, company, company_id: str, source_mode: str, current_mode:
             if pending:
                 await _hook(on_batch, name, written)
                 await _beat(db, company_id, move_id, lost)
-        loaded = await _read(db, source_mode, company_id, name, company)
-        fresh = await _read(db, current_mode, company_id, name, company)
+        loaded = await _read(db, source_mode, company_id, name, company, skip)
+        fresh = await _read(db, current_mode, company_id, name, company, skip)
         left = _digest([_prepare(doc, company_id, name) for doc in loaded])
         right = _digest([_prepare(doc, company_id, name) for doc in fresh])
         if len(loaded) != len(fresh) or left != right:
@@ -1505,7 +1607,7 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
             report.from_mode = current
             return report
         counts = record.get("counts") if isinstance(record.get("counts"), dict) else {}
-        if not await _source_intact(db, company, cid, source, counts, current):
+        if not await _source_intact(db, company, cid, source, counts, current, (mid, rollback_id)):
             report = _empty(cid, source, "Kaynak veri durmuyor.", dry_run=False)
             report.move_id = mid
             report.from_mode = current
@@ -1519,6 +1621,7 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
             journal, new_counts, checksums, steps, collections = await _reverse(
                 db, company, cid, source, current,
                 batch_size=batch_size, on_batch=on_batch, move_id=rollback_id, lost=lost_box,
+                ignore_moves=(mid, rollback_id),
             )
             await _sleep_mode(db, cid, rollback_id, lost_box)
             if not await _commit_owner(db, cid, rollback_id, mode=source, unlock=True):
@@ -2105,6 +2208,57 @@ def _process_entry(spec: dict) -> None:
                         pass
 
             outcome.update(asyncio.run(_durability_and_close()))
+        elif action == "gap":
+            async def _gap():
+                import tenant_db
+                from tenant_scope import TenantScope
+
+                scope = TenantScope(
+                    company_id=company_id,
+                    allowed=frozenset({company_id}),
+                    kind="user",
+                    actor_id="proc",
+                    reason="test",
+                )
+                handle = tenant_db.TenantDB(db, scope)
+                store = await storage_router.open_company_store(db, company_id)
+                rounds = int(spec.get("rounds") or 8)
+                rows = []
+                for index in range(rounds):
+                    trio = (
+                        ("tenant", f"gap-tenant-{index}", lambda doc_id, number=index: handle.products.insert_one({
+                            "_id": doc_id, "name": f"T{number}", "sku": f"SKU-T-{number}", "price": number,
+                        })),
+                        ("raw", f"gap-raw-{index}", lambda doc_id, number=index: db.products.insert_one({
+                            "_id": doc_id, "company_id": company_id, "name": f"R{number}", "sku": f"SKU-R-{number}", "price": number,
+                        })),
+                        ("store", f"gap-store-{index}", lambda doc_id, number=index: store.products.insert_one({
+                            "_id": doc_id, "name": f"S{number}", "sku": f"SKU-S-{number}", "price": number,
+                        })),
+                    )
+                    for _label, doc_id, fn in trio:
+                        await fn(doc_id)
+                        rows.append(doc_id)
+                return {"rows": rows}
+
+            async def _gap_and_close():
+                try:
+                    return await _gap()
+                finally:
+                    closer = getattr(db, "close", None)
+                    if closer is not None:
+                        try:
+                            result = closer()
+                            if inspect.isawaitable(result):
+                                await result
+                        except Exception:
+                            pass
+                    try:
+                        storage_shared_v2.reset_store()
+                    except Exception:
+                        pass
+
+            outcome.update(asyncio.run(_gap_and_close()))
         else:
             outcome["error"] = "bilinmeyen"
     except Exception as exc:

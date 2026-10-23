@@ -1204,28 +1204,56 @@ def test_recover_leaves_a_live_move_alone(tmp_path, monkeypatch):
         _close_world(world)
 
 
-def test_tombstone_does_not_block_legacy_rollback(tmp_path, monkeypatch):
+def test_routed_collections_follow_the_router(tmp_path, monkeypatch):
     world = _open_world("sqlite", tmp_path, monkeypatch)
+    routed_names = (
+        "notifications",
+        "activity_logs",
+        "trash",
+        "sync_tombstones",
+        "login_attempts",
+        "system_logs",
+        "products",
+        "companies",
+        "storage_moves",
+        "storage_move_locks",
+        "meta_indexes",
+    )
 
     async def run():
         await _seed(world, "legacy")
-        report = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        cid = world.company_id
+        for name in routed_names:
+            routed = storage_router.collection_for_mode(world.db, "shared_v2", cid, name)
+            assert storage_move._routed_away(world.db, "shared_v2", cid, name) is (routed is not world.db[name])
+        kept = (
+            "notifications",
+            "activity_logs",
+            "trash",
+            "sync_tombstones",
+            "login_attempts",
+            "system_logs",
+        )
+        for name in kept:
+            await world.db[name].insert_one({"_id": f"{name}-1", "company_id": cid, "text": "bir"})
+        report = await storage_move.apply_move(world.db, cid, "shared_v2")
         assert report.ok, report.errors
-        await world.db.sync_tombstones.insert_one({
-            "_id": "tomb-1",
-            "company_id": world.company_id,
-            "collection": "storage_move_locks",
-            "doc_id": world.company_id,
-        })
-        names = await storage_move._legacy_names(world.db, world.company_id, "shared_v2")
+        copied = {row["name"] for row in report.collections}
+        store = await storage_router.open_company_store(world.db, cid)
+        seen = {}
+        for name in kept:
+            rows = await store[name].find({}).to_list(10)
+            seen[name] = len([row for row in rows if row.get("_id") == f"{name}-1"])
         back = await storage_move.rollback_move(world.db, report.move_id)
-        company = await world.db.companies.find_one({"_id": world.company_id})
-        return names, back, company
+        company = await world.db.companies.find_one({"_id": cid})
+        return copied, seen, back, company
 
     try:
-        names, back, company = asyncio.run(run())
-        assert "sync_tombstones" not in names
-        assert "storage_move_locks" not in names
+        copied, seen, back, company = asyncio.run(run())
+        for name in ("notifications", "activity_logs", "trash", "sync_tombstones", "login_attempts", "system_logs"):
+            assert name in copied, name
+            assert seen[name] == 1, name
+        assert "storage_move_locks" not in copied
         assert back.ok, back.errors
         assert back.status == "rolled_back"
         assert storage_router.normalize_mode(company.get("storage_mode")) == "legacy"
@@ -1233,7 +1261,7 @@ def test_tombstone_does_not_block_legacy_rollback(tmp_path, monkeypatch):
         _close_world(world)
 
 
-def test_archived_source_rows_do_not_block_global_writes(tmp_path, monkeypatch):
+def test_archived_writes_reach_the_live_store(tmp_path, monkeypatch):
     world = _open_world("sqlite", tmp_path, monkeypatch)
 
     async def run():
@@ -1245,17 +1273,27 @@ def test_archived_source_rows_do_not_block_global_writes(tmp_path, monkeypatch):
         routed_broad = await storage_router.route_legacy_write(
             world.db.products, "update_many", query=broad, update={"$set": {"note": "genel"}},
         )
-        assert routed_broad is None
-        await world.db.products.update_many(broad, {"$set": {"note": "genel"}})
+        assert broad == {}
+        assert isinstance(routed_broad, storage_router.SplitWrite)
+        many = await routed_broad.update_many(broad, {"$set": {"note": "genel"}})
         legacy = await world.db.products.find_one({"_id": "p1"})
         other = await world.db.products.find_one({"_id": "other-p"})
+        shared = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "products")
+        live = await shared.find_one({"_id": "p1"})
+        sku = {"sku": "K-1"}
+        routed_sku = await storage_router.route_legacy_write(
+            world.db.products, "update_one", query=sku, update={"$set": {"name": "Sku"}},
+        )
+        assert sku == {"sku": "K-1"}
+        assert routed_sku is not None
+        sku_result = await routed_sku.update_one(sku, {"$set": {"name": "Sku"}})
         one = {"_id": "p1"}
         routed_one = await storage_router.route_legacy_write(
             world.db.products, "update_one", query=one, update={"$set": {"name": "Yonlendi"}},
         )
+        assert one == {"_id": "p1"}
         assert routed_one is not None
         await routed_one.update_one(one, {"$set": {"name": "Yonlendi"}})
-        shared = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "products")
         routed = await shared.find_one({"_id": "p1"})
         legacy_after = await world.db.products.find_one({"_id": "p1"})
         await world.db.companies.update_one(
@@ -1267,19 +1305,25 @@ def test_archived_source_rows_do_not_block_global_writes(tmp_path, monkeypatch):
         routed_both = await storage_router.route_legacy_write(
             world.db.products, "update_many", query=both, update={"$set": {"note": "yok"}},
         )
-        assert routed_both is None
-        await world.db.products.update_many(both, {"$set": {"note": "yok"}})
+        assert both == {}
+        assert routed_both is not None
+        await routed_both.update_many(both, {"$set": {"note": "yok"}})
         legacy_both = await world.db.products.find_one({"_id": "p1"})
         other_both = await world.db.products.find_one({"_id": "other-p"})
-        return legacy, other, routed, legacy_after, legacy_both, other_both
+        live_both = await shared.find_one({"_id": "p1"})
+        return many, legacy, other, live, sku_result, routed, legacy_after, legacy_both, other_both, live_both
 
     try:
-        legacy, other, routed, legacy_after, legacy_both, other_both = asyncio.run(run())
+        many, legacy, other, live, sku_result, routed, legacy_after, legacy_both, other_both, live_both = asyncio.run(run())
+        assert many.matched_count == 2
         assert legacy.get("note") != "genel"
         assert other["note"] == "genel"
+        assert live["note"] == "genel"
+        assert sku_result.matched_count == 1
         assert routed["name"] == "Yonlendi"
         assert legacy_after["name"] == "Kalem ölçü"
         assert legacy_both.get("note") != "yok"
         assert other_both.get("note") != "yok"
+        assert live_both["note"] == "yok"
     finally:
         _close_world(world)

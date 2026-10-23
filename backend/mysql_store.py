@@ -7,12 +7,14 @@ keeps using db.<collection>.find / update_one / etc.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import json
 import os
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
@@ -20,17 +22,29 @@ from urllib.parse import unquote, urlparse
 import db_ssl
 
 MISSING = object()
+# Bayrak kapalıyken bu liste değişmez. Taşımanın kendi silmeleri
+# tag_tombstone ile move_id yazar; genel dışlama buraya eklenmez.
 SKIP_TOMBSTONE = frozenset({
     "sync_tombstones",
     "trash",
     "login_attempts",
     "activity_logs",
     "notifications",
-    "storage_moves",
-    "storage_move_locks",
-    "meta_indexes",
-    "system_logs",
 })
+_tombstone_move_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "storage_tombstone_move_id",
+    default="",
+)
+
+
+@contextmanager
+def tag_tombstone(move_id: str):
+    """Bu bloktaki silmelerin mezar taşına move_id yazar."""
+    token = _tombstone_move_id.set(str(move_id or ""))
+    try:
+        yield
+    finally:
+        _tombstone_move_id.reset(token)
 
 
 def iso_ts(value) -> str:
@@ -2015,13 +2029,17 @@ class MySQLCollection:
             did = d.get("_id")
             if not did:
                 continue
-            await self._db.sync_tombstones.insert_one({
+            body = {
                 "_id": f"{self.name}:{did}:{uuid.uuid4().hex[:8]}",
                 "collection": self.name,
                 "doc_id": str(did),
                 "company_id": d.get("company_id"),
                 "deleted_at": now,
-            })
+            }
+            move_id = _tombstone_move_id.get()
+            if move_id:
+                body["move_id"] = move_id
+            await self._db.sync_tombstones.insert_one(body)
 
     async def changed_since(self, since: Optional[str] = None, company_id: Optional[str] = None, limit: int = 3000) -> Tuple[List[dict], Optional[str], bool]:
         """SQL-level delta: rows whose docs.updated_at is >= since, optionally scoped by company_id."""
