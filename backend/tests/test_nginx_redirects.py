@@ -124,7 +124,7 @@ def _redirect_target(path: str) -> str | None:
 
     app_res = [
         r"^/(panel|login|invoices|dis-ticaret|contacts|banking|stock|hizli-satis|ecommerce|cargo)(/|$)",
-        r"^/(orders|purchase-orders|saha|warehouses|vehicles|production|personnel|ai-advisor|communication)(/|$)",
+        r"^/(orders|purchase-orders|saha|warehouses|vehicles|production|personnel|mesajlar|ai-advisor|communication)(/|$)",
         r"^/(hesap|settings|quotes|projects|surveys|support|accountant|installments|reports|dispatches)(/|$)",
         r"^/(expenses|loans|cheques|trash|edoc-inbox|b2b-yonetim|atolye|sayim|sevk)(/|$)",
         r"^/(teklif|proje|ekstre|davet|odeme|yenile|sifre)(/|$)",
@@ -140,6 +140,8 @@ def _redirect_target(path: str) -> str | None:
     [
         ("/panel?x=1", "https://app.tamkobi.com/panel?x=1"),
         ("/invoices/abc", "https://app.tamkobi.com/invoices/abc"),
+        ("/mesajlar", "https://app.tamkobi.com/mesajlar"),
+        ("/mesajlar?yeni=1", "https://app.tamkobi.com/mesajlar?yeni=1"),
         ("/portal/T", "https://b2b.tamkobi.com/portal/T"),
         ("/portal", "https://b2b.tamkobi.com/portal"),
         ("/b2b", "https://b2b.tamkobi.com/b2b/giris"),

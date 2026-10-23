@@ -43,6 +43,7 @@ const SESSION_PREFIXES = [
   "/production",
   "/personnel",
   "/personelim",
+  "/mesajlar",
   "/mesai",
   "/ai-advisor",
   "/communication",

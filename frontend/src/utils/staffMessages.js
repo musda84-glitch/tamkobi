@@ -350,3 +350,27 @@ export function chatPeer(row) {
   if (!row?.id || row.kind === "announce") return null;
   return { kind: row.kind, id: row.id };
 }
+
+export function chatListPreview(row, selfId) {
+  if (!row) return "";
+  const body = messagePreview(row.last) || String(row.preview || "").trim();
+  if (!body) return "";
+  const own = Boolean(row.own) || isOwnMessage(row.last, selfId);
+  const text = own ? `Siz: ${body.replace(/^Siz:\s*/, "")}` : body;
+  return text;
+}
+
+export function clipChatPreview(text, max = 72) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  return `${s.slice(0, Math.max(1, max - 1)).trim()}…`;
+}
+
+export function orderedPeerGroups(groups) {
+  const rank = { Yöneticiler: 0, Personel: 1 };
+  return [...(groups || [])].sort((a, b) => {
+    const d = (rank[a.label] ?? 9) - (rank[b.label] ?? 9);
+    if (d) return d;
+    return String(a.label || "").localeCompare(String(b.label || ""), "tr");
+  });
+}

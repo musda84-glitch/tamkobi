@@ -1,6 +1,13 @@
+import asyncio
+
+import attendance
+import staff_messages
+from dashboard_memdb import MemDB
 from staff_messages import (
     announce_title,
     announce_visible,
+    build_panel_chats,
+    filter_panel_chats,
     group_title,
     inbox_from_rows,
     is_manager,
@@ -9,6 +16,8 @@ from staff_messages import (
     merge_manager_directory,
     message_doc,
     normalize_body,
+    page_panel_chats,
+    panel_unread_total,
     preview_messages,
     public_announce,
     public_message,
@@ -118,3 +127,133 @@ def test_announce_helpers():
     pub = public_announce({"_id": "a1", **all_staff, "from_name": "Mustafa"})
     assert pub["id"] == "a1"
     assert pub["title"] == "Genel"
+
+
+def _mgr_row(mid, body, read_at=None, company_id="c1", employee_id="", created_at="2026-10-01T12:00:00"):
+    return {
+        "_id": mid,
+        "company_id": company_id,
+        "employee_id": employee_id,
+        "from_side": "manager",
+        "from_user_id": "mgrA",
+        "from_name": "Mustafa",
+        "to_user_id": "mgrB",
+        "to_name": "Ayşe",
+        "body": body,
+        "created_at": created_at,
+        "read_at": read_at,
+    }
+
+
+def test_panel_counts_manager_dm_and_skips_other_company():
+    managers = {"mgrA", "mgrB"}
+    names = {"mgrA": {"name": "Mustafa"}, "mgrB": {"name": "Ayşe"}}
+    rows = [
+        _mgr_row("a", "gel", created_at="2026-10-02T10:00:00"),
+        _mgr_row("b", "eski", read_at="ok", created_at="2026-10-01T10:00:00"),
+        _mgr_row("c", "diger-sirket", company_id="c2", created_at="2026-10-03T10:00:00"),
+        {
+            "_id": "s1",
+            "company_id": "c1",
+            "employee_id": "e1",
+            "employee_name": "Ali",
+            "from_side": "staff",
+            "from_user_id": "staff1",
+            "to_user_id": "",
+            "body": "izin",
+            "created_at": "2026-10-02T09:00:00",
+            "read_at": None,
+        },
+    ]
+    # İK gelen kutusu boş employee_id satırını yine atlar.
+    legacy = inbox_from_rows(rows, "mgrB")
+    assert [r["employee_id"] for r in legacy] == ["e1"]
+    assert legacy[0]["unread"] == 1
+    chats = build_panel_chats(
+        rows,
+        reader_user_id="mgrB",
+        manager_ids=managers,
+        reader_is_manager=True,
+        managers_by_id=names,
+        company_id="c1",
+    )
+    assert panel_unread_total(chats) == 2
+    by_key = {c["key"]: c for c in chats}
+    assert by_key["m:mgrA"]["unread"] == 1
+    assert by_key["m:mgrA"]["name"] == "Mustafa"
+    assert "diger-sirket" not in str(chats)
+    read_rows = [{**rows[0], "read_at": "now"}, *rows[1:]]
+    after = build_panel_chats(
+        read_rows,
+        reader_user_id="mgrB",
+        manager_ids=managers,
+        reader_is_manager=True,
+        managers_by_id=names,
+        company_id="c1",
+    )
+    assert panel_unread_total(after) == 1
+    # Personel kartı dolu yönetici-yönetici DM'i de personel sohbetine karışmaz.
+    linked = _mgr_row("d", "kartli", employee_id="empA", created_at="2026-10-04T10:00:00")
+    linked_chats = build_panel_chats(
+        [linked],
+        reader_user_id="mgrB",
+        manager_ids=managers,
+        reader_is_manager=True,
+        managers_by_id=names,
+        company_id="c1",
+    )
+    assert linked_chats[0]["kind"] == "manager"
+    assert linked_chats[0]["unread"] == 1
+    page, nxt = page_panel_chats(chats, limit=1, cursor="0")
+    assert len(page) == 1
+    assert nxt == "1"
+    only_unread = filter_panel_chats(chats, unread_only=True)
+    assert all(c["unread"] > 0 for c in only_unread)
+
+
+def test_panel_inbox_pages_past_400_and_drops_when_read():
+    """Canlı veritabanına ve 8021 portuna bağlanmaz."""
+    db = MemDB()
+    prev = staff_messages._db
+    prev_att = attendance._db
+    staff_messages._db = db
+    attendance._db = db
+
+    async def _go():
+        await db.users.insert_one({
+            "_id": "mgrB", "role": "admin", "name": "Ayşe",
+            "active_company_id": "c1", "company_ids": ["c1"], "company_id": "c1",
+        })
+        await db.users.insert_one({
+            "_id": "mgrA", "role": "manager", "name": "Mustafa",
+            "active_company_id": "c1", "company_ids": ["c1"], "company_id": "c1",
+        })
+        for i in range(401):
+            stamp = f"2026-10-01T{i // 3600:02d}:{(i // 60) % 60:02d}:{i % 60:02d}"
+            await db.staff_messages.insert_one(_mgr_row(
+                f"m{i:04d}", f"n{i}", created_at=stamp,
+            ))
+        await db.staff_messages.insert_one(_mgr_row(
+            "other", "diger-sirket", company_id="c2", created_at="2026-12-01T00:00:00",
+        ))
+        reader = {
+            "_id": "mgrB", "role": "admin", "name": "Ayşe",
+            "active_company_id": "c1", "company_ids": ["c1"],
+        }
+        data = await staff_messages._panel_inbox(reader, limit=10)
+        assert data["unread_total"] == 401
+        assert data["next_cursor"] is None
+        assert len(data["chats"]) == 1
+        assert data["chats"][0]["key"] == "m:mgrA"
+        blob = str(data)
+        assert "diger-sirket" not in blob
+        marked = await staff_messages._read_messages({"to_user_id": "mgrA"}, reader)
+        assert int(marked["updated"]) >= 401
+        again = await staff_messages._panel_inbox(reader, limit=10)
+        assert again["unread_total"] == 0
+
+    try:
+        asyncio.run(_go())
+    finally:
+        staff_messages._db = prev
+        attendance._db = prev_att

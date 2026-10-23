@@ -134,6 +134,7 @@ export const HOST_ROUTE_RULES = {
     /^\/vehicles(\/|$)/,
     /^\/production(\/|$)/,
     /^\/personnel(\/|$)/,
+    /^\/mesajlar(\/|$)/,
     /^\/ai-advisor(\/|$)/,
     /^\/communication(\/|$)/,
     /^\/hesap(\/|$)/,

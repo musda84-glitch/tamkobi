@@ -1,7 +1,7 @@
 import { hasPortalFeature, isPersonelRoleCode, portalFeatureKey } from "./portalFields";
 
 /** Path aliases used for both permission and license module keys. */
-export const AUTH_LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai" };
+export const AUTH_LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai", "/mesajlar": "/" };
 
 export function authPermPath(path) {
   return AUTH_LICENSE_KEY[path] || path;

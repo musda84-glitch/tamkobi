@@ -128,6 +128,172 @@ def preview_messages(rows: List[Dict[str, Any]], limit: int = PREVIEW) -> List[D
     return [public_message(r) for r in (rows or [])[: max(0, limit)] if r]
 
 
+SCAN_BATCH = 200
+SCAN_CAP = 20000
+PANEL_PAGE_CAP = 100
+PANEL_FORBIDDEN = "Mesajları görmek için personel kartı veya yönetici yetkisi gerekir."
+
+
+def row_unread_for(row: Optional[Dict[str, Any]], reader_user_id: str) -> bool:
+    """Okunmamış: karşı tarafın mesajı ve read_at boş. Kendi mesajı sayılmaz."""
+    if not row or row.get("read_at"):
+        return False
+    reader = str(reader_user_id or "")
+    if reader and str(row.get("from_user_id") or "") == reader:
+        return False
+    return True
+
+
+def panel_bucket(
+    row: Optional[Dict[str, Any]],
+    reader_user_id: str,
+    manager_ids: Optional[set] = None,
+    own_employee_id: str = "",
+    reader_is_manager: bool = False,
+    allowed_groups: Optional[set] = None,
+) -> Optional[Tuple[str, str]]:
+    """Sohbet kovası: (manager|emp|group, id). Başkasının DM'i ve şirket dışı satır yok.
+
+    Yönetici-yönetici DM'inde employee_id boş olabilir; iki taraf da yöneticiyse
+    personel kartı dolu olsa bile sohbet yönetici kovasına düşer.
+    """
+    if not row:
+        return None
+    gid = str(row.get("group_id") or "")
+    if gid:
+        allowed = allowed_groups or set()
+        if gid not in allowed:
+            return None
+        return ("group", gid)
+    reader = str(reader_user_id or "")
+    to_uid = str(row.get("to_user_id") or "")
+    from_uid = str(row.get("from_user_id") or "")
+    eid = str(row.get("employee_id") or "")
+    if to_uid and reader and to_uid != reader and from_uid != reader:
+        return None
+    managers = manager_ids or set()
+    if (
+        str(row.get("from_side") or "") == "manager"
+        and to_uid
+        and from_uid
+        and to_uid in managers
+        and from_uid in managers
+    ):
+        peer = to_uid if from_uid == reader else from_uid
+        if not peer or peer == reader:
+            peer = to_uid if to_uid != reader else ""
+        if peer and peer != reader:
+            return ("manager", peer)
+        return None
+    if not eid:
+        if reader and (from_uid == reader or to_uid == reader):
+            peer = to_uid if from_uid == reader else from_uid
+            if peer and peer != reader:
+                return ("manager", peer)
+        return None
+    own = str(own_employee_id or "")
+    if reader_is_manager or (own and eid == own):
+        return ("emp", eid)
+    return None
+
+
+def _panel_chat_name(kind: str, ident: str, row: Dict[str, Any], managers_by_id: Dict[str, Any], groups_by_id: Dict[str, Any]) -> str:
+    if kind == "group":
+        return str((groups_by_id.get(ident) or {}).get("title") or "Grup")
+    if kind == "manager":
+        named = (managers_by_id.get(ident) or {}).get("name")
+        if named:
+            return str(named)
+        if str(row.get("to_user_id") or "") == ident and row.get("to_name"):
+            return str(row.get("to_name"))
+        if str(row.get("from_user_id") or "") == ident and row.get("from_name"):
+            return str(row.get("from_name"))
+        return str(row.get("from_name") or row.get("to_name") or "Yönetici")
+    return str(row.get("employee_name") or "Personel")
+
+
+def build_panel_chats(
+    rows: List[Dict[str, Any]],
+    reader_user_id: str = "",
+    manager_ids: Optional[set] = None,
+    own_employee_id: str = "",
+    reader_is_manager: bool = False,
+    allowed_groups: Optional[set] = None,
+    managers_by_id: Optional[Dict[str, Any]] = None,
+    groups_by_id: Optional[Dict[str, Any]] = None,
+    company_id: str = "",
+) -> List[Dict[str, Any]]:
+    """Son mesaja göre sohbetler. unread, yönetici-yönetici dahil karşı tarafın okunmamışları."""
+    buckets: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    prefix = {"manager": "m", "emp": "e", "group": "g"}
+    names = managers_by_id or {}
+    groups = groups_by_id or {}
+    wanted = str(company_id or "")
+    for row in rows or []:
+        if wanted and str(row.get("company_id") or "") != wanted:
+            continue
+        bucket = panel_bucket(row, reader_user_id, manager_ids, own_employee_id, reader_is_manager, allowed_groups)
+        if not bucket:
+            continue
+        kind, ident = bucket
+        key = f"{prefix.get(kind, 'x')}:{ident}"
+        if key not in buckets:
+            body = str(row.get("body") or "").replace("\n", " ").strip()
+            own = str(row.get("from_user_id") or "") == str(reader_user_id or "")
+            buckets[key] = {
+                "key": key,
+                "kind": kind,
+                "id": ident,
+                "name": _panel_chat_name(kind, ident, row, names, groups),
+                "preview": body[:180],
+                "own": own,
+                "unread": 1 if row_unread_for(row, reader_user_id) else 0,
+                "at": row.get("created_at") or "",
+                "last": public_message(row),
+            }
+            order.append(key)
+        elif row_unread_for(row, reader_user_id):
+            buckets[key]["unread"] = int(buckets[key].get("unread") or 0) + 1
+    return [buckets[key] for key in order]
+
+
+def panel_unread_total(chats: List[Dict[str, Any]]) -> int:
+    return sum(int(c.get("unread") or 0) for c in chats or [])
+
+
+def filter_panel_chats(chats: List[Dict[str, Any]], q: str = "", unread_only: bool = False) -> List[Dict[str, Any]]:
+    needle = str(q or "").strip().casefold()
+    out: List[Dict[str, Any]] = []
+    for chat in chats or []:
+        if unread_only and int(chat.get("unread") or 0) <= 0:
+            continue
+        if needle:
+            blob = f"{chat.get('name') or ''} {chat.get('preview') or ''}".casefold()
+            if needle not in blob:
+                continue
+        out.append(chat)
+    return out
+
+
+def page_panel_chats(chats: List[Dict[str, Any]], limit: int = 30, cursor: str = "") -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    try:
+        offset = int(cursor or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    if offset < 0:
+        offset = 0
+    try:
+        size = int(limit or 30)
+    except (TypeError, ValueError):
+        size = 30
+    size = max(1, min(size, PANEL_PAGE_CAP))
+    rows = list(chats or [])
+    chunk = rows[offset:offset + size]
+    nxt = str(offset + size) if offset + size < len(rows) else None
+    return chunk, nxt
+
+
 def inbox_from_rows(rows: List[Dict[str, Any]], reader_user_id: str = "") -> List[Dict[str, Any]]:
     """Son mesaja göre personel konuşmaları; okunmamış = personelden gelenler.
 
@@ -484,6 +650,109 @@ async def _notify_new(doc: Dict[str, Any], emp: Optional[Dict[str, Any]] = None,
     ))
 
 
+async def _message_batch(company_id: str, before_at: str, before_id: str, batch: int) -> List[Dict[str, Any]]:
+    """Şirket mesajları, created_at azalan. company_id her sorguda durur."""
+    if before_at:
+        found = await _db.staff_messages.find({
+            "company_id": company_id,
+            "$or": [
+                {"created_at": {"$lt": before_at}},
+                {"$and": [{"created_at": before_at}, {"_id": {"$lt": before_id}}]},
+            ],
+        }).sort([("created_at", -1), ("_id", -1)]).to_list(batch)
+        return list(found or [])
+    found = await _db.staff_messages.find({
+        "company_id": company_id,
+    }).sort([("created_at", -1), ("_id", -1)]).to_list(batch)
+    return list(found or [])
+
+
+async def _load_company_messages(company_id: str) -> List[Dict[str, Any]]:
+    """400 sınırına takılmadan şirket mesajlarını sayfa sayfa okur."""
+    cid = str(company_id or "").strip()
+    if not cid or _db is None:
+        return []
+    out: List[Dict[str, Any]] = []
+    before_at = ""
+    before_id = ""
+    seen = set()
+    while len(out) < SCAN_CAP:
+        rows = await _message_batch(cid, before_at, before_id, SCAN_BATCH)
+        if not rows:
+            break
+        fresh: List[Dict[str, Any]] = []
+        for row in rows:
+            rid = str(row.get("_id") or "")
+            if rid and rid in seen:
+                continue
+            if rid:
+                seen.add(rid)
+            fresh.append(row)
+        if not fresh:
+            break
+        out.extend(fresh)
+        if len(rows) < SCAN_BATCH or len(out) >= SCAN_CAP:
+            break
+        last = rows[-1]
+        nxt_at = str(last.get("created_at") or "")
+        nxt_id = str(last.get("_id") or "")
+        if (nxt_at, nxt_id) == (before_at, before_id):
+            break
+        before_at, before_id = nxt_at, nxt_id
+    return out[:SCAN_CAP]
+
+
+async def _panel_inbox(user: dict, limit: int = 30, cursor: str = "", q: str = "", unread_only: bool = False):
+    """Panel kartı ve /mesajlar: sayfalı sohbet listesi + tam unread_total."""
+    company_id = user_company_id(user)
+    if not company_id:
+        raise HTTPException(status_code=403, detail=PANEL_FORBIDDEN)
+    own = await attendance.employee_for_user(user)
+    manager = await user_is_manager(user, company_id)
+    uid = user_id_of(user)
+    own_id = str((own or {}).get("_id") or "")
+    own_ok = bool(own) and str((own or {}).get("company_id") or "") == company_id
+    if not manager and not own_ok:
+        raise HTTPException(status_code=403, detail=PANEL_FORBIDDEN)
+    managers = await _manager_directory(company_id)
+    manager_ids = {str(m.get("id")) for m in managers if m.get("id")}
+    if manager and uid:
+        manager_ids.add(uid)
+    groups = await _groups_for(company_id, uid, own_id)
+    allowed_groups = {str(g.get("_id") or "") for g in groups if g.get("_id")}
+    managers_by_id = {str(m.get("id")): m for m in managers if m.get("id")}
+    groups_by_id = {
+        str(g.get("_id")): {"title": g.get("title") or "Grup"}
+        for g in groups if g.get("_id")
+    }
+    rows = await _load_company_messages(company_id)
+    chats = build_panel_chats(
+        rows,
+        reader_user_id=uid,
+        manager_ids=manager_ids,
+        own_employee_id=own_id if own_ok else "",
+        reader_is_manager=manager,
+        allowed_groups=allowed_groups,
+        managers_by_id=managers_by_id,
+        groups_by_id=groups_by_id,
+        company_id=company_id,
+    )
+    filtered = filter_panel_chats(chats, q, unread_only)
+    page, nxt = page_panel_chats(filtered, limit, cursor)
+    directory = await _employee_directory(company_id, own_id if own_ok else None) if manager else []
+    mode = "both" if manager and own_ok else ("manager" if manager else "staff")
+    return {
+        "unread_total": panel_unread_total(chats),
+        "chats": page,
+        "next_cursor": nxt,
+        "managers": [m for m in managers if str(m.get("id")) != uid],
+        "directory": directory,
+        "groups": [public_group(g) for g in groups if public_group(g)],
+        "self_user_id": uid,
+        "mode": mode,
+    }
+
+
 async def _list_messages(
     employee_id: Optional[str] = None,
     user: dict = None,
@@ -624,7 +893,7 @@ async def _list_messages(
             "announcements": announcements,
             "self_user_id": uid,
         }
-    raise HTTPException(status_code=403, detail="Mesajları görmek için personel kartı veya yönetici yetkisi gerekir.")
+    raise HTTPException(status_code=403, detail=PANEL_FORBIDDEN)
 
 
 async def _post_message(req: Dict[str, Any], user: dict):
@@ -863,6 +1132,16 @@ def init(db, current_user_dep):
     if _bound:
         return
     _bound = True
+
+    @router.get("/personnel/messages/panel")
+    async def panel_messages(
+        limit: int = 30,
+        cursor: str = "",
+        q: str = "",
+        unread: int = 0,
+        user: dict = Depends(current_user_dep),
+    ):
+        return await _panel_inbox(user, limit=limit, cursor=cursor, q=q, unread_only=bool(unread))
 
     @router.get("/personnel/messages")
     async def list_messages(
