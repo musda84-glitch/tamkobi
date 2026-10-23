@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 _BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_BACKEND))
+sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
