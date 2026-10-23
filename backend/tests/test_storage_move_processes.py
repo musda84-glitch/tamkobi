@@ -716,6 +716,14 @@ def test_other_host_live_move_is_not_stolen(monkeypatch):
                 })
                 with pytest.raises(storage_router.StorageMoveBusy):
                     await storage_move._acquire_lock(db, cid, "local-move", "shared_v2")
+                with pytest.raises(storage_router.StorageWriteLocked):
+                    await db.products.insert_one({
+                        "_id": "p-anon",
+                        "name": "anon",
+                        "sku": "SKU-anon",
+                        "price": 1,
+                    })
+                assert await db.products.find_one({"_id": "p-anon"}) is None
                 remote = await storage_move._lock_docs(db, cid)
                 assert remote[0]["move_id"] == "remote-move"
                 assert remote[0]["owner_host"] == "remote-host"

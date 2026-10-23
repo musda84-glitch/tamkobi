@@ -1030,9 +1030,9 @@ async def any_move_running(db) -> bool:
     if now < _any_move[1]:
         return _any_move[0]
     try:
-        from tenant_scope import unscoped
+        import tenant_scope
 
-        with unscoped("depolama taşıma kilidi"):
+        with tenant_scope.unscoped("depolama taşıma kilidi"):
             found = db["storage_move_locks"].find_one({"status": "running"})
             if inspect.isawaitable(found):
                 found = await found
@@ -1051,9 +1051,9 @@ def any_move_running_sync(db) -> bool:
     if _on_loop():
         raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
     try:
-        from tenant_scope import unscoped
+        import tenant_scope
 
-        with unscoped("depolama taşıma kilidi"):
+        with tenant_scope.unscoped("depolama taşıma kilidi"):
             found = db["storage_move_locks"].find_one({"status": "running"})
     except Exception:
         raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
