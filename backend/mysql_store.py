@@ -20,7 +20,17 @@ from urllib.parse import unquote, urlparse
 import db_ssl
 
 MISSING = object()
-SKIP_TOMBSTONE = frozenset({"sync_tombstones", "trash", "login_attempts", "activity_logs", "notifications"})
+SKIP_TOMBSTONE = frozenset({
+    "sync_tombstones",
+    "trash",
+    "login_attempts",
+    "activity_logs",
+    "notifications",
+    "storage_moves",
+    "storage_move_locks",
+    "meta_indexes",
+    "system_logs",
+})
 
 
 def iso_ts(value) -> str:
@@ -371,6 +381,15 @@ def sql_pushdown(collection: str, query: Optional[dict]) -> Tuple[str, list]:
             clauses.append(f"({expr} NOT IN ({ph}) OR {expr} IS NULL)")
             params.extend(v["$nin"])
     return "SELECT doc FROM docs WHERE " + " AND ".join(clauses), params
+
+
+def sql_company_ids(collection: str, query: Optional[dict]) -> Tuple[str, list]:
+    """Aynı süzgeç, yalnız company_id kolonu. Belge gövdesi okunmaz."""
+    sql, params = sql_pushdown(collection, query)
+    prefix = "SELECT doc FROM "
+    if not sql.startswith(prefix):
+        raise ValueError("company_id sorgusu kurulamadı")
+    return "SELECT DISTINCT company_id FROM " + sql[len(prefix):], params
 
 
 def sql_count_exact(collection: str, query: Optional[dict]) -> Optional[Tuple[str, list]]:
@@ -1681,6 +1700,30 @@ class MySQLCollection:
             return docs
         return [d for d in docs if match_query(d, query)]
 
+    async def distinct_company_ids(self, query: Optional[dict]) -> Optional[List[str]]:
+        """Eşleşen satırların company_id değerleri. Hata olursa None; çağıran tam okur."""
+        try:
+            sql, params = sql_company_ids(self.name, query)
+        except Exception:
+            return None
+        try:
+            await self._db._ensure()
+            async with self._db._pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(sql, params)
+                    rows = await cur.fetchall()
+        except Exception:
+            return None
+        found: List[str] = []
+        for row in rows or []:
+            if not row or row[0] is None:
+                continue
+            text = str(row[0]).strip()
+            if not text or text == "null" or text in found:
+                continue
+            found.append(text)
+        return found
+
     async def _replace_rows(self, rows: Sequence[Tuple[str, str, str]]):
         """Batch REPLACE so bulk flag updates do not do one round-trip per product."""
         packed = list(rows or [])
@@ -2274,6 +2317,29 @@ class SyncMySQLCollection:
             rows = cur.fetchall()
         _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
         return [loads(r[0]) for r in rows]
+
+    def distinct_company_ids(self, query):
+        """Eşleşen satırların company_id değerleri. Hata olursa None."""
+        try:
+            sql, params = sql_company_ids(self.name, query)
+        except Exception:
+            return None
+        try:
+            self._db._ensure()
+            with self._db._conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+        except Exception:
+            return None
+        found = []
+        for row in rows or []:
+            if not row or row[0] is None:
+                continue
+            text = str(row[0]).strip()
+            if not text or text == "null" or text in found:
+                continue
+            found.append(text)
+        return found
 
     def _load_filtered(self, query):
         sql, params = sql_pushdown(self.name, query)

@@ -1096,7 +1096,80 @@ def _payload_companies(op: str, doc, query, update, name: str = "") -> list[str]
     return found
 
 
+def _query_targets_one_row(query) -> bool:
+    """Tek belge. Geniş company_id'siz yazma arşiv satırını yeni depoya fan-out etmez."""
+    if not isinstance(query, dict):
+        return False
+    ident = query.get("_id")
+    return ident is not None and not isinstance(ident, dict)
+
+
+def _named_company(op: str, doc, query, update) -> bool:
+    """Yazma tek şirketi açıkça seçiyor. Geniş sorgu sayılmaz."""
+    if _query_targets_one_row(query):
+        return True
+    if isinstance(query, dict) and isinstance(query.get("company_id"), str) and query.get("company_id"):
+        return True
+    if op in ("insert_one", "replace_one") and isinstance(doc, dict) and doc.get("company_id"):
+        return True
+    if op == "insert_many" and isinstance(doc, (list, tuple)):
+        ids = {
+            str(item.get("company_id"))
+            for item in doc
+            if isinstance(item, dict) and item.get("company_id")
+        }
+        return len(ids) == 1
+    if isinstance(update, dict):
+        for key in ("$set", "$setOnInsert"):
+            body = update.get(key)
+            if isinstance(body, dict) and body.get("company_id"):
+                return True
+    return False
+
+
+def narrow_legacy_query(query, archived: list[str]) -> None:
+    """Arşiv şirketlerini yerinde dışlar. Legacy satırlar yazılmaya devam eder."""
+    if not isinstance(query, dict) or not archived:
+        return
+    clause = {"company_id": {"$nin": list(archived)}}
+    if isinstance(query.get("$and"), list):
+        query["$and"].append(clause)
+        return
+    existing = dict(query)
+    query.clear()
+    if existing:
+        query["$and"] = [existing, clause]
+    else:
+        query["$and"] = [clause]
+
+
+def _company_ids_from_rows(rows, name: str) -> list[str]:
+    found: list[str] = []
+    for row in rows or []:
+        if isinstance(row, str):
+            cid = row.strip()
+        elif isinstance(row, dict):
+            cid = str(row.get("company_id") or "").strip()
+            if not cid and name == "companies":
+                cid = str(row.get("_id") or "").strip()
+        else:
+            continue
+        if cid and cid != "null" and cid not in found:
+            found.append(cid)
+    return found
+
+
 async def _matched_company_ids(coll, query, name: str) -> list[str]:
+    distinct = getattr(coll, "distinct_company_ids", None)
+    if distinct is not None:
+        try:
+            rows = distinct(query)
+            if inspect.isawaitable(rows):
+                rows = await rows
+        except Exception:
+            rows = None
+        if isinstance(rows, list):
+            return _company_ids_from_rows(rows, name)
     loader = getattr(coll, "_load_filtered", None)
     rows = None
     if loader is not None:
@@ -1114,16 +1187,7 @@ async def _matched_company_ids(coll, query, name: str) -> list[str]:
                 rows = await rows
         else:
             rows = list(cursor or [])
-    found: list[str] = []
-    for row in rows or []:
-        if not isinstance(row, dict):
-            continue
-        cid = str(row.get("company_id") or "").strip()
-        if not cid and name == "companies":
-            cid = str(row.get("_id") or "").strip()
-        if cid and cid not in found:
-            found.append(cid)
-    return found
+    return _company_ids_from_rows(rows, name)
 
 
 async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None):
@@ -1165,13 +1229,17 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
         return None
     if any(locked for _cid, (_mode, _epoch, locked) in views):
         raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=views[0][0])
-    modes = {mode for _cid, (mode, _epoch, _locked) in views}
-    if modes == {LEGACY}:
+    legacy = [cid for cid, (mode, _epoch, _locked) in views if mode == LEGACY]
+    archived = [cid for cid, (mode, _epoch, _locked) in views if mode != LEGACY]
+    if not archived:
         return None
-    if len(views) == 1 and views[0][1][0] != LEGACY:
+    if len(archived) == 1 and not legacy and _named_company(op, doc, query, update):
         cid, (mode, _epoch, _locked) = views[0]
         return collection_for_mode(db, mode, cid, name)
-    raise StorageEpochStale("Yazma birden fazla şirketin kipine dağılmış. Eski depoya yazılmadı.")
+    if not isinstance(query, dict):
+        raise StorageEpochStale("Yazma birden fazla şirketin kipine dağılmış. Eski depoya yazılmadı.")
+    narrow_legacy_query(query, archived)
+    return None
 
 
 def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None):
@@ -1193,13 +1261,19 @@ def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None)
                 raise StorageWriteLocked(WRITE_LOCK_MESSAGE)
         return None
     if not known and op not in ("insert_one", "insert_many"):
-        loader = getattr(coll, "_load_filtered", None)
-        rows = loader(query) if loader is not None else []
-        for row in rows or []:
-            if isinstance(row, dict) and row.get("company_id"):
-                cid = str(row.get("company_id"))
-                if cid not in known:
-                    known.append(cid)
+        distinct = getattr(coll, "distinct_company_ids", None)
+        rows = None
+        if distinct is not None:
+            try:
+                rows = distinct(query)
+            except Exception:
+                rows = None
+        if isinstance(rows, list):
+            known.extend(_company_ids_from_rows(rows, name))
+        else:
+            loader = getattr(coll, "_load_filtered", None)
+            loaded = loader(query) if loader is not None else []
+            known.extend(_company_ids_from_rows(loaded, name))
     if not known:
         if _writer.get():
             return None
@@ -1215,8 +1289,18 @@ def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None)
         return None
     if any(locked for _cid, (_mode, _epoch, locked) in views):
         raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=views[0][0])
-    modes = {mode for _cid, (mode, _epoch, _locked) in views}
-    if modes == {LEGACY}:
+    legacy = [cid for cid, (mode, _epoch, _locked) in views if mode == LEGACY]
+    archived = [cid for cid, (mode, _epoch, _locked) in views if mode != LEGACY]
+    if not archived:
+        return None
+    if len(archived) == 1 and not legacy and _named_company(op, doc, query, update):
+        raise StorageEpochStale(
+            "Depolama kipi değişti. Senkron yazma eski depoya yapılmadı.",
+            company_id=views[0][0],
+            mode=views[0][1][0],
+        )
+    if isinstance(query, dict):
+        narrow_legacy_query(query, archived)
         return None
     raise StorageEpochStale(
         "Depolama kipi değişti. Senkron yazma eski depoya yapılmadı.",

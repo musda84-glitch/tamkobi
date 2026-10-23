@@ -1098,3 +1098,188 @@ def test_pinned_handles_follow_epoch_after_unlock(tmp_path, monkeypatch):
         asyncio.run(run())
     finally:
         _close_world(world)
+
+
+def test_stolen_lock_stops_before_mode_change(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+    stolen = {}
+
+    async def on_batch(name, count):
+        if stolen:
+            return
+        stolen["name"] = name
+        await world.db.storage_move_locks.update_one(
+            {"_id": world.company_id},
+            {"$set": {
+                "move_id": "thief",
+                "status": "running",
+                "heartbeat_at": storage_move._now(),
+                "owner_host": "other-host",
+                "owner_pid": 424242,
+            }},
+        )
+
+    async def run():
+        await _seed(world, "legacy")
+        report = await storage_move.apply_move(
+            world.db, world.company_id, "shared_v2", batch_size=1, on_batch=on_batch,
+        )
+        company = await world.db.companies.find_one({"_id": world.company_id})
+        locks = await storage_move._lock_docs(world.db, world.company_id)
+        target = await storage_move._read(
+            world.db, "shared_v2", world.company_id, stolen["name"], company,
+        )
+        source = await world.db.orders.find_one({"_id": "o1"})
+        return report, company, locks, target, source
+
+    try:
+        report, company, locks, target, source = asyncio.run(run())
+        assert stolen.get("name")
+        assert report.ok is False
+        assert report.status == "failed"
+        assert "kayboldu" in report.errors[0]
+        assert storage_router.normalize_mode(company.get("storage_mode")) == "legacy"
+        assert int(company.get("storage_epoch") or 0) == 0
+        assert company.get("storage_write_lock") is True
+        assert locks and locks[0]["move_id"] == "thief"
+        assert target == []
+        assert source["order_number"] == "S-1"
+    finally:
+        _close_world(world)
+
+
+def test_recover_leaves_a_live_move_alone(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        cid = world.company_id
+        await world.db.companies.update_one(
+            {"_id": cid},
+            {"$set": {"storage_write_lock": True}},
+        )
+        await world.db.storage_moves.insert_one({
+            "_id": "old-move",
+            "company_id": cid,
+            "from_mode": "legacy",
+            "to_mode": "shared_v2",
+            "status": "running",
+            "counts": {},
+            "copied": {"notes": ["n-old"]},
+            "collections": ["notes"],
+        })
+        await world.db.storage_move_locks.insert_one({
+            "_id": cid,
+            "company_id": cid,
+            "move_id": "live-move",
+            "status": "running",
+            "heartbeat_at": storage_move._now(),
+            "owner_host": "other-host",
+            "owner_pid": 424242,
+            "to_mode": "shared_v2",
+        })
+        notes = storage_router.collection_for_mode(world.db, "shared_v2", cid, "notes")
+        with storage_router.bypass_write_lock(cid):
+            await notes.insert_one({"_id": "n-old", "company_id": cid, "name": "eski"})
+            await notes.insert_one({"_id": "n-live", "company_id": cid, "name": "canli"})
+        report = await storage_move.recover_move(world.db, "old-move")
+        company = await world.db.companies.find_one({"_id": cid})
+        locks = await storage_move._lock_docs(world.db, cid)
+        old = await notes.find_one({"_id": "n-old"})
+        live = await notes.find_one({"_id": "n-live"})
+        record = await world.db.storage_moves.find_one({"_id": "old-move"})
+        return report, company, locks, old, live, record
+
+    try:
+        report, company, locks, old, live, record = asyncio.run(run())
+        assert report.ok is True
+        assert report.status == "abandoned"
+        assert record["status"] == "abandoned"
+        assert company.get("storage_write_lock") is True
+        assert storage_router.normalize_mode(company.get("storage_mode")) == "legacy"
+        assert locks[0]["move_id"] == "live-move"
+        assert old["name"] == "eski"
+        assert live["name"] == "canli"
+    finally:
+        _close_world(world)
+
+
+def test_tombstone_does_not_block_legacy_rollback(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        report = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert report.ok, report.errors
+        await world.db.sync_tombstones.insert_one({
+            "_id": "tomb-1",
+            "company_id": world.company_id,
+            "collection": "storage_move_locks",
+            "doc_id": world.company_id,
+        })
+        names = await storage_move._legacy_names(world.db, world.company_id, "shared_v2")
+        back = await storage_move.rollback_move(world.db, report.move_id)
+        company = await world.db.companies.find_one({"_id": world.company_id})
+        return names, back, company
+
+    try:
+        names, back, company = asyncio.run(run())
+        assert "sync_tombstones" not in names
+        assert "storage_move_locks" not in names
+        assert back.ok, back.errors
+        assert back.status == "rolled_back"
+        assert storage_router.normalize_mode(company.get("storage_mode")) == "legacy"
+    finally:
+        _close_world(world)
+
+
+def test_archived_source_rows_do_not_block_global_writes(tmp_path, monkeypatch):
+    world = _open_world("sqlite", tmp_path, monkeypatch)
+
+    async def run():
+        await _seed(world, "legacy")
+        moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
+        assert moved.ok, moved.errors
+        storage_router.forget_mode(world.company_id)
+        broad = {}
+        routed_broad = await storage_router.route_legacy_write(
+            world.db.products, "update_many", query=broad, update={"$set": {"note": "genel"}},
+        )
+        assert routed_broad is None
+        await world.db.products.update_many(broad, {"$set": {"note": "genel"}})
+        legacy = await world.db.products.find_one({"_id": "p1"})
+        other = await world.db.products.find_one({"_id": "other-p"})
+        one = {"_id": "p1"}
+        routed_one = await storage_router.route_legacy_write(
+            world.db.products, "update_one", query=one, update={"$set": {"name": "Yonlendi"}},
+        )
+        assert routed_one is not None
+        await routed_one.update_one(one, {"$set": {"name": "Yonlendi"}})
+        shared = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "products")
+        routed = await shared.find_one({"_id": "p1"})
+        legacy_after = await world.db.products.find_one({"_id": "p1"})
+        await world.db.companies.update_one(
+            {"_id": world.other_id},
+            {"$set": {"storage_mode": "shared_v2", "storage_epoch": 1}},
+        )
+        storage_router.forget_mode(world.other_id)
+        both = {}
+        routed_both = await storage_router.route_legacy_write(
+            world.db.products, "update_many", query=both, update={"$set": {"note": "yok"}},
+        )
+        assert routed_both is None
+        await world.db.products.update_many(both, {"$set": {"note": "yok"}})
+        legacy_both = await world.db.products.find_one({"_id": "p1"})
+        other_both = await world.db.products.find_one({"_id": "other-p"})
+        return legacy, other, routed, legacy_after, legacy_both, other_both
+
+    try:
+        legacy, other, routed, legacy_after, legacy_both, other_both = asyncio.run(run())
+        assert legacy.get("note") != "genel"
+        assert other["note"] == "genel"
+        assert routed["name"] == "Yonlendi"
+        assert legacy_after["name"] == "Kalem ölçü"
+        assert legacy_both.get("note") != "yok"
+        assert other_both.get("note") != "yok"
+    finally:
+        _close_world(world)

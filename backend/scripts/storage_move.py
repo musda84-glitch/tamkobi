@@ -7,8 +7,8 @@ Komut:
 Varsayılan dry-run: hiçbir şey yazılmaz. --apply kopyalar, sağlama
 tutar, sonra router kataloğundaki kipi değiştirir. Kaynak veri silinmez.
 Hata olursa kip değişmez, hedefe yazılanlar temizlenir, kilit açılır.
---recover çökmüş taşımanın kilidini ve yarım hedef veriyi temizler; kip
-değişmez.
+--recover yalnız bu move_id'nin bayat kilidine dokunur. Kilit başka
+taşımadaysa kayıt abandoned olur; hedef veri silinmez.
 
 Yazma kilidi katalogdadır. Kopyadan önce ve kip değiştikten sonra, diğer
 süreçlerin önbelleği dolsun diye en az TTL kadar beklenir. Dosya
@@ -41,7 +41,18 @@ import storage_router  # noqa: E402
 import storage_shared_v2  # noqa: E402
 
 BATCH = 50
-_META = frozenset({"storage_moves", "storage_move_locks"})
+# Taşımanın kendi yazdığı sistem satırları kaynak sayılmaz.
+_INTERNAL = frozenset({
+    "storage_moves",
+    "storage_move_locks",
+    "sync_tombstones",
+    "trash",
+    "system_logs",
+    "activity_logs",
+    "login_attempts",
+    "notifications",
+    "meta_indexes",
+})
 LOCKS = "storage_move_locks"
 _ID_MAX = 191
 _COMPANY_MAX = 64
@@ -50,6 +61,10 @@ _CONTROL = None  # storage_router yüklendikten sonra dolar
 
 class MoveError(RuntimeError):
     """Taşıma durdu. İleti sır taşımaz."""
+
+
+class LockLost(MoveError):
+    """Kilit satırı artık bu move_id'ye ait değil."""
 
 
 @dataclass
@@ -107,7 +122,8 @@ def _safe(exc: BaseException) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Mikrosaniye. Aynı saniyedeki kalp atışı da satırı değiştirir."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _freeze(doc: dict) -> str:
@@ -154,7 +170,7 @@ def _routed_away(db, mode: str, company_id: str, name: str) -> bool:
     deposuna alır; company, membership, token ve platform türleri de
     buraya düşerse kopyalanır. Meta tablolar taşınmaz.
     """
-    if name in _META or mode == storage_router.LEGACY:
+    if name in _INTERNAL or mode == storage_router.LEGACY:
         return False
     if mode == storage_router.DEDICATED:
         return True
@@ -195,33 +211,37 @@ def _owner_host() -> str:
     return socket.gethostname() or "unknown"
 
 
-async def _sleep_beat(db, company_id: str, move_id: str, seconds: float) -> None:
+async def _sleep_beat(db, company_id: str, move_id: str, seconds: float, lost=None) -> None:
     """Beklerken kalp atışını yeniler. Eşik 30 sn; adım en fazla 5 sn."""
-    await _beat(db, company_id, move_id)
+    await _beat(db, company_id, move_id, lost)
     left = max(0.0, float(seconds or 0))
     while left > 0:
         chunk = min(5.0, left)
         time.sleep(chunk)
         left -= chunk
-        await _beat(db, company_id, move_id)
+        await _beat(db, company_id, move_id, lost)
 
 
-async def _sleep_lock(db, company_id: str, move_id: str) -> None:
-    await _sleep_beat(db, company_id, move_id, storage_router.lock_ttl())
+async def _sleep_lock(db, company_id: str, move_id: str, lost=None) -> None:
+    await _sleep_beat(db, company_id, move_id, storage_router.lock_ttl(), lost)
 
 
-async def _sleep_mode(db, company_id: str, move_id: str) -> None:
-    await _sleep_beat(db, company_id, move_id, storage_router.mode_ttl())
+async def _sleep_mode(db, company_id: str, move_id: str, lost=None) -> None:
+    await _sleep_beat(db, company_id, move_id, storage_router.mode_ttl(), lost)
 
 
-async def _pulse(db, company_id: str, move_id: str) -> None:
+async def _pulse(db, company_id: str, move_id: str, lost: list) -> None:
     """Uzun okuma ve kopya sırasında kalp atışı. İptal edilince susar."""
     while True:
         await asyncio.sleep(5)
         try:
-            await _beat(db, company_id, move_id)
+            await _beat(db, company_id, move_id, lost)
         except asyncio.CancelledError:
             raise
+        except LockLost as exc:
+            if not lost:
+                lost.append(exc)
+            return
         except Exception:
             return
 
@@ -232,7 +252,7 @@ async def _stop_pulse(task) -> None:
     task.cancel()
     try:
         await task
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, LockLost, Exception):
         pass
 
 
@@ -255,12 +275,14 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _heartbeat_age(row: dict) -> float:
-    try:
-        stamp = datetime.strptime(str(row.get("heartbeat_at") or ""), "%Y-%m-%dT%H:%M:%SZ")
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return 10**9
-    return time.time() - stamp.timestamp()
+    text = str((row or {}).get("heartbeat_at") or "")
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            stamp = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        return time.time() - stamp.timestamp()
+    return 10**9
 
 
 def _lock_stale(row: dict) -> bool:
@@ -407,7 +429,7 @@ async def _list_names(db) -> list[str]:
 async def _legacy_names(db, company_id: str, route_mode: str) -> list[str]:
     found = []
     for name in await _list_names(db):
-        if name in _META:
+        if name in _INTERNAL:
             continue
         if route_mode and route_mode != storage_router.LEGACY:
             if not _routed_away(db, route_mode, company_id, name):
@@ -418,16 +440,20 @@ async def _legacy_names(db, company_id: str, route_mode: str) -> list[str]:
     return sorted(found)
 
 
+def _public_names(names) -> list[str]:
+    return sorted(name for name in names or [] if name and name not in _INTERNAL and name != "t_row_unique")
+
+
 async def _names(db, mode: str, company_id: str, company: dict, route_mode: str = "") -> list[str]:
     if mode == storage_router.LEGACY:
-        return await _legacy_names(db, company_id, route_mode or mode)
+        return _public_names(await _legacy_names(db, company_id, route_mode or mode))
     if mode == storage_router.SHARED_V2:
         try:
-            return list(storage_shared_v2.list_company_collections(company_id))
+            return _public_names(storage_shared_v2.list_company_collections(company_id))
         except Exception as exc:
             raise MoveError(_safe(exc)) from None
     try:
-        return list(storage_dedicated.list_collections(company_id, _dedicated_dsn(company)))
+        return _public_names(storage_dedicated.list_collections(company_id, _dedicated_dsn(company)))
     except MoveError:
         raise
     except Exception as exc:
@@ -768,11 +794,18 @@ def _ensure_unique(company_id: str, name: str, coll, docs) -> tuple:
 
 
 async def _wipe(db, company, company_id: str, mode: str, copied: dict) -> None:
-    for name, ids in copied.items():
-        if not ids:
+    """Yalnız verilen kimlikler. Başka taşımanın satırına dokunmaz."""
+    own = {}
+    for name, ids in (copied or {}).items():
+        if name in _INTERNAL or not ids:
+            continue
+        own[name] = [str(item) for item in ids if item]
+        if not own[name]:
             continue
         coll = _open(db, mode, company_id, name, company)
-        await _delete_ids(coll, company_id, ids)
+        await _delete_ids(coll, company_id, own[name])
+    if mode == storage_router.SHARED_V2 and own:
+        _delete_unique_ids(company_id, own)
 
 
 async def _sync_catalog_company(db, company_id: str, doc: dict) -> None:
@@ -788,7 +821,16 @@ async def _sync_catalog_company(db, company_id: str, doc: dict) -> None:
         await db.companies.insert_one(body)
 
 
-async def _copy(db, company, company_id: str, source: str, target: str, copied: dict, *, batch_size: int, on_batch, move_id: str):
+async def _remember_copied(db, company_id: str, move_id: str, copied: dict) -> None:
+    """Parti bitmeden kimlikleri kaydet. Çöküş yalnız bu move_id'yi siler."""
+    if not move_id:
+        return
+    await _patch_move(db, company_id, move_id, {
+        "copied": {name: list(ids) for name, ids in copied.items()},
+    })
+
+
+async def _copy(db, company, company_id: str, source: str, target: str, copied: dict, *, batch_size: int, on_batch, move_id: str, lost=None):
     names = await _names(db, source, company_id, company, target)
     counts = {}
     checksums = {}
@@ -796,7 +838,7 @@ async def _copy(db, company, company_id: str, source: str, target: str, copied: 
     collections = []
     unique_parts = []
     for name in names:
-        await _beat(db, company_id, move_id)
+        await _beat(db, company_id, move_id, lost)
         docs = await _read(db, source, company_id, name, company)
         prepared = [_prepare(doc, company_id, name) for doc in docs if doc.get("_id")]
         doc_errors, doc_conflicts = _check_docs(name, prepared, company_id)
@@ -829,11 +871,13 @@ async def _copy(db, company, company_id: str, source: str, target: str, copied: 
         copied[name] = []
         written = 0
         for batch in _chunks(prepared, batch_size):
-            await _beat(db, company_id, move_id)
+            await _beat(db, company_id, move_id, lost)
             ids = await _insert_docs(coll, company_id, batch)
             copied[name].extend(ids)
             written += len(ids)
+            await _remember_copied(db, company_id, move_id, copied)
             await _hook(on_batch, name, written)
+            await _beat(db, company_id, move_id, lost)
         loaded = await _read(db, target, company_id, name, company)
         source_sum = _digest(prepared)
         target_sum = _digest([_prepare(doc, company_id, name) for doc in loaded if doc.get("_id")])
@@ -865,6 +909,11 @@ async def _copy(db, company, company_id: str, source: str, target: str, copied: 
         counts["t_row_unique"] = {"source": total, "target": total}
         steps.append({"name": "sağlama:t_row_unique", "status": "tamam", "count": total})
     return counts, checksums, steps, collections
+
+
+async def _foreign_lock(db, company_id: str, move_id: str) -> bool:
+    rows = await _lock_docs(db, company_id)
+    return any(str(row.get("move_id") or "") != move_id for row in rows)
 
 
 async def _lock_docs(db, company_id: str) -> list:
@@ -949,25 +998,44 @@ async def _acquire_lock(db, company_id: str, move_id: str, target: str) -> None:
         raise storage_router.StorageMoveBusy("Bu şirketin taşıması sürüyor.")
 
 
+def _sql_catalog(db) -> bool:
+    return hasattr(db, "_ensure") and isinstance(getattr(db, "_settings", None), dict)
+
+
+def _matched(result) -> int:
+    matched = getattr(result, "matched_count", None)
+    if matched is None:
+        matched = getattr(result, "modified_count", 0)
+    try:
+        return int(matched or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 async def _remember_plan(db, company_id: str, move_id: str, source: str, names: list) -> None:
     from tenant_scope import unscoped
 
     with unscoped("depolama taşıma kilidi"):
         with storage_router.bypass_write_lock(company_id):
-            await db[LOCKS].update_one(
+            result = await db[LOCKS].update_one(
                 {"_id": company_id, "move_id": move_id},
                 {"$set": {"from_mode": source, "collections": list(names), "heartbeat_at": _now()}},
             )
+    if _matched(result) != 1:
+        raise LockLost("Taşıma kilidi kayboldu.")
 
 
-async def _beat(db, company_id: str, move_id: str) -> None:
+async def _beat(db, company_id: str, move_id: str, lost=None) -> None:
+    """0 satır: kilit artık bu move_id'de değil. Taşıyıcı hemen durur."""
     if not move_id:
         return
+    if lost:
+        raise lost[0]
     from tenant_scope import unscoped
 
     with unscoped("depolama taşıma kilidi"):
         with storage_router.bypass_write_lock(company_id):
-            await db[LOCKS].update_one(
+            result = await db[LOCKS].update_one(
                 {"_id": company_id, "move_id": move_id},
                 {"$set": {
                     "heartbeat_at": _now(),
@@ -975,6 +1043,131 @@ async def _beat(db, company_id: str, move_id: str) -> None:
                     "owner_host": _owner_host(),
                 }},
             )
+    if _matched(result) != 1:
+        exc = LockLost("Taşıma kilidi kayboldu.")
+        if isinstance(lost, list) and not lost:
+            lost.append(exc)
+        raise exc
+
+
+async def _commit_owner(db, company_id: str, move_id: str, *, mode: str | None = None, unlock: bool = False) -> bool:
+    """Kip ve katalog kilidi tek işlem. Kilit satırı bu move_id değilse hiçbir şey yazılmaz."""
+    if _sql_catalog(db):
+        ok = await _commit_owner_sql(db, company_id, move_id, mode=mode, unlock=unlock)
+    else:
+        ok = await _commit_owner_memory(db, company_id, move_id, mode=mode, unlock=unlock)
+    if not ok:
+        return False
+    if mode is not None or unlock:
+        storage_router.forget_mode(company_id)
+    if unlock:
+        storage_router.note_write_lock(company_id, False)
+    return True
+
+
+async def _commit_owner_memory(db, company_id: str, move_id: str, *, mode: str | None, unlock: bool) -> bool:
+    from tenant_scope import unscoped
+
+    with unscoped("depolama taşıma kilidi"):
+        with storage_router.bypass_write_lock(company_id):
+            result = await db[LOCKS].update_one(
+                {"_id": company_id, "move_id": move_id},
+                {"$set": {
+                    "heartbeat_at": _now(),
+                    "owner_pid": os.getpid(),
+                    "owner_host": _owner_host(),
+                }},
+            )
+    if _matched(result) != 1:
+        return False
+    if mode is None and not unlock:
+        return True
+    fields = {}
+    update: dict = {"$set": fields}
+    if mode is not None:
+        fields[storage_router.MODE_FIELD] = mode
+        update["$inc"] = {storage_router.EPOCH_FIELD: 1}
+    if unlock:
+        fields[storage_router.WRITE_LOCK_FIELD] = False
+    with storage_router.bypass_write_lock(company_id):
+        await db.companies.update_one({"_id": company_id}, update)
+    return True
+
+
+async def _commit_owner_sql(db, company_id: str, move_id: str, *, mode: str | None, unlock: bool) -> bool:
+    """SELECT … FOR UPDATE, WHERE move_id, etkilenen satır 1. Değilse geri alınır."""
+    from mysql_store import dumps, loads
+
+    await db._ensure()
+    async with db._pool.acquire() as conn:
+        await conn.begin()
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT doc FROM docs WHERE collection=%s AND id=%s FOR UPDATE",
+                    (LOCKS, company_id),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    await conn.rollback()
+                    return False
+                lock_doc = loads(row[0])
+                if str(lock_doc.get("move_id") or "") != move_id:
+                    await conn.rollback()
+                    return False
+                lock_doc["heartbeat_at"] = _now()
+                lock_doc["owner_pid"] = os.getpid()
+                lock_doc["owner_host"] = _owner_host()
+                await cur.execute(
+                    "UPDATE docs SET doc=%s WHERE collection=%s AND id=%s "
+                    "AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.move_id'))=%s",
+                    (dumps(lock_doc), LOCKS, company_id, move_id),
+                )
+                if cur.rowcount != 1:
+                    await conn.rollback()
+                    return False
+                if mode is not None or unlock:
+                    await cur.execute(
+                        "SELECT doc FROM docs WHERE collection=%s AND id=%s FOR UPDATE",
+                        ("companies", company_id),
+                    )
+                    company_row = await cur.fetchone()
+                    if not company_row:
+                        await conn.rollback()
+                        return False
+                    company = loads(company_row[0])
+                    if mode is not None:
+                        company[storage_router.MODE_FIELD] = mode
+                        try:
+                            company[storage_router.EPOCH_FIELD] = int(company.get(storage_router.EPOCH_FIELD) or 0) + 1
+                        except (TypeError, ValueError):
+                            company[storage_router.EPOCH_FIELD] = 1
+                    if unlock:
+                        company[storage_router.WRITE_LOCK_FIELD] = False
+                    await cur.execute(
+                        "UPDATE docs SET doc=%s WHERE collection=%s AND id=%s",
+                        (dumps(company), "companies", company_id),
+                    )
+                    if cur.rowcount != 1:
+                        await cur.execute(
+                            "SELECT doc FROM docs WHERE collection=%s AND id=%s",
+                            ("companies", company_id),
+                        )
+                        check_row = await cur.fetchone()
+                        check = loads(check_row[0]) if check_row else {}
+                        mode_ok = mode is None or storage_router.normalize_mode(check.get(storage_router.MODE_FIELD)) == storage_router.normalize_mode(mode)
+                        lock_ok = (not unlock) or not bool(check.get(storage_router.WRITE_LOCK_FIELD))
+                        if not mode_ok or not lock_ok:
+                            await conn.rollback()
+                            return False
+            await conn.commit()
+            return True
+        except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
+            raise
 
 
 async def _clear_flag(db, company_id: str) -> None:
@@ -995,7 +1188,10 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         return _empty(cid, mode, "company_id boş", dry_run=False)
     held = False
     opened = False
+    lost = False
+    committed = False
     pulse = None
+    lost_box: list = []
     started = time.monotonic()
     move_id = uuid.uuid4().hex
     copied: dict = {}
@@ -1016,7 +1212,7 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
         await _flag(db, cid, True)
         storage_router.note_write_lock(cid, True)
         opened = True
-        await _sleep_lock(db, cid, move_id)
+        await _sleep_lock(db, cid, move_id, lost_box)
         await _save_move(db, cid, {
             "_id": move_id,
             "company_id": cid,
@@ -1027,28 +1223,39 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
             "counts": {},
             "checksums": {},
             "collections": names,
+            "copied": {},
             "started_at": _now(),
             "finished_at": "",
             "duration_ms": 0,
             "error": "",
         })
-        pulse = asyncio.create_task(_pulse(db, cid, move_id))
+        pulse = asyncio.create_task(_pulse(db, cid, move_id, lost_box))
         try:
             counts, checksums, steps, collections = await _copy(
                 db, company, cid, source, mode, copied,
-                batch_size=batch_size, on_batch=on_batch, move_id=move_id,
+                batch_size=batch_size, on_batch=on_batch, move_id=move_id, lost=lost_box,
             )
-        except Exception as exc:
-            await _fail_copy(db, company, cid, mode, move_id, copied, exc, started)
+            await _sleep_mode(db, cid, move_id, lost_box)
+            if not await _commit_owner(db, cid, move_id, mode=mode, unlock=True):
+                raise LockLost("Taşıma kilidi kayboldu.")
+            committed = True
+            opened = False
+        except LockLost as exc:
+            lost = True
+            if not await _foreign_lock(db, cid, move_id):
+                await _clear_flag(db, cid)
+                opened = False
+                lost = False
+            if not committed:
+                await _fail_copy(db, company, cid, mode, move_id, copied, exc, started)
             return MoveReport(
                 ok=False, wrote=False, dry_run=False, move_id=move_id, company_id=cid,
                 from_mode=source, to_mode=mode, status="failed", errors=[_safe(exc)],
                 duration_ms=_elapsed(started),
             )
-        try:
-            await _set_mode(db, cid, mode)
         except Exception as exc:
-            await _fail_copy(db, company, cid, mode, move_id, copied, exc, started)
+            if not committed:
+                await _fail_copy(db, company, cid, mode, move_id, copied, exc, started)
             return MoveReport(
                 ok=False, wrote=False, dry_run=False, move_id=move_id, company_id=cid,
                 from_mode=source, to_mode=mode, status="failed", errors=[_safe(exc)],
@@ -1056,31 +1263,52 @@ async def apply_move(db, company_id: str, to_mode: str, *, batch_size: int = BAT
             )
         steps.append({"name": "kip", "status": "tamam"})
         steps.append({"name": "bekle:kip", "status": "tamam"})
-        await _sleep_mode(db, cid, move_id)
         duration = _elapsed(started)
         await _patch_move(db, cid, move_id, {
             "status": "completed",
             "steps": steps,
             "counts": counts,
             "checksums": checksums,
+            "copied": {name: list(ids) for name, ids in copied.items()},
             "finished_at": _now(),
             "duration_ms": duration,
             "error": "",
         })
-        await _clear_flag(db, cid)
-        opened = False
-        await _sleep_lock(db, cid, move_id)
+        try:
+            await _sleep_lock(db, cid, move_id, lost_box)
+        except LockLost:
+            pass
         _logger().info("taşıma company=%s durum=completed", storage_router._safe_company(cid))
         return MoveReport(
             ok=True, wrote=True, dry_run=False, move_id=move_id, company_id=cid,
             from_mode=source, to_mode=mode, status="completed", collections=collections,
             counts=counts, checksums=checksums, steps=steps, duration_ms=duration,
         )
+    except LockLost as exc:
+        lost = True
+        if cid and not await _foreign_lock(db, cid, move_id):
+            try:
+                await _clear_flag(db, cid)
+            except Exception:
+                pass
+            opened = False
+            lost = False
+        return MoveReport(
+            ok=False, wrote=False, dry_run=False, move_id=move_id, company_id=cid,
+            from_mode=source, to_mode=mode, status="failed", errors=[_safe(exc)],
+            duration_ms=_elapsed(started),
+        )
     finally:
         await _stop_pulse(pulse)
-        if opened:
-            await _clear_flag(db, cid)
-            await _sleep_lock(db, cid, move_id)
+        if opened and not lost and not committed:
+            try:
+                if await _commit_owner(db, cid, move_id, unlock=True):
+                    try:
+                        await _sleep_lock(db, cid, move_id, lost_box)
+                    except LockLost:
+                        pass
+            except Exception:
+                _logger().info("taşıma company=%s durum=kilit", storage_router._safe_company(cid))
         if held:
             try:
                 await _release_lock(db, cid, move_id)
@@ -1155,7 +1383,7 @@ async def _restore(db, company, company_id: str, mode: str, journal: list) -> No
                 await coll.insert_one(_prepare(previous, company_id, name))
 
 
-async def _reverse(db, company, company_id: str, source_mode: str, current_mode: str, *, batch_size: int, on_batch):
+async def _reverse(db, company, company_id: str, source_mode: str, current_mode: str, *, batch_size: int, on_batch, move_id: str = "", lost=None):
     """Güncel kipi eski kipe eşitler. Güncel taraftaki veri silinmez."""
     current_names = await _names(db, current_mode, company_id, company, current_mode)
     source_names = await _names(db, source_mode, company_id, company, current_mode)
@@ -1168,6 +1396,7 @@ async def _reverse(db, company, company_id: str, source_mode: str, current_mode:
     steps = [{"name": "kilitle", "status": "tamam"}]
     collections = []
     for name in names:
+        await _beat(db, company_id, move_id, lost)
         current_docs = await _read(db, current_mode, company_id, name, company)
         previous_docs = await _read(db, source_mode, company_id, name, company)
         current_prepared = [_prepare(doc, company_id, name) for doc in current_docs if doc.get("_id")]
@@ -1205,6 +1434,7 @@ async def _reverse(db, company, company_id: str, source_mode: str, current_mode:
                 pending.append((doc_id, None, copy.deepcopy(old), "delete"))
         written = 0
         for batch in _chunks(pending, batch_size):
+            await _beat(db, company_id, move_id, lost)
             for doc_id, doc, old, action in batch:
                 journal.append((name, doc_id, old, action))
                 with storage_router.bypass_write_lock(company_id):
@@ -1215,6 +1445,7 @@ async def _reverse(db, company, company_id: str, source_mode: str, current_mode:
                 written += 1
             if pending:
                 await _hook(on_batch, name, written)
+                await _beat(db, company_id, move_id, lost)
         loaded = await _read(db, source_mode, company_id, name, company)
         fresh = await _read(db, current_mode, company_id, name, company)
         left = _digest([_prepare(doc, company_id, name) for doc in loaded])
@@ -1253,7 +1484,10 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         return report
     held = False
     opened = False
+    lost = False
+    committed = False
     pulse = None
+    lost_box: list = []
     started = time.monotonic()
     journal: list = []
     company = None
@@ -1279,21 +1513,34 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
         await _flag(db, cid, True)
         storage_router.note_write_lock(cid, True)
         opened = True
-        await _sleep_lock(db, cid, rollback_id)
-        pulse = asyncio.create_task(_pulse(db, cid, rollback_id))
+        await _sleep_lock(db, cid, rollback_id, lost_box)
+        pulse = asyncio.create_task(_pulse(db, cid, rollback_id, lost_box))
         try:
             journal, new_counts, checksums, steps, collections = await _reverse(
-                db, company, cid, source, current, batch_size=batch_size, on_batch=on_batch,
+                db, company, cid, source, current,
+                batch_size=batch_size, on_batch=on_batch, move_id=rollback_id, lost=lost_box,
             )
+            await _sleep_mode(db, cid, rollback_id, lost_box)
+            if not await _commit_owner(db, cid, rollback_id, mode=source, unlock=True):
+                raise LockLost("Taşıma kilidi kayboldu.")
+            committed = True
+            opened = False
         except Exception as exc:
-            try:
-                await _restore(db, company, cid, source, journal)
-            except Exception as restore_exc:
-                _logger().info(
-                    "taşıma company=%s durum=geri-temizlik error=%s",
-                    storage_router._safe_company(cid),
-                    _safe(restore_exc),
-                )
+            if not committed:
+                try:
+                    await _restore(db, company, cid, source, journal)
+                except Exception as restore_exc:
+                    _logger().info(
+                        "taşıma company=%s durum=geri-temizlik error=%s",
+                        storage_router._safe_company(cid),
+                        _safe(restore_exc),
+                    )
+            if isinstance(exc, LockLost):
+                lost = True
+                if not await _foreign_lock(db, cid, rollback_id):
+                    await _clear_flag(db, cid)
+                    opened = False
+                    lost = False
             _logger().info(
                 "taşıma company=%s durum=geri-failed error=%s",
                 storage_router._safe_company(cid),
@@ -1304,10 +1551,8 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
                 from_mode=current, to_mode=source, status="completed",
                 errors=[_safe(exc)], duration_ms=_elapsed(started),
             )
-        await _set_mode(db, cid, source)
         steps.append({"name": "kip", "status": "tamam"})
         steps.append({"name": "bekle:kip", "status": "tamam"})
-        await _sleep_mode(db, cid, rollback_id)
         duration = _elapsed(started)
         previous_steps = list(record.get("steps") or [])
         await _patch_move(db, cid, mid, {
@@ -1318,9 +1563,10 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
             "duration_ms": int(record.get("duration_ms") or 0) + duration,
             "error": "",
         })
-        await _clear_flag(db, cid)
-        opened = False
-        await _sleep_lock(db, cid, rollback_id)
+        try:
+            await _sleep_lock(db, cid, rollback_id, lost_box)
+        except LockLost:
+            pass
         _logger().info("taşıma company=%s durum=rolled_back", storage_router._safe_company(cid))
         return MoveReport(
             ok=True, wrote=True, dry_run=False, move_id=mid, company_id=cid,
@@ -1328,11 +1574,31 @@ async def rollback_move(db, move_id: str, *, batch_size: int = BATCH, on_batch=N
             collections=collections, counts=new_counts, checksums=checksums,
             steps=steps, duration_ms=duration,
         )
+    except LockLost as exc:
+        lost = True
+        if cid and not await _foreign_lock(db, cid, rollback_id):
+            try:
+                await _clear_flag(db, cid)
+            except Exception:
+                pass
+            opened = False
+            lost = False
+        return MoveReport(
+            ok=False, wrote=False, dry_run=False, move_id=mid, company_id=cid,
+            from_mode=current, to_mode=source, status="completed",
+            errors=[_safe(exc)], duration_ms=_elapsed(started),
+        )
     finally:
         await _stop_pulse(pulse)
-        if opened:
-            await _clear_flag(db, cid)
-            await _sleep_lock(db, cid, rollback_id)
+        if opened and not lost and not committed:
+            try:
+                if await _commit_owner(db, cid, rollback_id, unlock=True):
+                    try:
+                        await _sleep_lock(db, cid, rollback_id, lost_box)
+                    except LockLost:
+                        pass
+            except Exception:
+                _logger().info("taşıma company=%s durum=kilit", storage_router._safe_company(cid))
         if held:
             try:
                 await _release_lock(db, cid, rollback_id)
@@ -1381,15 +1647,34 @@ def _delete_unique_ids(company_id: str, copied: dict) -> None:
             return
 
 
+async def _mark_abandoned(db, company_id: str, move_id: str, source: str) -> MoveReport:
+    await _patch_move(db, company_id, move_id, {
+        "status": "abandoned",
+        "finished_at": _now(),
+        "error": "",
+    })
+    _logger().info("taşıma company=%s durum=abandoned", storage_router._safe_company(company_id))
+    return MoveReport(
+        ok=True,
+        wrote=False,
+        dry_run=False,
+        move_id=move_id,
+        company_id=company_id,
+        from_mode=source,
+        to_mode=source,
+        status="abandoned",
+    )
+
+
 async def recover_move(db, move_id: str) -> MoveReport:
-    """Çökmüş taşımanın kilidini ve yarım hedefi temizler. Kip değişmez."""
+    """Bayat kendi kilidini bırakır. Başka taşımanın kilidine ve hedefine dokunmaz."""
     mid = str(move_id or "").strip()
     if not storage_router.enabled():
         return _empty("", "", "Depolama yönlendiricisi kapalı. Taşıma yazılmaz.", dry_run=False)
     record = await _load_move(db, mid) if mid else None
     if not record:
         return _empty("", "", "Taşıma kaydı yok.", dry_run=False)
-    if record.get("status") in ("completed", "rolled_back", "recovered"):
+    if record.get("status") in ("completed", "rolled_back", "recovered", "abandoned"):
         report = _empty("", "", "Bu taşıma kurtarılmaz.", dry_run=False)
         report.move_id = mid
         report.status = str(record.get("status") or "")
@@ -1401,34 +1686,38 @@ async def recover_move(db, move_id: str) -> MoveReport:
     if not company:
         return _empty(cid, source, "Şirket bulunamadı.", dry_run=False)
     rows = await _lock_docs(db, cid)
-    lock = next((row for row in rows if row.get("move_id") == mid), None)
-    if lock is None and rows:
-        lock = rows[0]
-    if lock and lock.get("move_id") == mid and not _lock_stale(lock):
+    own = next((row for row in rows if str(row.get("move_id") or "") == mid), None)
+    others = [row for row in rows if str(row.get("move_id") or "") != mid]
+    if own is not None and not _lock_stale(own):
         report = _empty(cid, source, "Taşıma hâlâ çalışıyor.", dry_run=False)
         report.move_id = mid
         return report
+    if others:
+        return await _mark_abandoned(db, cid, mid, source)
+    copied = record.get("copied") if isinstance(record.get("copied"), dict) else {}
     live = storage_router.normalize_mode(company.get(storage_router.MODE_FIELD))
-    if live == source and target != storage_router.LEGACY:
-        names = list(record.get("collections") or [])
-        if lock and lock.get("collections"):
-            names = list(lock.get("collections") or names)
+    if own is not None and _lock_stale(own):
+        if live == source and copied:
+            try:
+                await _wipe(db, company, cid, target, copied)
+            except Exception as exc:
+                return _empty(cid, source, _safe(exc), dry_run=False)
+        await _clear_flag(db, cid)
         try:
-            await _wipe_names(db, company, cid, target, names)
-        except Exception as exc:
-            return _empty(cid, source, _safe(exc), dry_run=False)
-    elif live == source and isinstance(record.get("copied"), dict):
+            await _sleep_lock(db, cid, mid)
+        except LockLost:
+            pass
         try:
-            await _wipe(db, company, cid, target, record.get("copied") or {})
-        except Exception as exc:
-            return _empty(cid, source, _safe(exc), dry_run=False)
-    await _clear_flag(db, cid)
-    await _sleep_lock(db, cid, str((lock or {}).get("move_id") or mid))
-    if lock:
-        try:
-            await _release_lock(db, cid, str(lock.get("move_id") or ""))
+            await _release_lock(db, cid, mid)
         except Exception:
             pass
+    elif not rows:
+        if live == source and copied:
+            try:
+                await _wipe(db, company, cid, target, copied)
+            except Exception as exc:
+                return _empty(cid, source, _safe(exc), dry_run=False)
+        await _clear_flag(db, cid)
     await _patch_move(db, cid, mid, {
         "status": "recovered",
         "finished_at": _now(),
