@@ -9576,6 +9576,8 @@ async def serve_file(
     tokensız sunulur. Hassas alanlar (alış/satış faturası, e-belge, gider, destek)
     geçerli imzalı paylaşım (?t=), dosyanın firmasına üye oturum veya süper admin ister.
     Yol, depolama anahtarıyla aynı şekilde normalize edilir (`./`, `..`, `%2E`, ters eğik çizgi).
+    SVG image/svg+xml kalır ki <img> çizebilsin; CSP sandbox betiği kapatır, nosniff türü kilitler.
+    İmzalı ?t= indirmesi ek olarak iner. Dosya gövdesi ve t sorgu değeri loglanmaz.
     """
     path = rbac.normalized_file_storage_path(path)
     if not path:
@@ -9603,16 +9605,20 @@ async def serve_file(
                 cached, cached_ct = get_object(cache_key)
                 if cached and len(cached) > 32:
                     fallback_ct = {"jpg": "image/jpeg", "png": "image/png"}.get(thumb_fmt, "image/webp")
-                    return Response(
-                        content=cached,
-                        media_type=cached_ct or fallback_ct,
-                        headers={
-                            "Cache-Control": "public, max-age=604800, immutable",
-                            "Vary": "Accept",
-                            "X-Image-Resize": str(edge or w or ""),
-                            "X-Image-Cache": "hit",
-                        },
-                    )
+                    out_ct = cached_ct or fallback_ct
+                    headers = {
+                        "Cache-Control": "public, max-age=604800, immutable",
+                        "Vary": "Accept",
+                        "X-Image-Resize": str(edge or w or ""),
+                        "X-Image-Cache": "hit",
+                    }
+                    if shopfloor_drawing.is_active_svg(out_ct, cache_key, cached):
+                        if shopfloor_drawing.serves_as_svg_image(out_ct, path):
+                            out_ct = "image/svg+xml"
+                            headers.update(shopfloor_drawing.display_svg_response_headers())
+                        else:
+                            headers.update(shopfloor_drawing.sniffed_svg_response_headers())
+                    return Response(content=cached, media_type=out_ct, headers=headers)
             except FileNotFoundError:
                 pass
             except Exception as e:
@@ -9650,11 +9656,23 @@ async def serve_file(
                     "X-Image-Cache": "miss",
                 },
             )
-    if t and shopfloor_drawing.is_active_svg(media, path, data):
+    if shopfloor_drawing.is_active_svg(media, path, data):
+        if t:
+            return Response(
+                content=data,
+                media_type="application/octet-stream",
+                headers=shopfloor_drawing.signed_svg_response_headers(),
+            )
+        if shopfloor_drawing.serves_as_svg_image(media, path):
+            return Response(
+                content=data,
+                media_type="image/svg+xml",
+                headers=shopfloor_drawing.display_svg_response_headers(),
+            )
         return Response(
             content=data,
-            media_type="application/octet-stream",
-            headers=shopfloor_drawing.signed_svg_response_headers(),
+            media_type=media,
+            headers=shopfloor_drawing.sniffed_svg_response_headers(),
         )
     return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
 

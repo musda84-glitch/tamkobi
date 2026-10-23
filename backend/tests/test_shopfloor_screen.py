@@ -827,7 +827,10 @@ def test_svg_drawing_rejected_and_signed_file_is_attachment(mem, monkeypatch):
     })
     plain = asyncio.run(server.serve_file("drawings/plan.svg", _Req(), w=None, fmt=None, t=None))
     assert plain.media_type == "image/svg+xml"
-    assert "content-security-policy" not in plain.headers
+    assert plain.headers["content-security-policy"] == shopfloor_drawing.DISPLAY_SVG_CSP
+    assert plain.headers["x-content-type-options"] == "nosniff"
+    assert "content-disposition" not in plain.headers
+    assert b"<script>" in plain.body
 
     signed_resp = asyncio.run(server.serve_file("drawings/plan.svg", _Req(), w=None, fmt=None, t="signed-token"))
     assert signed_resp.media_type == "application/octet-stream"
