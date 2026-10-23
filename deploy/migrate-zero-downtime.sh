@@ -114,6 +114,10 @@ nginx_test_reload || {
 # Frontend already pointed at release in step 2; record history after success
 release_history_append "$GIT_SHA"
 
+# Legacy unit hâlâ iş çalıştırıyor olabilir. Worker'ı önce kur; kira
+# devralır, ardından klasik unit durur. Sağlık hatası bu satıra gelmez.
+backend_sync_worker "$GIT_SHA" "$VENV_PATH"
+
 if systemctl list-unit-files tamkobi-backend.service 2>/dev/null | grep -q tamkobi-backend.service; then
   systemctl stop tamkobi-backend 2>/dev/null || true
   systemctl disable tamkobi-backend 2>/dev/null || true

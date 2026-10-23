@@ -17,7 +17,11 @@ WorkingDirectory=/var/www/tamkobi.com/backend
 EnvironmentFile=-/var/www/tamkobi.com/backend/.env
 EnvironmentFile=-/var/www/tamkobi.com/.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-Environment=TAMKOBI_BACKGROUND_JOBS=1
+# Background jobs run only in tamkobi-worker.service. HTTP instances stay off
+# so a blue/green overlap does not start a second job runner. release.conf
+# also prefixes ExecStart with `/usr/bin/env TAMKOBI_BACKGROUND_JOBS=0`:
+# systemd applies EnvironmentFile= after Environment=, so .env cannot turn jobs on.
+Environment=TAMKOBI_BACKGROUND_JOBS=0
 # Placeholder — migrate/update writes the real ExecStart in release.conf
 ExecStart=/bin/false
 Restart=always

@@ -119,6 +119,11 @@ fi
 frontend_activate "$GIT_SHA"
 release_history_append "$GIT_SHA"
 
+# Tek worker, nginx yeni porta geçtikten sonra ve eski web durmadan önce.
+# restart stop-then-start yapar; ikinci kopya açılmaz. Başarısız olursa
+# eski web (işler orada olabilir) ayakta kalır, upstream geri alınmaz.
+backend_sync_worker "$GIT_SHA" "$VENV_PATH"
+
 info "Eski instance $ACTIVE 20 sn sonra durdurulacak"
 sleep 20
 backend_stop_instance "$ACTIVE"

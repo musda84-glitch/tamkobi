@@ -587,3 +587,113 @@ def test_systemd_analyze_verify_dropin_clears_execstart(tmp_path: Path):
     bad_out = (bad.stdout or "") + (bad.stderr or "")
     # systemd reports refusing to start / more than one ExecStart
     assert bad.returncode != 0 or "Refusing" in bad_out or "ExecStart" in bad_out
+
+
+def test_background_jobs_split_across_units():
+    """HTTP template stays off; one non-template worker unit owns jobs."""
+    web = (DEPLOY / "tamkobi-backend@.service").read_text()
+    assert "Environment=TAMKOBI_BACKGROUND_JOBS=0\n" in web
+    assert "TAMKOBI_BACKGROUND_JOBS=1" not in web
+
+    worker = (DEPLOY / "tamkobi-worker.service").read_text()
+    assert "Environment=TAMKOBI_BACKGROUND_JOBS=1\n" in worker
+    assert "%i" not in worker
+    assert "tamkobi-worker@" not in worker
+    exec_lines = [ln for ln in worker.splitlines() if ln.startswith("ExecStart=")]
+    assert exec_lines == ["ExecStart=/bin/false"]
+
+    legacy = (DEPLOY / "tamkobi-uvicorn.service").read_text()
+    assert "TAMKOBI_BACKGROUND_JOBS" not in legacy
+    assert "8099" not in legacy
+
+    assert 'WORKER_PORT="${WORKER_PORT:-8099}"' in (LIB / "backend.sh").read_text()
+    status = (DEPLOY / "status.sh").read_text()
+    assert "http://127.0.0.1:8099/api/version" in status
+    assert "tamkobi-worker@" not in status
+
+    kurulum = (DEPLOY / "nginx" / "KURULUM.md").read_text()
+    assert "127.0.0.1:8099" in kurulum
+    assert "Kesintisiz dağıtım düzenine dokunulmaz" in kurulum
+
+    for name in ("update-native.sh", "rollback.sh", "migrate-zero-downtime.sh"):
+        text = (DEPLOY / name).read_text()
+        assert text.count("backend_sync_worker ") == 1, name
+        assert "tamkobi-worker@" not in text
+        sync_at = text.index("backend_sync_worker")
+        assert text.index("backend_health_sha") < sync_at
+        assert text.index("nginx_test_reload") < sync_at
+        # Health/nginx failure stops the new web port before the worker is touched.
+        assert text.index("backend_stop_instance") < sync_at
+
+    update = (DEPLOY / "update-native.sh").read_text()
+    assert update.index('backend_stop_instance "$ACTIVE"') > update.index("backend_sync_worker")
+    rollback = (DEPLOY / "rollback.sh").read_text()
+    assert rollback.index('backend_stop_instance "$ACTIVE"') > rollback.index("backend_sync_worker")
+    migrate = (DEPLOY / "migrate-zero-downtime.sh").read_text()
+    sync_at = migrate.index("backend_sync_worker")
+    assert migrate.index("systemctl stop tamkobi-backend") > sync_at
+    assert "disable --now tamkobi-worker" not in migrate
+    assert "stop tamkobi-worker" not in migrate
+
+
+def test_sync_worker_writes_one_dropin_and_skips_systemctl(tmp_path: Path):
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    uvicorn = venv / "bin" / "uvicorn"
+    uvicorn.write_text("#!/bin/sh\n")
+    uvicorn.chmod(0o755)
+    unit_root = tmp_path / "systemd"
+    script = f"""
+set -eu
+ROOT="{REPO}"
+BACKEND_RELEASES="{tmp_path}/backend-releases"
+SYSTEMD_DROPIN_ROOT="{unit_root}"
+SYSTEMD_UNIT_ROOT="{unit_root}"
+SKIP_SYSTEMCTL=1
+GIT_SHA=deadbeef
+GIT_BRANCH=test
+GIT_MESSAGE=msg
+BUILD_TIME=t
+APP_VERSION=1
+systemctl() {{ echo "systemctl çağrıldı: $*" >&2; exit 99; }}
+. "{LIB}/common.sh"
+. "{LIB}/backend.sh"
+backend_write_instance_dropins 8001 deadbeef "{venv}"
+backend_sync_worker deadbeef "{venv}"
+web="{unit_root}/tamkobi-backend@8001.service.d/release.conf"
+worker="{unit_root}/tamkobi-worker.service.d/release.conf"
+grep -q '^Environment=TAMKOBI_BACKGROUND_JOBS=0$' "$web"
+grep -q '^ExecStart=/usr/bin/env TAMKOBI_BACKGROUND_JOBS=0 ' "$web"
+grep -q -- '--port 8001' "$web"
+grep -q -- '--workers 2' "$web"
+! grep -q 8099 "$web"
+! grep -q 'TAMKOBI_BACKGROUND_JOBS=1' "$web"
+grep -q '^ExecStart=$' "$worker"
+test "$(grep -c '^ExecStart=.' "$worker")" = "1"
+awk '/^ExecStart=$/{{c=1}} /^ExecStart=./{{if(!c) exit 1}} END{{if(!c) exit 1}}' "$worker"
+grep -q '^Environment=TAMKOBI_BACKGROUND_JOBS=1$' "$worker"
+grep -q '^ExecStart=/usr/bin/env TAMKOBI_BACKGROUND_JOBS=1 ' "$worker"
+grep -q -- '--port 8099' "$worker"
+grep -q -- '--workers 1' "$worker"
+grep -q -- '--host 127.0.0.1' "$worker"
+! grep -q -- '--port 8000' "$worker"
+! grep -q -- '--port 8001' "$worker"
+test ! -d "{unit_root}/tamkobi-worker@8000.service.d"
+test ! -d "{unit_root}/tamkobi-worker@8001.service.d"
+test ! -e "{unit_root}/tamkobi-worker@8000.service"
+test ! -e "{unit_root}/tamkobi-worker@8001.service"
+unit="{unit_root}/tamkobi-worker.service"
+grep -q '^Environment=TAMKOBI_BACKGROUND_JOBS=1$' "$unit"
+! grep -q '%i' "$unit"
+if (
+  WORKER_PORT=8000
+  backend_sync_worker deadbeef "{venv}"
+); then
+  echo "8000 kabul edilmemeli" >&2
+  exit 1
+fi
+"""
+    r = _sh(script)
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert "systemctl çağrıldı" not in (r.stderr + r.stdout)
+    assert "blue/green" in (r.stderr + r.stdout)

@@ -98,7 +98,7 @@ sudo ufw status
 
 - `deploy/update-native.sh` nginx şablonlarını otomatik kurmaz; migrate sonrası yalnızca upstream portunu yazar ve `nginx -t && reload` yapar (**restart yok**).
 - API: `upstream tamkobi_api` (8000/8001) · statik: `/var/www/tamkobi.com/frontend-current`
-- Arka plan işleri: `TAMKOBI_BACKGROUND_JOBS=0` ile kapatılabilir; açıkken DB `platform_locks` ile tek process çalışır.
+- Web birimleri (`tamkobi-backend@8000` / `@8001`) `TAMKOBI_BACKGROUND_JOBS=0` ile çalışır. Arka plan işleri tek `tamkobi-worker` birimindedir (`127.0.0.1:8099`, nginx upstream'e eklenmez). Blue/green bu birimi yerinde yeniden başlatır; ikinci kopya açılmaz. `platform_locks` kirası yine tek sahip bırakır.
 - Düşük bellek: `TAMKOBI_WORKERS=1`
 
 ---

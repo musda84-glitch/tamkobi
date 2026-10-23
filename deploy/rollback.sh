@@ -111,6 +111,10 @@ nginx_test_reload || {
 frontend_activate "$_prev_sha"
 release_history_truncate_to "$_prev_sha"
 
+# Aynı tek worker birimini geri alınan sürüme çevir. İkinci kopya yok.
+# Sağlık burada düşerse nginx geri alınmaz; eski web henüz durdurulmaz.
+backend_sync_worker "$_be_sha" "$VENV_PATH"
+
 sleep 5
 backend_stop_instance "$ACTIVE"
 echo "Rollback tamam. aktif_port=$NEW sha=$_prev_sha" >&2
