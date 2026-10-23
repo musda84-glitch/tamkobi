@@ -7,6 +7,7 @@ hazır değilse açık hata verilir, legacy koleksiyona düşülmez.
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 import hashlib
 import inspect
@@ -63,6 +64,29 @@ _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
 _registry_lock = threading.Lock()
 _generation_seq = 0
+# Taşıma kendi oturumunu kullanır. Havuz bağlantısının izolasyonu değişmez.
+_read_session: "contextvars.ContextVar" = contextvars.ContextVar(
+    "dedicated_read_session",
+    default=None,
+)
+
+
+def use_read_session(company_id: str, session):
+    return _read_session.set((str(company_id or ""), session))
+
+
+def reset_read_session(token) -> None:
+    if token is not None:
+        _read_session.reset(token)
+
+
+def read_session(company_id: str = ""):
+    item = _read_session.get()
+    if item is None:
+        return None
+    if company_id and item[0] != str(company_id):
+        return None
+    return item[1]
 
 
 def _lock():
@@ -192,7 +216,25 @@ def collection(db, company_id: str, name: str) -> "DedicatedCollection":
     cid = str(company_id or "").strip()
     dsn = _dsn_for(db, cid)
     add_secret(dsn)
-    return DedicatedCollection(cid, str(name or ""), dsn)
+    coll = DedicatedCollection(cid, str(name or ""), dsn)
+    try:
+        setattr(coll, "_catalog_db", db)
+    except Exception:
+        pass
+    return coll
+
+
+def list_collections(company_id: str, dsn: str) -> list[str]:
+    """Firmanın dedicated koleksiyon adları. Yazmaz. DSN loglanmaz."""
+    cid = str(company_id or "").strip()
+    add_secret(dsn)
+    with _session(cid, dsn) as session:
+        _assert_schema(session, cid)
+        rows = session.fetchall(
+            "SELECT DISTINCT collection FROM storage_records WHERE company_id = ?",
+            (cid,),
+        )
+    return sorted({str(row[0]) for row in rows if row and row[0]})
 
 
 def checkout(company_id: str, dsn: str) -> _Pool:
@@ -225,6 +267,10 @@ def checkout(company_id: str, dsn: str) -> _Pool:
 
 @contextmanager
 def _session(company_id: str, dsn: str):
+    override = read_session(company_id)
+    if override is not None:
+        yield override
+        return
     pool = checkout(company_id, dsn)
     try:
         with pool.op_lock:
@@ -418,6 +464,21 @@ def _reject_field_lengths(doc_id, doc) -> None:
         raise ValueError(f"company_id en fazla {_COMPANY_ID_MAX} karakter olabilir.")
 
 
+def _reject_update_lengths(query, update) -> None:
+    """Uzunluk kilidi beklemez. Hatalı alan adı kilitten önce gelir."""
+    if isinstance(query, dict) and query.get("_id") is not None and not isinstance(query.get("_id"), dict):
+        _reject_field_lengths(query.get("_id"), {})
+    if not isinstance(update, dict):
+        return
+    if any(str(key).startswith("$") for key in update):
+        for key in ("$set", "$setOnInsert"):
+            body = update.get(key)
+            if isinstance(body, dict):
+                _reject_field_lengths(body.get("_id"), body)
+        return
+    _reject_field_lengths(update.get("_id"), update)
+
+
 def _upsert_sql(dialect: str) -> str:
     if dialect == "mysql":
         return "REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
@@ -432,6 +493,14 @@ class DedicatedCollection(StorageCollection):
 
     def __repr__(self) -> str:
         return f"DedicatedCollection(company_id={self.company_id!r}, name={self.name!r})"
+
+    async def _reject_locked(self) -> None:
+        await storage_router.guard_pinned_write(
+            self.company_id,
+            db=getattr(self, "_catalog_db", None),
+            pinned_mode=getattr(self, "_pinned_mode", None),
+            pinned_epoch=getattr(self, "_pinned_epoch", None),
+        )
 
     def _guard(self, op: str, **kwargs) -> None:
         try:
@@ -561,6 +630,7 @@ class DedicatedCollection(StorageCollection):
         if not body.get("_id"):
             body["_id"] = str(uuid.uuid4())
         _reject_field_lengths(body["_id"], body)
+        await self._reject_locked()
 
         def work(session):
             try:
@@ -584,6 +654,11 @@ class DedicatedCollection(StorageCollection):
     async def insert_many(self, docs, ordered: bool = True):
         self._guard("insert_many", doc=docs)
         prepared = [copy.deepcopy(item or {}) for item in list(docs or [])]
+        for item in prepared:
+            if not item.get("_id"):
+                item["_id"] = str(uuid.uuid4())
+            _reject_field_lengths(item.get("_id"), item)
+        await self._reject_locked()
         ids = []
         for item in prepared:
             if not ordered:
@@ -598,6 +673,8 @@ class DedicatedCollection(StorageCollection):
         return InsertManyResult(ids)
 
     async def update_one(self, query: dict, update: dict, upsert: bool = False):
+        _reject_update_lengths(query, update)
+        await self._reject_locked()
         self._guard("update_one", query=query, update=update, upsert=upsert)
 
         def work(session):
@@ -620,6 +697,8 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def update_one_atomic(self, query: dict, update: dict):
+        _reject_update_lengths(query, update)
+        await self._reject_locked()
         self._guard("update_one_atomic", query=query, update=update)
         doc_id = (query or {}).get("_id")
         if doc_id is None or isinstance(doc_id, dict):
@@ -627,6 +706,8 @@ class DedicatedCollection(StorageCollection):
         return await self.update_one(query, update, upsert=False)
 
     async def update_many(self, query: dict, update: dict, upsert: bool = False):
+        _reject_update_lengths(query, update)
+        await self._reject_locked()
         self._guard("update_many", query=query, update=update, upsert=upsert)
 
         def work(session):
@@ -652,8 +733,10 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
-        self._guard("replace_one", query=query, doc=replacement)
         body = copy.deepcopy(replacement or {})
+        _reject_update_lengths(query, body)
+        await self._reject_locked()
+        self._guard("replace_one", query=query, doc=replacement)
 
         def work(session):
             found = self._matched(session, query)
@@ -681,6 +764,8 @@ class DedicatedCollection(StorageCollection):
         return_document=True,
         projection=None,
     ):
+        _reject_update_lengths(query, update)
+        await self._reject_locked()
         self._guard("find_one_and_update", query=query, update=update, upsert=upsert)
 
         def work(session):
@@ -703,6 +788,8 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def delete_one(self, query: dict):
+        _reject_update_lengths(query, None)
+        await self._reject_locked()
         self._guard("delete_one", query=query)
 
         def work(session):
@@ -716,6 +803,8 @@ class DedicatedCollection(StorageCollection):
         return self._run(work)
 
     async def delete_many(self, query: dict):
+        _reject_update_lengths(query, None)
+        await self._reject_locked()
         self._guard("delete_many", query=query)
 
         def work(session):

@@ -363,10 +363,10 @@ class _RealishDB:
         return coll
 
 
-def test_expired_cache_outside_entry_does_not_sync_fail(monkeypatch):
-    """TTL dolunca gerçek sürücüde senkron okuma 'önbellek boş' demez.
+def test_expired_cache_rereads_real_driver(monkeypatch):
+    """Soğuk önbellek gerçek sürücüye gitmez. Süresi dolunca katalog yeniden okunur.
 
-    Giriş noktası dışında kurulan TenantDB kipi kuruluşta sabitler.
+    Kurulmuş TenantDB kendi kipini değiştirmez. Yeni kurulan örnek yeni kipi görür.
     """
     monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
     clock = {"t": 5_000.0}
@@ -374,8 +374,8 @@ def test_expired_cache_outside_entry_does_not_sync_fail(monkeypatch):
     text = (_BACKEND / "storage_router.py").read_text(encoding="utf-8")
     assert "Depolama kipi önbelleği boş" not in text
     db = _RealishDB()
-    db.companies.rows[CO_A] = {"_id": CO_A, "storage_mode": "legacy", "dedicated_dsn_ref": "gAAAA"}
-    db.companies.rows[CO_B] = {"_id": CO_B, "storage_mode": "shared_v2"}
+    db.companies.rows[CO_A] = {"_id": CO_A, "storage_mode": "legacy", "storage_epoch": 1}
+    db.companies.rows[CO_B] = {"_id": CO_B, "storage_mode": "shared_v2", "storage_epoch": 2}
 
     async def warm():
         assert await storage_router.load_mode(db, CO_A) == "legacy"
@@ -387,19 +387,20 @@ def test_expired_cache_outside_entry_does_not_sync_fail(monkeypatch):
     assert live._collection("products")._raw is db["products"]
 
     clock["t"] += storage_router.TTL_SECONDS + 1
-    db.companies.rows[CO_A]["storage_mode"] = "dedicated"
+    db.companies.rows[CO_A]["storage_mode"] = "shared_v2"
+    db.companies.rows[CO_A]["storage_epoch"] = 3
     again = live._collection("orders")
     assert again._raw is db["orders"]
     assert db.companies.reads == 2
 
     late = tenant_db.TenantDB(db, _scope(CO_A))
-    assert late._collection("invoices")._raw is db["invoices"]
-    assert db.companies.reads == 2
+    assert type(late._collection("products")._raw).__name__ == "SharedV2Collection"
+    assert db.companies.reads == 3
     shared = tenant_db.TenantDB(db, _scope(CO_B))._collection("products")
     assert type(shared._raw).__name__ == "SharedV2Collection"
     assert shared._raw.company_id == CO_B
     assert storage_shared_v2.get_store().conn is None
-    assert db.companies.reads == 2
+    assert db.companies.reads == 4
 
     fresh = _RealishDB()
     unseen = tenant_db.TenantDB(fresh, _scope("co_new"))

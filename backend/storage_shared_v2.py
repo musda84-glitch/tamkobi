@@ -8,12 +8,14 @@ Tablo bu modülde yaratılmaz. Şema storage_migrations 0003 içindedir.
 """
 from __future__ import annotations
 
+import contextvars
 import copy
 import hashlib
 import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from urllib.parse import unquote, urlparse
 
@@ -68,6 +70,25 @@ _MAX_LIMIT = 18446744073709551615
 _WRITE_ATTEMPTS = 3
 
 _store = None
+# Taşıma okuması kendi bağlantısındadır. Uygulama bağlantısının yerini alır.
+_read_store: "contextvars.ContextVar" = contextvars.ContextVar(
+    "shared_v2_read_store",
+    default=None,
+)
+
+
+def use_read_store(store):
+    """Bu görevde get_store bu bağlantıyı döndürür. Token reset_read_store ile bırakılır."""
+    return _read_store.set(store)
+
+
+def reset_read_store(token) -> None:
+    if token is not None:
+        _read_store.reset(token)
+
+
+def read_store():
+    return _read_store.get()
 
 
 class _NoPush(Exception):
@@ -81,9 +102,11 @@ class SharedV2Store:
 
     def __init__(self):
         self.conn = None
-        self.dialect = "sqlite"
+        self._dialect = "sqlite"
+        self._dialect_pinned = False
         self.owned = False
         self._opener = None
+        self.op_lock = threading.RLock()
         self.indexes: dict = {}
         self.python_scans = 0
         self.docs_loaded = 0
@@ -94,10 +117,34 @@ class SharedV2Store:
         self.scalar_ok: set = set()
         self.scalar_bad: set = set()
 
+    def _get_dialect(self) -> str:
+        return self._dialect
+
+    def _set_dialect(self, value: str) -> None:
+        self._dialect = value
+        self._dialect_pinned = True
+
+    dialect = property(_get_dialect, _set_dialect)
+
+    def ensure_dialect(self) -> str:
+        """SQL kurulmadan önce lehçe belli olsun. Varsayılan sqlite MySQL'e sızmasın."""
+        if self.conn is not None or self._dialect_pinned:
+            return self._dialect
+        self.connection()
+        return self._dialect
+
     def attach(self, conn, dialect: str, owned: bool = False) -> None:
         self.conn = conn
-        self.dialect = dialect
+        self._dialect = dialect
+        self._dialect_pinned = True
         self.owned = owned
+
+    def commit_locked(self) -> None:
+        """Paylaşılan bağlantıda commit op_lock altındadır."""
+        if self.conn is None:
+            return
+        with self.op_lock:
+            self.conn.commit()
 
     def connection(self):
         if self.conn is None:
@@ -115,6 +162,9 @@ class SharedV2Store:
 
 
 def get_store() -> SharedV2Store:
+    override = _read_store.get()
+    if override is not None:
+        return override
     global _store
     if _store is None:
         _store = SharedV2Store()
@@ -134,6 +184,54 @@ def bind_sqlite(conn) -> SharedV2Store:
     store = get_store()
     store.attach(conn, "sqlite", owned=False)
     return store
+
+
+def list_company_collections(company_id: str) -> list[str]:
+    """Firmanın shared_v2 koleksiyonları. Yazmaz. Şema yoksa hata verir."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise ValueError("company_id boş")
+    store = get_store()
+    conn = store.connection()
+    names = set(_distinct_collections(store, conn, cid))
+    import storage_tables
+
+    for name, spec in storage_tables.SPECS.items():
+        if _table_has_company(store, conn, spec.table, cid):
+            names.add(name)
+    return sorted(names)
+
+
+def _distinct_collections(store, conn, company_id: str) -> list[str]:
+    sql = "SELECT DISTINCT collection FROM docs_v2 WHERE company_id=?"
+    rows = _fetch(store, conn, sql, (company_id,))
+    return [str(row[0]) for row in rows if row and row[0]]
+
+
+def _table_has_company(store, conn, table: str, company_id: str) -> bool:
+    sql = f"SELECT 1 FROM {table} WHERE company_id=? LIMIT 1"
+    rows = _fetch(store, conn, sql, (company_id,))
+    return bool(rows)
+
+
+def _fetch(store, conn, sql: str, params):
+    lock = getattr(store, "op_lock", None)
+    if lock is None:
+        return _fetch_unlocked(store, conn, sql, params)
+    with lock:
+        return _fetch_unlocked(store, conn, sql, params)
+
+
+def _fetch_unlocked(store, conn, sql: str, params):
+    adapted = sql.replace("?", "%s") if store.dialect == "mysql" else sql
+    try:
+        if store.dialect == "sqlite":
+            return list(conn.execute(adapted, tuple(params)).fetchall())
+        cursor = conn.cursor()
+        cursor.execute(adapted, tuple(params))
+        return list(cursor.fetchall())
+    except Exception:
+        raise RuntimeError("shared_v2 şeması hazır değil") from None
 
 
 def collection_for(company_id: str, name: str) -> "SharedV2Collection":
@@ -372,6 +470,7 @@ class SharedV2Collection:
         return _Cursor()
 
     async def insert_one(self, doc):
+        await self._touch_lock()
         _guard(self.name, "insert_one", doc=doc)
         body = self._prepare(doc)
 
@@ -391,6 +490,7 @@ class SharedV2Collection:
         return InsertOneResult(body["_id"])
 
     async def insert_many(self, docs, ordered: bool = True):
+        await self._touch_lock()
         _guard(self.name, "insert_many", doc=docs)
         ids = []
         for doc in docs or []:
@@ -398,6 +498,7 @@ class SharedV2Collection:
         return InsertManyResult(ids)
 
     async def update_one(self, query, update, upsert: bool = False):
+        await self._touch_lock()
         _guard(self.name, "update_one", query=query, update=update, upsert=upsert)
         old = await self._first(query)
         if old is None:
@@ -428,6 +529,7 @@ class SharedV2Collection:
         return UpdateResult(1, 1, None)
 
     async def update_one_atomic(self, query, update):
+        await self._touch_lock()
         _guard(self.name, "update_one_atomic", query=query, update=update)
         q = query or {}
         doc_id = q.get("_id")
@@ -468,6 +570,7 @@ class SharedV2Collection:
         return UpdateResult(1, 1 if changed else 0, None)
 
     async def update_many(self, query, update, upsert: bool = False):
+        await self._touch_lock()
         _guard(self.name, "update_many", query=query, update=update, upsert=upsert)
         docs = await self._match_docs(query)
         if not docs:
@@ -500,6 +603,7 @@ class SharedV2Collection:
         return UpdateResult(len(docs), len(changed), None)
 
     async def replace_one(self, query, replacement, upsert: bool = False):
+        await self._touch_lock()
         _guard(self.name, "replace_one", query=query, doc=replacement)
         old = await self._first(query)
         if old is None:
@@ -529,6 +633,7 @@ class SharedV2Collection:
     async def find_one_and_update(
         self, query, update, upsert: bool = False, return_document=True, projection=None,
     ):
+        await self._touch_lock()
         _guard(self.name, "find_one_and_update", query=query, update=update, upsert=upsert)
         old = await self._first(query)
         if old is None:
@@ -561,6 +666,7 @@ class SharedV2Collection:
         return project_doc(out, projection) if projection else copy.deepcopy(out)
 
     async def delete_one(self, query):
+        await self._touch_lock()
         _guard(self.name, "delete_one", query=query)
         old = await self._first(query)
         if old is None:
@@ -580,6 +686,7 @@ class SharedV2Collection:
         return DeleteResult(1)
 
     async def delete_many(self, query):
+        await self._touch_lock()
         _guard(self.name, "delete_many", query=query)
         where, reason = self._where_plan(query or {})
         if where is None:
@@ -686,6 +793,7 @@ class SharedV2Collection:
         return (clause, list(prefix) + params), None
 
     def _read_plan(self, query, sort, skip, limit, length):
+        self.store.ensure_dialect()
         try:
             where, params, fields = self._filter_sql(query or {})
             skip_n, cap = _bounds(skip, limit, length)
@@ -720,6 +828,7 @@ class SharedV2Collection:
         return (sql, bind), None
 
     def _filter_sql(self, query):
+        self.store.ensure_dialect()
         if query is None:
             query = {}
         if not isinstance(query, dict):
@@ -945,6 +1054,7 @@ class SharedV2Collection:
         return "ORDER BY " + ", ".join(bits), tuple(fields)
 
     def _full_text(self, field):
+        self.store.ensure_dialect()
         if self.store.dialect == "mysql":
             return f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}'))"
         return f"json_extract(doc, '$.{field}')"
@@ -1002,16 +1112,20 @@ class SharedV2Collection:
     def _text_type_sql(self, field):
         # Eksik alan json_type NULL döndürür. NULL = 'text' bilinmez kalır ve
         # NOT (...) satırı dışarıda bırakır. COALESCE eşitliği 0/1 yapar.
+        # MySQL JSON_TYPE tek argüman alır. json_type(doc, '$.alan') 1582 verir.
+        self.store.ensure_dialect()
         if self.store.dialect == "mysql":
             return f"COALESCE(JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')), '') = 'STRING'"
         return f"COALESCE(json_type(doc, '$.{field}'), '') = 'text'"
 
     def _json_null_sql(self, field):
+        self.store.ensure_dialect()
         if self.store.dialect == "mysql":
             return f"JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) = 'NULL'"
         return f"json_type(doc, '$.{field}') = 'null'"
 
     def _null_sql(self, field):
+        self.store.ensure_dialect()
         if self.store.dialect == "mysql":
             return (
                 f"(JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IS NULL "
@@ -1022,11 +1136,13 @@ class SharedV2Collection:
         )
 
     def _present_sql(self, field):
+        self.store.ensure_dialect()
         if self.store.dialect == "mysql":
             return f"JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) IS NOT NULL"
         return f"json_type(doc, '$.{field}') IS NOT NULL"
 
     def _nonscalar_sql(self, field):
+        self.store.ensure_dialect()
         found = self._column(field)
         if found and self._bad_column(field):
             return f"{found[0]}_bad IS NOT NULL"
@@ -1041,6 +1157,7 @@ class SharedV2Collection:
         )
 
     def _scalars(self, fields) -> bool:
+        self.store.ensure_dialect()
         for field in fields:
             if not field or field == "_id":
                 continue
@@ -1095,8 +1212,22 @@ class SharedV2Collection:
             raise DuplicateKeyError("duplicate key") from None
         raise exc
 
+    async def _touch_lock(self):
+        """Async yazma pymysql açmaz. Taze kilit önbelleğini doldurur."""
+        import storage_router
+
+        await storage_router.guard_pinned_write(
+            self.company_id,
+            db=getattr(self, "_catalog_db", None),
+            pinned_mode=getattr(self, "_pinned_mode", None),
+            pinned_epoch=getattr(self, "_pinned_epoch", None),
+        )
+
     def _run_write(self, work):
         """Deadlock ve kilit beklemesi işlemi geri alıp sınırlı tekrar dener."""
+        import storage_router
+
+        storage_router.assert_writable(self.company_id, db=getattr(self, "_catalog_db", None))
         for attempt in range(_WRITE_ATTEMPTS):
             try:
                 return work()
@@ -1276,6 +1407,10 @@ class SharedV2Collection:
         return [loads(row[0]) for row in rows]
 
     def _run(self, sql, params, plan: bool = False, unique: bool = False):
+        with self.store.op_lock:
+            return self._run_locked(sql, params, plan, unique)
+
+    def _run_locked(self, sql, params, plan: bool = False, unique: bool = False):
         conn = self.store.connection()
         adapted = sql.replace("?", "%s") if self.store.dialect == "mysql" else sql
         self.store.statements.append(sql)
@@ -1294,18 +1429,21 @@ class SharedV2Collection:
         return cursor
 
     def _begin(self) -> None:
-        conn = self.store.connection()
-        if self.store.dialect == "sqlite":
-            conn.execute("BEGIN IMMEDIATE")
-        else:
-            conn.begin()
+        with self.store.op_lock:
+            conn = self.store.connection()
+            if self.store.dialect == "sqlite":
+                conn.execute("BEGIN IMMEDIATE")
+            else:
+                conn.begin()
 
     def _commit(self) -> None:
-        self.store.connection().commit()
+        self.store.connection()
+        self.store.commit_locked()
 
     def _rollback(self) -> None:
         try:
-            self.store.connection().rollback()
+            with self.store.op_lock:
+                self.store.connection().rollback()
         except Exception:
             return
 
