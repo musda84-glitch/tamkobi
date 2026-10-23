@@ -9,7 +9,7 @@
  * Grupların sırası ve etiketleri navGroups.js → SYSTEM_NAV_GROUPS'ta.
  */
 import React from "react";
-import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone, ScrollText, MessageSquare, FileCode2, KeyRound, Layers, CircleHelp } from "lucide-react";
+import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone, ScrollText, MessageSquare, FileCode2, KeyRound, Layers, CircleHelp, ServerCog } from "lucide-react";
 import { SaasOverview } from "./SaasOverview";
 import { CompaniesTable } from "./CompaniesTable";
 import { PlansPanel } from "./PlansPanel";
@@ -28,6 +28,7 @@ import { EinvoiceDesignsPanel } from "./EinvoiceDesignsPanel";
 import { AddonsPanel } from "./AddonsPanel";
 import { SupportTicketsPanel } from "./SupportTicketsPanel";
 import { DatabasePanel } from "./DatabasePanel";
+import { DatabaseManagementPanel } from "./DatabaseManagementPanel";
 import { MaintenanceAnnouncePanel } from "./MaintenanceAnnouncePanel";
 import { SystemLogsPanel } from "./SystemLogsPanel";
 import { PlatformProductsPanel } from "./PlatformProductsPanel";
@@ -62,6 +63,7 @@ export const SYSTEM_SECTIONS = [
   { key: "ai", label: "AI Entegrasyonu", icon: Sparkles, render: () => <AiProviderPanel /> },
   { key: "araclar", label: "AI & Destek", icon: Bot, render: (c) => <AddonsPanel onOpenCompany={c.openCompany} /> },
   { key: "veritabani", label: "Veritabanı", icon: Database, render: () => <DatabasePanel /> },
+  { key: "veritabani-yonetimi", label: "Veritabanı Yönetimi", icon: ServerCog, render: () => <DatabaseManagementPanel /> },
   { key: "ayarlar", label: "Platform Ayarları", icon: Settings, render: () => <PlatformSettingsPanel /> },
   { key: "urunler", label: "Ürünler", icon: Layers, render: () => <PlatformProductsPanel /> },
   { key: "api-anahtarlari", label: "API Anahtarları", icon: KeyRound, render: () => <PlatformApiKeysPanel /> },

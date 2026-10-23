@@ -508,6 +508,11 @@ async def startup_event():
             )
         except Exception as _ie:
             logger.warning("idempotency cleanup loop skipped: %s", _ie)
+        try:
+            import storage_admin
+            _start_leased_background("bg.storage_admin", lambda: storage_admin.scheduler_loop(db))
+        except Exception:
+            logger.warning("storage admin loop skipped")
     else:
         logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
 
@@ -27567,6 +27572,8 @@ import company_reset
 company_reset.init(db)
 import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
+import storage_admin
+storage_admin.init(db)
 platform_mail.init(db)
 platform_sms.init(db)
 import mail_service
@@ -27796,6 +27803,7 @@ app.include_router(api_router)
 app.include_router(company_events.router)
 app.include_router(setup_install.router)
 app.include_router(db_admin.router)
+app.include_router(storage_admin.router)
 app.include_router(rbac.router)
 app.include_router(shopfloor_accounts.router)
 app.include_router(shopfloor_pin.router)

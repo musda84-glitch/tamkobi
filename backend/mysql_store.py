@@ -2200,6 +2200,13 @@ class MySQLDatabase:
                         await cur.execute("CREATE INDEX idx_docs_coll_upd ON docs (collection, updated_at)")
                     except Exception:
                         pass
+                    try:
+                        await cur.execute(
+                            "CREATE INDEX idx_docs_coll_company_upd "
+                            "ON docs (collection, company_id, updated_at)"
+                        )
+                    except Exception:
+                        pass
                     await cur.execute("SELECT collection, spec, unique_index FROM meta_indexes")
                     for coll, spec, uniq in await cur.fetchall():
                         parsed = loads(spec) or {}
@@ -2587,6 +2594,17 @@ class SyncMySQLDatabase:
                 idxs = {r[2] for r in cur.fetchall()}
                 for stmt in schema_upgrade_statements(cols, idxs):
                     cur.execute(stmt)
+                try:
+                    cur.execute("CREATE INDEX idx_docs_coll_upd ON docs (collection, updated_at)")
+                except Exception:
+                    pass
+                try:
+                    cur.execute(
+                        "CREATE INDEX idx_docs_coll_company_upd "
+                        "ON docs (collection, company_id, updated_at)"
+                    )
+                except Exception:
+                    pass
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
