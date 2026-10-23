@@ -1583,3 +1583,55 @@ def test_noncolumn_split_write_on_mariadb(tmp_path, monkeypatch):
         assert [doc["_id"] for doc in found] == ["p1"]
     finally:
         _close_world(world)
+
+
+def test_prepare_keeps_source_and_canonical_bytes():
+    src = {
+        "_id": 7,
+        "company_id": "",
+        "items": [{"sku": "a"}],
+        storage_router.WRITE_LOCK_FIELD: True,
+        "z": 1,
+        "a": 2,
+    }
+    out = storage_move._prepare(src, "co", "invoices")
+    assert src["_id"] == 7
+    assert src["company_id"] == ""
+    assert src[storage_router.WRITE_LOCK_FIELD] is True
+    assert out["_id"] == "7"
+    assert out["company_id"] == "co"
+    assert out["items"] == [{"sku": "a"}]
+    company = storage_move._prepare(dict(src), "co", "companies")
+    assert storage_router.WRITE_LOCK_FIELD not in company
+    assert src[storage_router.WRITE_LOCK_FIELD] is True
+    docs = [out, {"_id": "b", "n": 1}]
+    assert storage_move._bytes_and_digest(docs) == (
+        storage_move._bytes(docs),
+        storage_move._digest(docs),
+    )
+
+
+def test_large_prepare_runs_off_the_loop():
+    import threading
+
+    seen = {}
+    real = storage_move._prepare_many
+
+    def wrapped(rows, company_id, name):
+        seen["ident"] = threading.get_ident()
+        return real(rows, company_id, name)
+
+    docs = [{"_id": str(i), "company_id": "", "n": i} for i in range(40)]
+
+    async def run():
+        storage_move._prepare_many = wrapped
+        try:
+            return await storage_move._prepare_docs(docs, "co", "orders")
+        finally:
+            storage_move._prepare_many = real
+
+    out = asyncio.run(run())
+    assert seen["ident"] != threading.get_ident()
+    assert len(out) == 40
+    assert out[0]["company_id"] == "co"
+    assert docs[0]["company_id"] == ""

@@ -220,6 +220,51 @@ def test_second_owner_waits_until_work_stops(monkeypatch):
         pl._reset_runtime_for_tests()
 
 
+def test_blocking_work_keeps_the_lease_until_it_returns(monkeypatch):
+    """Döngü dışındaki iş bitmeden kira bırakılmaz; ikinci sahip bekler."""
+    pl._reset_runtime_for_tests()
+    events = []
+    board = {"owner": None}
+    _lease_fakes(monkeypatch, events, board)
+    started = asyncio.Event()
+    started2 = asyncio.Event()
+
+    async def job():
+        def work():
+            events.append("work-start")
+            started.set()
+            time.sleep(0.2)
+            events.append("work-stop")
+            return "ok"
+
+        assert await pl.call_blocking(work) == "ok"
+        events.append("after-work")
+
+    async def waiter():
+        events.append("start-2")
+        started2.set()
+
+    async def run():
+        first = asyncio.create_task(pl.run_exclusive(None, "bg.bank_sync", job, wait_s=0.05))
+        await asyncio.wait_for(started.wait(), 1)
+        second = asyncio.create_task(pl.run_exclusive(None, "bg.bank_sync", waiter, wait_s=0.05))
+        await asyncio.sleep(0.05)
+        assert "start-2" not in events
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await asyncio.wait_for(started2.wait(), 1)
+        assert events.index("work-stop") < events.index("release") < events.index("start-2")
+        second.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await second
+
+    try:
+        asyncio.run(run())
+    finally:
+        pl._reset_runtime_for_tests()
+
+
 def test_shutdown_releases_only_after_work_stops(monkeypatch, caplog):
     pl._reset_runtime_for_tests()
     events = []

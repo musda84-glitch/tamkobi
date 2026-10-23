@@ -229,6 +229,27 @@ async def run_exclusive(
             _runners.discard(me)
 
 
+async def call_blocking(func, /, *args, **kwargs):
+    """Senkron işi döngünün dışında çalıştır.
+
+    Döngü kilitlenince kira yenilenemez; TTL dolunca ikinci süreç aynı işi
+    başlatır. İptal, thread bitene kadar bekler. Kira ancak ondan sonra bırakılır.
+    """
+    inner = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(inner)
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is not None and hasattr(task, "uncancel"):
+            while task.uncancel():
+                pass
+        try:
+            await inner
+        except Exception:
+            logger.exception("blocking work iptalde hata verdi")
+        raise
+
+
 async def shutdown() -> None:
     """Kapanış: çalışan arka plan işlerini durdur, sonra kirayı bırak."""
     global _closing

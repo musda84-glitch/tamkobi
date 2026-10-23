@@ -360,15 +360,11 @@ async def read_volume(db, company: dict) -> dict:
                 "error": storage_router.public_store_error(exc),
                 "read_mode": read_mode,
             }
-        prepared = [
-            storage_move._prepare(doc, cid, name)
-            for doc in docs
-            if isinstance(doc, dict) and doc.get("_id")
-        ]
+        count, nbytes = await storage_move._measure_docs(docs, cid, name)
         collections.append({
             "name": name,
-            "count": len(prepared),
-            "bytes": storage_move._bytes(prepared),
+            "count": count,
+            "bytes": nbytes,
         })
     return {"collections": collections, "error": "", "read_mode": read_mode}
 
@@ -1128,6 +1124,8 @@ class _StoreLease:
         self.db = db
 
     async def try_acquire(self, name: str, owner: str) -> bool:
+        # Havuzu olmayan bellek kataloğu kira tablosu kuramaz; testler işi çalıştırır.
+        # Havuz varken kira alınamazsa iş başlamaz. İki süreç aynı taşımayı yürütmez.
         if getattr(self.db, "_pool", None) is None:
             return True
         try:
@@ -1135,7 +1133,7 @@ class _StoreLease:
 
             return bool(await platform_lease.try_acquire(self.db, name, owner, ttl_s=90))
         except Exception:
-            return True
+            return False
 
     async def release(self, name: str, owner: str) -> None:
         if getattr(self.db, "_pool", None) is None:
@@ -1165,18 +1163,39 @@ async def worker(db, *, now: Optional[datetime] = None) -> int:
     held = False
     owner = _process_owner()
     lease = _StoreLease(db)
+    stop = asyncio.Event()
+    renew_task = None
     try:
         held = await lease.try_acquire(_WORKER_LEASE, owner)
         if not held:
             return 0
+        if getattr(db, "_pool", None) is not None:
+            import platform_lease
+
+            renew_task = asyncio.create_task(
+                platform_lease.renew_while(db, _WORKER_LEASE, owner, ttl_s=90, stop=stop)
+            )
         done = 0
-        while True:
+        while not stop.is_set():
             job = await claim_next(db, now=now)
             if not job:
                 return done
+            # Kira bu çağrı sırasında düşmüş olsa da alınan iş yarım kalmasın.
+            # Sonraki tur, döngü başındaki kontrole takılır.
             await execute(db, job)
             done += 1
+        return done
     finally:
+        stop.set()
+        import platform_lease
+
+        platform_lease._clear_cancel()
+        if renew_task is not None:
+            renew_task.cancel()
+            try:
+                await renew_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if held:
             await lease.release(_WORKER_LEASE, owner)
         _worker_guard = False

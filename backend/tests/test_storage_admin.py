@@ -210,6 +210,28 @@ def test_actions_call_storage_move_and_write_audit(monkeypatch):
     _run(_case())
 
 
+def test_pool_without_lease_does_not_run_the_job(monkeypatch):
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("platform_locks yok")
+
+    monkeypatch.setattr("platform_lease.try_acquire", boom)
+
+    async def _case():
+        db = MemDB()
+        db._pool = object()
+        called = {"n": 0}
+
+        async def claim(_db, now=None):
+            called["n"] += 1
+            return None
+
+        monkeypatch.setattr(storage_admin, "claim_next", claim)
+        assert await storage_admin.worker(db) == 0
+        assert called["n"] == 0
+
+    _run(_case())
+
+
 def test_second_move_rejected_without_dry_run_and_schedule_cancels(monkeypatch):
     monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
 
