@@ -791,9 +791,7 @@ ERSAY = "ERSAY HOME ÜRETİM TEDARİK İÇ VE DIŞ TİCARET LİMİTED ŞTİ."
 
 def test_merge_and_convert_do_not_create_b2b_order():
     """Alıcı ünvanı başka bir TamKobi şirketi olsa da birleştirme ve dönüşüm sipariş açmaz."""
-    import dispatch_invoice
     import server
-    from models import Order, OrderItem
 
     db = FakeDB()
     db.companies.docs.append({"_id": "comp_9039c0ec", "name": ERSAY})
@@ -833,58 +831,20 @@ def test_merge_and_convert_do_not_create_b2b_order():
         },
     ])
     db.contacts.docs[0]["name"] = ERSAY
-    contact = {
-        "_id": "ct1", "company_id": "c1", "name": ERSAY,
-        "email": "ersay@example.com", "phone": "0212", "address": "Adres", "city": "İstanbul",
-    }
-    line = OrderItem(product_name="Duvar Rafı", quantity=1, unit_price=100, vat_rate=20, total=100)
-    fresh_order = Order(
-        company_id="c1", channel="b2b", customer_name=ERSAY,
-        shipping_address="Adres", city="İstanbul", items=[line], total_amount=120,
-    )
-    blocked = []
-    real_point = dispatch_invoice._point_orders
-
-    async def _point_and_refuse(*args, **kwargs):
-        with pytest.raises(HTTPException) as b2b_exc:
-            await server._create_b2b_order_core(contact, [line], {})
-        with pytest.raises(HTTPException) as panel_exc:
-            await server.create_order(fresh_order, USER)
-        blocked.append((b2b_exc.value.status_code, panel_exc.value.status_code))
-        await real_point(*args, **kwargs)
 
     async def _go():
-        with patch.object(server, "db", db), patch.object(dispatch_invoice, "_point_orders", _point_and_refuse):
+        with patch.object(server, "db", db):
             merged = await server._merge_dispatches_core(["d1", "d2"], USER, company_id="c1")
-            before_convert = [o["_id"] for o in db.orders.docs]
+            after_merge = [o["_id"] for o in db.orders.docs]
             converted = await server.convert_dispatch_to_invoice("d3", {}, USER)
             dispatched = await server.create_dispatch("o1", USER)
-        return merged, converted, dispatched, before_convert
+        return merged, converted, dispatched, after_merge
 
-    merged, converted, dispatched, before_convert = _run(_go())
-    numbers = [o.get("order_number") for o in db.orders.docs]
-    assert numbers == ["SIP-1", "SIP-2", "SIP-3"]
-    assert before_convert == ["o1", "o2", "o3"]
-    assert blocked == [(409, 409), (409, 409)]
+    merged, converted, dispatched, after_merge = _run(_go())
+    assert [o["_id"] for o in db.orders.docs] == ["o1", "o2", "o3"]
+    assert after_merge == ["o1", "o2", "o3"]
+    assert [o.get("order_number") for o in db.orders.docs] == ["SIP-1", "SIP-2", "SIP-3"]
     assert not any(str(c.get("_id") or "").startswith("B2B-") for c in db.counters.docs)
     assert merged["contact_name"] == ERSAY
-    assert converted["status"] in ("success", "exists", "linked")
+    assert converted["status"] == "success"
     assert dispatched["status"] in ("success", "exists")
-    assert not any(str(o.get("order_number") or "").startswith("B2B-") for o in db.orders.docs)
-
-    async def _portal():
-        with patch.object(server, "db", db), \
-             patch.object(server, "_notify_company", AsyncMock()), \
-             patch.object(server, "_attach_draft_invoice_on_intake", AsyncMock()), \
-             patch.object(server, "_clear_b2b_active_cart", AsyncMock()):
-            return await server._create_b2b_order_core(contact, [line], {})
-
-    opened = _run(_portal())
-    b2b_rows = [o for o in db.orders.docs if str(o.get("order_number") or "").startswith("B2B-")]
-    assert len(b2b_rows) == 1
-    assert b2b_rows[0]["order_status"] == "pending"
-    assert b2b_rows[0]["channel"] == "b2b"
-    assert b2b_rows[0]["source"] == "b2b_portal"
-    assert b2b_rows[0]["customer_name"] == ERSAY
-    assert b2b_rows[0]["company_id"] == "c1"
-    assert opened["order"]["order_number"] == b2b_rows[0]["order_number"]

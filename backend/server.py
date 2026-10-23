@@ -2508,13 +2508,6 @@ async def _next_order_number(company_id: str, prefix: str) -> str:
         await db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
     return await _next_number(prefix, None, company_id)
 
-
-def _refuse_new_order() -> None:
-    """Birleştirme ve irsaliye→fatura yeni satış siparişi yazamaz. Sayaç artmaz."""
-    if dispatch_invoice.order_insert_blocked():
-        raise HTTPException(status_code=409, detail=dispatch_invoice.ORDER_CREATE_BLOCKED)
-
-
 def _as_item_dict(obj: Any) -> Dict[str, Any]:
     if isinstance(obj, dict):
         return dict(obj)
@@ -6835,7 +6828,6 @@ async def b2b_upsert_active_cart(token: str, req: Dict[str, Any]):
         )
         doc = {**existing, **payload, "_id": existing["_id"]}
     else:
-        _refuse_new_order()
         order = Order(
             company_id=c["company_id"],
             order_number=await _next_order_number(c["company_id"], "BA"),
@@ -6903,7 +6895,6 @@ async def b2b_hold_cart(token: str, req: Dict[str, Any]):
     })
     seq = held_n + 1
     cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
-    _refuse_new_order()
     order = Order(
         company_id=c["company_id"],
         order_number=await _next_order_number(c["company_id"], "BH"),
@@ -6966,7 +6957,6 @@ async def b2b_delete_held_cart(token: str, order_id: str):
 
 async def _create_b2b_order_core(c, items, req, *, payment: Optional[dict] = None, order_id: Optional[str] = None, legal_accept: Optional[dict] = None) -> dict:
     """Portal siparişi. Fiyat kalemlerden gelir; istemci tutarı okunmaz."""
-    _refuse_new_order()
     req = req or {}
     legal_docs.require_acceptance(req)
     # enrich_line sonrası unit_price/total her zaman KDV hariçtir; toplamlar tek kaynaktan.
@@ -9829,7 +9819,6 @@ async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
 
 
 @api_router.post("/invoices/{invoice_id}/create-dispatch")
-@dispatch_invoice.guard_no_new_orders
 async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     cid = str(inv.get("company_id") or "").strip()
@@ -10114,7 +10103,6 @@ async def create_expense_slip_from_invoice(invoice_id: str, user: dict = Depends
 
 
 @api_router.post("/invoices/{dispatch_id}/convert-to-invoice")
-@dispatch_invoice.guard_no_new_orders
 async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(get_current_user)):
     d = await tenant_access.get_tenant_doc(db, "invoices", dispatch_id, user, not_found="İrsaliye bulunamadı.")
     if not d or d.get("invoice_type") != "dispatch":
@@ -18797,7 +18785,6 @@ def _dispatch_totals_from_order(order: dict, items: List[Dict[str, Any]]) -> Dic
 
 
 @api_router.post("/orders/{order_id}/create-dispatch")
-@dispatch_invoice.guard_no_new_orders
 async def create_dispatch(order_id: str, user: dict = Depends(get_current_user)):
     """Siparişten yalnız taslak e-İrsaliye. İşNet/GİB gönderimi detaydaki nakliye formundan yapılır."""
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
@@ -19429,7 +19416,6 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
         d["created_at"] = d["updated_at"]
         try:
-            _refuse_new_order()
             await db.orders.insert_one({**d, "company_id": company_id})
             contact = await _ensure_order_contact(d)
             inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
@@ -22356,7 +22342,6 @@ async def _mark_sales_order_sent_to_production(
 
 @api_router.post("/orders")
 async def create_order(order: Order, user: dict = Depends(get_current_user)):
-    _refuse_new_order()
     order.company_id = tenant_access.resolve_company_id(user, order.company_id)
     if rbac.normalize_role_code(user.get("role")) == "personel" and not user.get("is_super_admin"):
         role = await rbac.role_for(user, order.company_id)
@@ -26844,7 +26829,6 @@ async def ai_order_extract(
 
 @api_router.post("/ai/order-extract/confirm")
 async def ai_order_confirm(req: Dict[str, Any], user: dict = Depends(get_current_user)):
-    _refuse_new_order()
     cid = tenant_access.resolve_company_id(user, req.get("company_id"))
     await addons.require(cid, "ai.orders")
     company_id = cid
