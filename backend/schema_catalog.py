@@ -21,6 +21,7 @@ OPTIONAL_DOCS_INDEXES = (
     "idx_docs_coll_company_account",
     "idx_docs_coll_company_partner",
     "idx_docs_coll_upd",
+    "idx_docs_coll_company_upd",
 )
 
 CHARSET = "utf8mb4"
