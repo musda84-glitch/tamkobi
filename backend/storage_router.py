@@ -1504,6 +1504,38 @@ async def open_company_collection(db, mode: str, company_id: str, name: str):
     return collection_for_mode(db, mode2, company_id, name)
 
 
+def _query_company_id(query) -> str:
+    if not isinstance(query, dict):
+        return ""
+    value = query.get("company_id")
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+async def route_legacy_read(coll, query=None):
+    """Şirket okumasını kipin deposuna bırakır.
+
+    Bayrak kapalı, legacy veya taşımanın kendi yazarı katalogda kalır.
+    Dedicated ve shared_v2 satırı kendi deposundan okur. Paylaşılan docs
+    tablosu ve ham SQL bu yolda çalışmaz. DSN yoksa katalog bir kez
+    tazelenir; hâlâ yoksa hata çıkar, boş katalog listesi dönmez.
+    """
+    if not enabled() or _PASSTHROUGH.get():
+        return None
+    name = str(getattr(coll, "name", "") or "")
+    if name in _CONTROL_COLLECTIONS:
+        return None
+    cid = _query_company_id(query)
+    if not cid or _writer.get() == cid:
+        return None
+    db = getattr(coll, "_db", None) or getattr(coll, "db", None)
+    mode, _epoch, _locked = await load_view(db, cid)
+    if mode == LEGACY:
+        return None
+    return await open_company_collection(db, mode, cid, name)
+
+
 async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None):
     """Ham legacy yazmayı kilit ve güncel kipe göre bırakır, yönlendirir veya reddeder.
 

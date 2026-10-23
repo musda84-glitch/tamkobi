@@ -160,6 +160,20 @@ async def _route_write(coll, op: str, **kw):
     return await storage_router.route_legacy_write(coll, op, **kw)
 
 
+async def _route_read(coll, query):
+    """Dedicated/shared_v2 okuması. None ise katalog sürer. DSN hatası yukarı çıkar."""
+    import storage_router
+
+    return await storage_router.route_legacy_read(coll, query)
+
+
+def _pipeline_match(pipeline) -> dict:
+    for stage in pipeline or []:
+        if isinstance(stage, dict) and isinstance(stage.get("$match"), dict):
+            return stage["$match"]
+    return {}
+
+
 def _route_write_sync(coll, op: str, **kw):
     import storage_router
 
@@ -1569,6 +1583,17 @@ class MySQLCursor:
         return self
 
     async def to_list(self, length=None):
+        routed = await _route_read(self._coll, self._query)
+        if routed is not None:
+            cursor = routed.find(self._query, self._projection)
+            if self._sort:
+                cursor.sort(self._sort)
+            if self._skip:
+                cursor.skip(self._skip)
+            if self._limit is not None:
+                cursor.limit(self._limit)
+            rows = await cursor.to_list(length)
+            return list(rows or [])
         if sql_page_pushdown_enabled():
             pushed = await self._coll._read_page(
                 self._query, self._sort, self._skip, self._limit, length, self._projection,
@@ -1788,6 +1813,9 @@ class MySQLCollection:
 
     async def find_one(self, query: Optional[dict] = None, projection: Optional[dict] = None, sort=None, skip=0):
         _guard(self.name, "find_one", query=query)
+        routed = await _route_read(self, query)
+        if routed is not None:
+            return await routed.find_one(query, projection, sort, skip)
         if sql_page_pushdown_enabled():
             pushed = await self._read_page(query, normalize_sort(sort), skip, 1, 1, projection)
             if pushed is not None:
@@ -2078,6 +2106,9 @@ class MySQLCollection:
 
     async def count_documents(self, query: Optional[dict] = None):
         _guard(self.name, "count_documents", query=query)
+        routed = await _route_read(self, query)
+        if routed is not None:
+            return int(await routed.count_documents(query) or 0)
         exact = sql_count_exact(self.name, query)
         if exact:
             sql, params = exact
@@ -2096,6 +2127,11 @@ class MySQLCollection:
         _guard(self.name, "aggregate", pipeline=pipeline)
 
         async def _rows():
+            routed = await _route_read(self, _pipeline_match(pipeline))
+            if routed is not None:
+                cursor = routed.aggregate(pipeline)
+                rows = await cursor.to_list(None)
+                return list(rows or [])
             docs: List[dict] = []
             matched = False
             for stage in pipeline or []:
@@ -2122,6 +2158,9 @@ class MySQLCollection:
 
     async def distinct(self, key: str, query: Optional[dict] = None):
         _guard(self.name, "distinct", query=query)
+        routed = await _route_read(self, query)
+        if routed is not None:
+            return await routed.distinct(key, query)
         docs = await self._load_filtered(query)
         seen = []
         for d in docs:

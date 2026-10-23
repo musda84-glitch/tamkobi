@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
 
 from dashboard_memdb import MemDB  # noqa: E402
+import bank_tx_page  # noqa: E402
+import mysql_store  # noqa: E402
 import server  # noqa: E402
 import storage_dedicated  # noqa: E402
 import storage_router  # noqa: E402
@@ -794,5 +796,163 @@ def test_fresh_startup_resolves_dsn_without_mode_projection(monkeypatch, tmp_pat
         assert SECRET not in text
         assert "gAAAA" not in text
         assert "sqlite://" not in text
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+class _MemoryCompanies:
+    def __init__(self, doc: dict):
+        self.docs = [dict(doc)]
+
+
+class _ReadCatalog:
+    def __init__(self, doc: dict):
+        self.companies = _MemoryCompanies(doc)
+
+    def __getitem__(self, name):
+        if name == "companies":
+            return self.companies
+        raise KeyError(name)
+
+
+def _ban_catalog(coll):
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("paylaşılan katalog okundu")
+
+    coll._load_filtered = boom
+    coll._read_page = boom
+    coll._fetch_rows = boom
+
+
+def test_bank_reads_use_dedicated_store(monkeypatch, tmp_path, caplog):
+    """Web ve mobil aynı GET uçlarını kullanır. Okuma dedicated depoya gider.
+
+    Paylaşılan docs ve ham SQL boş 200 üretmez. DSN yoksa hata çıkar.
+    Taşımanın yazarı katalogda kalır.
+    """
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", "1")
+    fresh = "comp_505a96e8"
+    try:
+        path = tmp_path / SECRET / "bank.db"
+        path.parent.mkdir()
+        dsn = f"sqlite:///{path}"
+        _migrate(dsn)
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        company = {
+            "_id": fresh,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+            storage_router.DSN_FIELD: sealed,
+        }
+        db = _ReadCatalog(company)
+        names = (
+            "bank_transactions",
+            "bank_accounts",
+            "partners",
+            "partner_transactions",
+            "cash_approval_requests",
+        )
+
+        async def seed():
+            for name in names:
+                await storage_dedicated.collection(db, fresh, name).insert_one({
+                    "_id": f"{name}_row",
+                    "company_id": fresh,
+                    "account_id": "acc_matek",
+                    "partner_id": "par_matek",
+                    "type": "outflow",
+                    "amount": 40,
+                    "date": "2026-10-01",
+                    "description": "Matek havale",
+                    "status": "pending",
+                })
+
+        asyncio.run(seed())
+
+        async def run():
+            found = {}
+            for name in names:
+                coll = mysql_store.MySQLCollection(db, name)
+                _ban_catalog(coll)
+                rows = await coll.find({"company_id": fresh}).sort("date", -1).to_list(50)
+                assert [row["_id"] for row in rows] == [f"{name}_row"]
+                one = await coll.find_one({"company_id": fresh, "_id": f"{name}_row"})
+                assert one["_id"] == f"{name}_row"
+                assert await coll.count_documents({"company_id": fresh}) == 1
+                found[name] = rows
+            txs = mysql_store.MySQLCollection(db, "bank_transactions")
+            _ban_catalog(txs)
+            db.bank_transactions = txs
+            page = await bank_tx_page.list_account_transactions(
+                db,
+                {"_id": "acc_matek", "company_id": fresh, "account_name": "Matek", "type": "bank"},
+                page=1,
+                page_size=50,
+            )
+            assert page["total"] == 1
+            assert page["page_size"] == 50
+            assert page["items"][0]["id"] == "bank_transactions_row"
+            assert page["items"][0]["description"] == "Matek havale"
+            grouped = await txs.aggregate([
+                {"$match": {"company_id": fresh, "type": "outflow"}},
+                {"$group": {"_id": "$account_id", "month_out": {"$sum": "$amount"}}},
+            ]).to_list(None)
+            assert grouped and grouped[0]["_id"] == "acc_matek"
+            assert float(grouped[0]["month_out"]) == 40.0
+
+            shared = mysql_store.MySQLCollection(db, "bank_transactions")
+
+            async def catalog_rows(*_args, **_kwargs):
+                return [{"_id": "shared_tx", "company_id": fresh, "amount": 1}]
+
+            shared._load_filtered = catalog_rows
+            shared._read_page = catalog_rows
+            with storage_router.bypass_write_lock(fresh):
+                held = await shared.find({"company_id": fresh}).to_list(10)
+            assert [row["_id"] for row in held] == ["shared_tx"]
+            return found
+
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(run())
+        assert SECRET not in caplog.text
+        assert "gAAAA" not in caplog.text
+        assert "sqlite://" not in caplog.text
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+def test_bank_read_missing_dsn_is_not_an_empty_catalog(monkeypatch, tmp_path, caplog):
+    """DSN yoksa paylaşılan katalog boş liste dönmez."""
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    fresh = "comp_505a96e8"
+    try:
+        company = {
+            "_id": fresh,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+        }
+        db = _ReadCatalog(company)
+        coll = mysql_store.MySQLCollection(db, "bank_transactions")
+        _ban_catalog(coll)
+
+        async def run():
+            with pytest.raises(DedicatedStorageError, match=rf"company={fresh}"):
+                await coll.find({"company_id": fresh, "account_id": "acc_matek"}).to_list(50)
+            with pytest.raises(DedicatedStorageError, match=rf"company={fresh}"):
+                await coll.find_one({"company_id": fresh})
+            with pytest.raises(DedicatedStorageError, match=rf"company={fresh}"):
+                await coll.aggregate([
+                    {"$match": {"company_id": fresh}},
+                ]).to_list(None)
+
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(run())
+        assert SECRET not in caplog.text
+        assert "sqlite://" not in caplog.text
     finally:
         _restore(monkeypatch, previous, comm_service)
