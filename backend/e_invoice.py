@@ -2472,8 +2472,8 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
     return await _apply_outbound_batch(_db, (pending_first + rest)[:limit])
 
 
-async def outbound_status_loop(interval_s: int = 90):
-    """Giden İşNet faturalarında Ziplenmiş→1300 gecikmesi için sık yenile (varsayılan 90 sn)."""
+async def outbound_status_loop(interval_s: int = 180):
+    """Giden İşNet faturalarında Ziplenmiş→1300 gecikmesi için yenile (varsayılan 180 sn)."""
     import asyncio
 
     await asyncio.sleep(30)

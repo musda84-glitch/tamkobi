@@ -29,7 +29,9 @@ from mysql_store import (
     dumps,
     loads,
     match_query,
+    materialize_docs_async,
     new_upsert_doc,
+    offload,
     project_doc,
     values_at,
 )
@@ -613,6 +615,34 @@ def _touch_row(doc: dict) -> dict:
     return body
 
 
+def _distinct_values(docs, key):
+    seen = []
+    for doc in docs or []:
+        for value in values_at(doc, key) or []:
+            if value not in seen:
+                seen.append(value)
+    return seen
+
+
+def _pipeline_match(pipeline):
+    for stage in pipeline or []:
+        if isinstance(stage, dict) and "$match" in stage:
+            query = stage.get("$match")
+            return query if isinstance(query, dict) else None
+    return None
+
+
+def _owned_window(docs, company_id, since, limit):
+    """Firma sahibi süzgeci, ardından changed_window. NULL company_id kalır."""
+    kept = []
+    for doc in docs or []:
+        owner = str(doc.get("company_id") or company_id)
+        if storage_router.canonical_company_id(owner) != company_id:
+            continue
+        kept.append(doc)
+    return changed_window(kept, since, limit)
+
+
 def _upsert_sql(dialect: str) -> str:
     if dialect == "mysql":
         return "REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
@@ -680,15 +710,40 @@ class DedicatedCollection(StorageCollection):
                     raise DuplicateKeyError("Kayıt zaten var.") from None
                 raise DedicatedStorageError("Dedicated işlemi kesildi.", company_id=self.company_id) from None
 
-    def _load(self, session) -> list:
-        rows = session.fetchall(
-            "SELECT doc FROM storage_records WHERE collection = ?",
-            (self.name,),
-        )
-        return [loads(row[0]) for row in rows]
+    def _narrow_sql(self, query):
+        """İndeksli doc_id / company_id daraltması. Eşleşmeyi match_query doğrular."""
+        sql = "SELECT doc FROM storage_records WHERE collection = ?"
+        args = [self.name]
+        if not isinstance(query, dict):
+            return sql, args
+        ident = query.get("_id")
+        if isinstance(ident, str):
+            sql += " AND doc_id = ?"
+            args.append(ident)
+        elif isinstance(ident, dict):
+            items = ident.get("$in")
+            if isinstance(items, (list, tuple)) and all(isinstance(item, str) for item in items):
+                if items:
+                    marks = ",".join("?" for _ in items)
+                    sql += f" AND doc_id IN ({marks})"
+                    args.extend(items)
+                elif set(ident.keys()) == {"$in"}:
+                    sql += " AND 1=0"
+        company = query.get("company_id")
+        if isinstance(company, str) and len(company) <= 64:
+            sql += " AND company_id = ?"
+            args.append(company)
+        return sql, args
+
+    def _fetch_rows(self, session, query):
+        sql, args = self._narrow_sql(query)
+        return list(session.fetchall(sql, tuple(args)))
+
+    def _load(self, session, query=None) -> list:
+        return [loads(row[0]) for row in self._fetch_rows(session, query)]
 
     def _matched(self, session, query) -> list:
-        return [doc for doc in self._load(session) if match_query(doc, query)]
+        return [doc for doc in self._load(session, query) if match_query(doc, query)]
 
     def _warn_missing_bank_key(self) -> None:
         cid = str(self.company_id or "")
@@ -801,7 +856,8 @@ class DedicatedCollection(StorageCollection):
         self._guard("find", query=query)
 
         async def load():
-            return self._run(lambda session: self._matched(session, query))
+            rows = self._run(lambda session: self._fetch_rows(session, query))
+            return await materialize_docs_async(rows, query)
 
         return StorageCursor(load, projection)
 
@@ -822,44 +878,30 @@ class DedicatedCollection(StorageCollection):
         requested = str(company_id or "").strip()
         if requested and storage_router.canonical_company_id(requested) != self.company_id:
             return [], since, False
-
-        def work(session):
-            docs = []
-            for doc in self._load(session):
-                owner = str(doc.get("company_id") or self.company_id)
-                if storage_router.canonical_company_id(owner) != self.company_id:
-                    continue
-                docs.append(doc)
-            return changed_window(docs, since, limit)
-
-        return self._run(work)
+        rows = self._run(lambda session: self._fetch_rows(session, None))
+        docs = await materialize_docs_async(rows)
+        return await offload(_owned_window, docs, self.company_id, since, limit, size=len(docs))
 
     async def count_documents(self, query=None):
         self._guard("count_documents", query=query)
-        return self._run(lambda session: len(self._matched(session, query)))
+        rows = self._run(lambda session: self._fetch_rows(session, query))
+        docs = await materialize_docs_async(rows, query)
+        return len(docs)
 
     async def distinct(self, key, query=None):
         self._guard("distinct", query=query)
-
-        def work(session):
-            seen = []
-            for doc in self._matched(session, query):
-                for value in values_at(doc, key) or []:
-                    if value not in seen:
-                        seen.append(value)
-            return seen
-
-        return self._run(work)
+        rows = self._run(lambda session: self._fetch_rows(session, query))
+        docs = await materialize_docs_async(rows, query)
+        return await offload(_distinct_values, docs, key, size=len(docs))
 
     def aggregate(self, pipeline):
         self._guard("aggregate", pipeline=pipeline)
+        match = _pipeline_match(pipeline)
 
         async def load():
-            def work(session):
-                docs = self._load(session)
-                return aggregate_rows(docs, pipeline)
-
-            return self._run(work)
+            rows = self._run(lambda session: self._fetch_rows(session, match))
+            docs = await materialize_docs_async(rows)
+            return await offload(aggregate_rows, docs, pipeline, size=len(docs))
 
         return ListCursor(load)
 

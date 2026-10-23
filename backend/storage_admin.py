@@ -173,10 +173,10 @@ def auto_kick() -> bool:
 
 def tick_seconds() -> float:
     try:
-        value = float(os.environ.get("STORAGE_ADMIN_TICK_SECONDS") or "30")
+        value = float(os.environ.get("STORAGE_ADMIN_TICK_SECONDS") or "90")
     except (TypeError, ValueError):
-        value = 30.0
-    return value if value >= 1 else 30.0
+        value = 90.0
+    return value if value >= 1 else 90.0
 
 
 def measure_seconds() -> float:
@@ -1117,6 +1117,44 @@ async def claim_next(db, now: Optional[datetime] = None):
 
 
 _worker_guard = False
+_lease_owner = ""
+_WORKER_LEASE = "bg.storage_admin.worker"
+
+
+class _StoreLease:
+    """Kısa kira. Havuzu olmayan bellek kataloğu işi çalıştırır."""
+
+    def __init__(self, db):
+        self.db = db
+
+    async def try_acquire(self, name: str, owner: str) -> bool:
+        if getattr(self.db, "_pool", None) is None:
+            return True
+        try:
+            import platform_lease
+
+            return bool(await platform_lease.try_acquire(self.db, name, owner, ttl_s=90))
+        except Exception:
+            return True
+
+    async def release(self, name: str, owner: str) -> None:
+        if getattr(self.db, "_pool", None) is None:
+            return
+        try:
+            import platform_lease
+
+            await platform_lease.release(self.db, name, owner)
+        except Exception:
+            return
+
+
+def _process_owner() -> str:
+    global _lease_owner
+    if not _lease_owner:
+        import platform_lease
+
+        _lease_owner = platform_lease.new_owner()
+    return _lease_owner
 
 
 async def worker(db, *, now: Optional[datetime] = None) -> int:
@@ -1124,8 +1162,14 @@ async def worker(db, *, now: Optional[datetime] = None) -> int:
     if _worker_guard:
         return 0
     _worker_guard = True
-    done = 0
+    held = False
+    owner = _process_owner()
+    lease = _StoreLease(db)
     try:
+        held = await lease.try_acquire(_WORKER_LEASE, owner)
+        if not held:
+            return 0
+        done = 0
         while True:
             job = await claim_next(db, now=now)
             if not job:
@@ -1133,6 +1177,8 @@ async def worker(db, *, now: Optional[datetime] = None) -> int:
             await execute(db, job)
             done += 1
     finally:
+        if held:
+            await lease.release(_WORKER_LEASE, owner)
         _worker_guard = False
 
 

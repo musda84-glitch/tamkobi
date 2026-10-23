@@ -203,7 +203,7 @@ async def flush_loop() -> None:
             await flush_once()
         except Exception:
             logger.exception("company event flush")
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(1.0)
 
 
 def _cmdline(pid: int) -> str:

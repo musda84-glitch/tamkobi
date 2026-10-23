@@ -28,7 +28,7 @@ DISK_PCT = _f("PERF_DISK_PCT", 90)
 MYSQL_THREADS = _f("PERF_MYSQL_THREADS", 25)
 CONN_PCT = _f("PERF_CONN_PCT", 80)
 POOL_HIT_MIN = _f("PERF_BUFFER_HIT_MIN", 99.0)
-INTERVAL_SEC = int(_f("PERF_INTERVAL_SEC", 60))
+INTERVAL_SEC = int(_f("PERF_INTERVAL_SEC", 120))
 
 
 def log_dir() -> Path:
@@ -258,7 +258,7 @@ def recommendations(snap: Dict[str, Any]) -> List[str]:
     if mysql.get("ok") and mysql.get("conn_pct", 0) < 20 and int(mysql.get("max_connections") or 0) > 200:
         recs.append("max_connections is oversized for current use; lower it to protect RAM (each connection ~8–16MB).")
     if not recs:
-        recs.append("No urgent scaling action. Keep the 60s perf snapshot and rotate logs.")
+        recs.append("No urgent scaling action. Keep the 120s perf snapshot and rotate logs.")
     return recs
 
 
@@ -326,7 +326,8 @@ async def loop():
     import asyncio
     while True:
         try:
-            persist_snapshot(collect())
+            snap = await asyncio.to_thread(collect)
+            await asyncio.to_thread(persist_snapshot, snap)
         except Exception:
             pass
         await asyncio.sleep(max(15, INTERVAL_SEC))
