@@ -56,7 +56,13 @@ _SECRET_KEYS = frozenset({
     "dedicated_dsn_ref", "dsn", "password", "password_hash", "secret",
     "token", "totp_secret", "db_password", "app_dsn", "admin_dsn",
     "ssl_ca", "merchant_key", "merchant_salt",
+    "iban", "iban_no", "vkn", "tax_number", "tax_id", "tckn", "tc_no",
+    "national_id", "vergi_no",
 })
+_IBAN_RE = re.compile(r"\bTR\d{24}\b", re.IGNORECASE)
+_LABELED_SECRET_RE = re.compile(
+    r"(?i)\b(?:vkn|tckn|iban)\b\s*[:=]?\s*[A-Za-z0-9]{6,34}",
+)
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _IDENT = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _ACTIVE = frozenset({"queued", "running"})
@@ -149,20 +155,30 @@ def fmt_mb(value: float) -> str:
     return f"{number:.1f}".replace(".", ",")
 
 
-def public_copy(value):
-    """Yanıttan gizli anahtarları ve URL benzeri dizgeleri çıkarır."""
+def _hidden_key(key: str) -> bool:
+    return str(key).lower() in _SECRET_KEYS
+
+
+def _scrub_public_text(value: str) -> str:
     from storage_migrations.masking import scrub
 
+    text = scrub(value)
+    text = _IBAN_RE.sub("***", text)
+    return _LABELED_SECRET_RE.sub("***", text)
+
+
+def public_copy(value):
+    """Yanıttan gizli anahtarları, DSN, IBAN ve etiketli kimlikleri çıkarır."""
     if isinstance(value, dict):
         return {
             key: public_copy(item)
             for key, item in value.items()
-            if key not in _SECRET_KEYS
+            if not _hidden_key(key)
         }
     if isinstance(value, list):
         return [public_copy(item) for item in value]
     if isinstance(value, str):
-        return scrub(value)
+        return _scrub_public_text(value)
     return value
 
 
@@ -913,7 +929,11 @@ async def overview(db) -> dict:
     }
 
 
-async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str = "", move_id: str = "", when: str = "now") -> dict:
+async def describe_enqueue(db, *, kind: str, company_id: str, to_mode: str = "", move_id: str = "", when: str = "now") -> dict:
+    """İşin doğrulanmış planı. Koleksiyona yazmaz.
+
+    Deneme zorunluluğu, yönlendirici ve tek taşıma kontrolleri enqueue ile aynıdır.
+    """
     cid = str(company_id or "").strip()
     move_id = str(move_id or "").strip()
     if kind in ("rollback", "recover") and not cid:
@@ -928,6 +948,7 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
     mode = ""
     scheduled_for = ""
     status = "queued"
+    normalized_when = ""
     if kind in ("dry_run", "apply"):
         mode = _mode(to_mode)
         if kind == "apply":
@@ -937,9 +958,11 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
             dry = summary.get("last_dry_run") if isinstance(summary.get("last_dry_run"), dict) else {}
             if not dry.get("ok") or dry.get("to_mode") != mode:
                 raise StorageAdminError("Önce deneme çalıştırın. Deneme sonucu yok.")
+            normalized_when = "now"
         if kind == "apply" and when == "maintenance":
             scheduled_for = maintenance_window()["start"]
             status = "scheduled"
+            normalized_when = "maintenance"
         elif kind == "apply" and when not in ("", "now"):
             parsed = _parse(when)
             if parsed is None:
@@ -947,24 +970,46 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
             if parsed > _now():
                 scheduled_for = parsed.isoformat()
                 status = "scheduled"
+            normalized_when = str(when)
     if kind in ("rollback", "recover"):
         if not storage_router.enabled():
             raise StorageAdminError("Depolama yönlendiricisi kapalı. Taşıma yazılmaz.")
         if not move_id:
             raise StorageAdminError("move_id gerekli.")
+    if status == "queued" and await _busy(db):
+        raise StorageAdminError("Aynı anda tek taşıma yapılabilir.", status=409)
+    return {
+        "company_id": cid,
+        "company_name": str(company.get("name") or cid),
+        "kind": kind,
+        "from_mode": storage_router.public_mode(company.get(storage_router.MODE_FIELD)),
+        "to_mode": mode,
+        "move_id": move_id,
+        "status": status,
+        "scheduled_for": scheduled_for,
+        "when": normalized_when,
+    }
+
+
+async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str = "", move_id: str = "", when: str = "now") -> dict:
+    plan = await describe_enqueue(
+        db, kind=kind, company_id=company_id, to_mode=to_mode, move_id=move_id, when=when,
+    )
+    cid = plan["company_id"]
+    mode = plan["to_mode"]
     summary = await _find_one(db, SUMMARIES, {"_id": cid}) or {}
     dry = summary.get("last_dry_run") if isinstance(summary.get("last_dry_run"), dict) else {}
     total = int(dry.get("collections") or 0) if dry.get("to_mode") == mode else 0
     job_id = uuid.uuid4().hex
     doc = {
         "_id": job_id,
-        "kind": kind,
+        "kind": plan["kind"],
         "company_id": cid,
-        "from_mode": storage_router.public_mode(company.get(storage_router.MODE_FIELD)),
+        "from_mode": plan["from_mode"],
         "to_mode": mode,
-        "move_id": move_id,
-        "status": status,
-        "scheduled_for": scheduled_for,
+        "move_id": plan["move_id"],
+        "status": plan["status"],
+        "scheduled_for": plan["scheduled_for"],
         "created_at": _iso(),
         "started_at": "",
         "finished_at": "",
@@ -974,13 +1019,148 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
         "result": {},
         "error": "",
     }
-    if status == "queued" and await _busy(db):
-        raise StorageAdminError("Aynı anda tek taşıma yapılabilir.", status=409)
     await db[JOBS].insert_one(doc)
-    await _audit(db, actor, cid, kind, status)
-    if status == "queued":
+    await _audit(db, actor, cid, plan["kind"], plan["status"])
+    if plan["status"] == "queued":
         kick(db)
-    return {"job_id": job_id, "status": status, "company_id": storage_router._safe_company(cid), "scheduled_for": scheduled_for}
+    return {
+        "job_id": job_id,
+        "status": plan["status"],
+        "company_id": storage_router._safe_company(cid),
+        "scheduled_for": plan["scheduled_for"],
+    }
+
+
+async def require_move(db, move_id: str, company_id: str) -> dict:
+    """Taşıma kaydı bu firmaya ait değilse 404. DSN döndürmez."""
+    found = await _find_one(db, MOVES, {"_id": str(move_id or "").strip()})
+    if not found or str(found.get("company_id") or "") != str(company_id or ""):
+        raise StorageAdminError("Taşıma kaydı yok.", status=404)
+    return {
+        "move_id": str(found.get("_id") or ""),
+        "company_id": storage_router._safe_company(str(found.get("company_id") or "")),
+        "status": found.get("status") or "",
+        "from_mode": storage_router.public_mode(found.get("from_mode")),
+        "to_mode": storage_router.public_mode(found.get("to_mode")),
+    }
+
+
+def _progress_fields(job: Optional[dict]) -> dict:
+    progress = job.get("progress") if isinstance(job, dict) and isinstance(job.get("progress"), dict) else {}
+
+    def _int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "collection": str(progress.get("collection") or ""),
+        "done": _int(progress.get("done")),
+        "total": _int(progress.get("total")),
+        "records": _int(progress.get("records")),
+    }
+
+
+async def job_status(db, job_id: str) -> dict:
+    raw = str(job_id or "").strip()
+    job = await _find_one(db, JOBS, {"_id": raw}) if raw else None
+    if not job:
+        raise StorageAdminError("İş bulunamadı.", status=404)
+    move = None
+    mid = str(job.get("move_id") or "")
+    if mid:
+        move = await _find_one(db, MOVES, {"_id": mid})
+    progress = _progress(job, move)
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    source = result if result else (move or {})
+    check = _checksum_view(source.get("checksums"), source.get("counts"))
+    if job.get("status") in _ACTIVE or job.get("status") == "scheduled":
+        check = {"label": "bekleniyor", "ok": None}
+    fields = _progress_fields(job)
+    return {
+        "job_id": job.get("_id") or "",
+        "kind": job.get("kind") or "",
+        "company_id": storage_router._safe_company(str(job.get("company_id") or "")),
+        "from_mode": storage_router.public_mode(job.get("from_mode")),
+        "to_mode": storage_router.public_mode(job.get("to_mode") or ""),
+        "move_id": mid,
+        "status": job.get("status") or "",
+        "scheduled_for": job.get("scheduled_for") or "",
+        "created_at": job.get("created_at") or "",
+        "started_at": job.get("started_at") or "",
+        "finished_at": job.get("finished_at") or "",
+        "progress_pct": progress["pct"],
+        "progress_label": progress["label"],
+        "progress": {"pct": progress["pct"], "label": progress["label"], **fields},
+        "error": str(job.get("error") or ""),
+        "checksum_label": check["label"],
+        "checksum_ok": check["ok"],
+    }
+
+
+async def move_status(db, move_id: str) -> dict:
+    raw = str(move_id or "").strip()
+    move = await _find_one(db, MOVES, {"_id": raw}) if raw else None
+    if not move:
+        raise StorageAdminError("Taşıma kaydı yok.", status=404)
+    cid = str(move.get("company_id") or "")
+    company = await _find_one(db, "companies", {"_id": cid}) or {}
+    catalog = {
+        cid: {
+            "name": company.get("name") or cid,
+            "test": is_test_company(company) if company else False,
+        },
+    }
+    rows = _history(catalog, [move], await _all(db, JOBS))
+    if not rows:
+        raise StorageAdminError("Taşıma kaydı yok.", status=404)
+    return rows[0]
+
+
+async def company_metrics(db, company_id: str) -> dict:
+    cid = _company_id(company_id)
+    await _require_company(db, cid)
+    data = await overview(db)
+    row = next((item for item in data["companies"] if item["id"] == cid), None)
+    if row is None:
+        raise StorageAdminError("Firma bulunamadı.", status=404)
+    return {
+        "company": row,
+        "thresholds": data["thresholds"],
+        "maintenance": data["maintenance"],
+        "router_enabled": data["router_enabled"],
+        "measured_at": data["measured_at"],
+    }
+
+
+async def move_history(db, *, company_id: str = "", limit: int = 50, offset: int = 0) -> dict:
+    data = await overview(db)
+    rows = list(data["moves"])
+    if str(company_id or "").strip():
+        cid = _company_id(company_id)
+        await _require_company(db, cid)
+        rows = [row for row in rows if row.get("company_id") == cid]
+    total = len(rows)
+    return {
+        "items": rows[offset:offset + limit],
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+    }
+
+
+async def describe_prepare_dedicated(db, company_id: str) -> dict:
+    """Dedicated hazırlığın önizlemesi. Veritabanı oluşturmaz, DSN döndürmez."""
+    cid = _company_id(company_id)
+    company = await _require_company(db, cid)
+    has = bool(str(company.get(storage_router.DSN_FIELD) or "").strip())
+    return {
+        "company_id": storage_router._safe_company(cid),
+        "company_name": str(company.get("name") or cid),
+        "has_dedicated_dsn": has,
+        "will_create": not has,
+    }
 
 
 async def cancel_job(db, job_id: str, actor: dict) -> dict:

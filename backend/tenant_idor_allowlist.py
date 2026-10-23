@@ -128,6 +128,12 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("POST", "/platform/admin-v1/einvoice-designs/{design_id}/delete"),
     ("POST", "/platform/admin-v1/companies/{company_id}/gib-credits/gift"),
     ("GET", "/platform/admin-v1/support/tickets/{ticket_id}/attachments/{message_id}/{index}"),
+    # Veritabanı taşıma — HMAC platform_admin, şirket oturumu yok.
+    ("GET", "/platform/admin-v1/storage-move/companies/{company_id}"),
+    ("GET", "/platform/admin-v1/storage-move/jobs/{job_id}"),
+    ("GET", "/platform/admin-v1/storage-move/moves/{move_id}"),
+    ("POST", "/platform/admin-v1/storage-move/companies/{company_id}/dry-run"),
+    ("POST", "/platform/admin-v1/storage-move/jobs/{job_id}/cancel"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -207,4 +213,9 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("POST", "/platform/admin-v1/einvoice-designs/{design_id}/delete"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("POST", "/platform/admin-v1/companies/{company_id}/gib-credits/gift"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
     ("GET", "/platform/admin-v1/support/tickets/{ticket_id}/attachments/{message_id}/{index}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("GET", "/platform/admin-v1/storage-move/companies/{company_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("GET", "/platform/admin-v1/storage-move/jobs/{job_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("GET", "/platform/admin-v1/storage-move/moves/{move_id}"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/storage-move/companies/{company_id}/dry-run"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
+    ("POST", "/platform/admin-v1/storage-move/jobs/{job_id}/cancel"): "Platform yönetim API'si; HMAC platform_admin anahtarı (kind=platform_admin, admin.* kapsamı), şirket oturumu yok",
 }

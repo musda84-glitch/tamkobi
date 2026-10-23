@@ -67,6 +67,8 @@ _NEW_SCOPES = (
     "admin.einvoice:write",
     "admin.db:read",
     "admin.reminders:write",
+    "admin.storage_move:read",
+    "admin.storage_move:write",
 )
 
 

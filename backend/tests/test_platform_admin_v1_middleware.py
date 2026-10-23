@@ -29,6 +29,7 @@ import comm_service  # noqa: E402
 import platform_admin_v1  # noqa: E402
 import platform_admin_v1_accounts  # noqa: E402
 import platform_admin_v1_content  # noqa: E402
+import platform_admin_v1_storage_move  # noqa: E402
 import platform_admin_v1_danger  # noqa: E402
 import platform_admin_v1_integrations  # noqa: E402
 import platform_admin_v1_ops  # noqa: E402
@@ -49,6 +50,7 @@ _ROUTERS = (
     platform_admin_v1_accounts.router,
     platform_admin_v1_integrations.router,
     platform_admin_v1_content.router,
+    platform_admin_v1_storage_move.router,
 )
 
 _MUST_EXIST = (
