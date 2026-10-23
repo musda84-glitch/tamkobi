@@ -2460,6 +2460,34 @@ async def _next_number(prefix: str, coll=None, company_id: Optional[str] = None)
     c = await db.counters.find_one_and_update({"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
     return f"{prefix}-{year}-{c['seq']:04d}"
 
+
+_IRS_SEQ = re.compile(r"^IRS-(\d{4})-(\d+)$")
+
+
+async def _next_dispatch_number(company_id: str) -> str:
+    """İrsaliye sayacı şirkete aittir. Biçim IRS-yıl-sıra kalır; mevcut numaralar yeniden yazılmaz.
+
+    Sayaç yoksa o şirketin bu yıldaki en büyük IRS-yıl-sıra değerinden tohumlanır.
+    """
+    cid = str(company_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="İrsaliye numarası için şirket gerekli.")
+    year = datetime.now(timezone.utc).year
+    key = f"IRS-{year}-{cid}"
+    if not await db.counters.find_one({"_id": key}):
+        seed = 0
+        cursor = db.invoices.find(
+            {"company_id": cid, "invoice_number": {"$regex": rf"^IRS-{year}-\d+$"}},
+            {"invoice_number": 1},
+        )
+        rows = await cursor.to_list(None) if hasattr(cursor, "to_list") else []
+        for row in rows or []:
+            match = _IRS_SEQ.match(str((row or {}).get("invoice_number") or ""))
+            if match and int(match.group(1)) == year:
+                seed = max(seed, int(match.group(2)))
+        await db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+    return await _next_number("IRS", None, cid)
+
 async def _next_order_number(company_id: str, prefix: str) -> str:
     """Atomik sayaç; mevcut en büyük numaradan devam eder (mükerrer sipariş no engeli)."""
     year = datetime.now(timezone.utc).year
@@ -9810,7 +9838,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
                         "message": f"İrsaliye taslak: {d['invoice_number']}. İşNet: {sent.get('detail')}",
                     }
             return {"status": "exists", "dispatch": clean_doc(d), "message": f"Bu faturanın irsaliyesi zaten var: {d['invoice_number']}"}
-    number = await _next_number("IRS", db.invoices)
+    number = await _next_dispatch_number(inv["company_id"])
     contact = await db.contacts.find_one({"_id": inv.get("contact_id"), "company_id": cid}) if inv.get("contact_id") else None
     settings = await db.einvoice_settings.find_one({"company_id": inv["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
@@ -10145,6 +10173,9 @@ async def _merge_dispatches_core(dispatch_ids, user: dict, company_id: Optional[
             contact_name=spec.get("contact_name") or "",
             contact_tax_id=spec.get("contact_tax_id") or "",
             contact_tax_office=spec.get("contact_tax_office") or "",
+            shipping_address=spec.get("shipping_address") or None,
+            city=spec.get("city") or None,
+            customer_phone=spec.get("customer_phone") or None,
             items=items,
             currency=spec.get("currency") or "TRY",
             fx_rate=float(spec.get("fx_rate") or 1),
@@ -10192,7 +10223,7 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     await _fill_stock_codes(invoice.company_id, invoice.items)
     if not invoice.invoice_number:
         if invoice.invoice_type == "dispatch":
-            invoice.invoice_number = await _next_number("IRS", db.invoices)
+            invoice.invoice_number = await _next_dispatch_number(invoice.company_id)
         else:
             year = datetime.now(timezone.utc).strftime("%Y")
             if invoice.trade_kind == "export" or invoice.e_type == "e_export":
@@ -18692,6 +18723,62 @@ async def list_returns(company_id: Optional[str] = None, user: dict = Depends(ge
     cid = tenant_access.resolve_company_id(user, company_id)
     return clean_docs(await db.returns.find({"company_id": cid}).sort("created_at", -1).to_list(500))
 
+def _order_lines_for_dispatch(order: dict, products: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Sipariş kalemini fatura kalemine çevir. Açık KDV 0 kalır; boş oran karttan, o da yoksa %20."""
+    prepared = []
+    for it in order.get("items") or []:
+        raw = dict(it)
+        pid = str(raw.get("product_id") or "").strip()
+        product = products.get(pid) if pid else None
+        if raw.get("vat_rate") in (None, "") and product is not None and product.get("vat_rate") not in (None, ""):
+            raw["vat_rate"] = product.get("vat_rate")
+        if product is not None and product.get("unit"):
+            raw["unit"] = product.get("unit")
+        elif not raw.get("unit"):
+            raw["unit"] = "Adet"
+        if product is not None:
+            if not str(raw.get("sku") or "").strip() and product.get("sku"):
+                raw["sku"] = product.get("sku")
+            if not str(raw.get("barcode") or "").strip() and product.get("barcode"):
+                raw["barcode"] = product.get("barcode")
+        prepared.append(raw)
+    rows = order_items_to_invoice_items(prepared)
+    for src, row in zip(prepared, rows):
+        if src.get("price_includes_vat") not in (None, ""):
+            row["price_includes_vat"] = bool(src.get("price_includes_vat"))
+    return rows
+
+
+def _dispatch_totals_from_order(order: dict, items: List[Dict[str, Any]]) -> Dict[str, float]:
+    """İrsaliye toplamı siparişin ara toplam / KDV / genel toplamından gelir."""
+    computed = invoice_document_totals(
+        items,
+        order.get("general_discount_rate") or 0,
+        order.get("general_discount_amount") or 0,
+    )
+
+    def num(key: str):
+        raw = order.get(key)
+        if raw in (None, ""):
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    sub, vat, grand = num("subtotal"), num("vat_total"), num("grand_total")
+    if all(v in (None, 0.0) for v in (sub, vat, grand)):
+        return computed
+    discount = num("discount_total")
+    return {
+        "subtotal": computed["subtotal"] if sub in (None, 0.0) else sub,
+        "vat_total": computed["vat_total"] if vat is None else vat,
+        "grand_total": computed["grand_total"] if grand in (None, 0.0) else grand,
+        "discount_total": computed["discount_total"] if discount is None else discount,
+        "general_discount_amount": computed["general_discount_amount"],
+    }
+
+
 @api_router.post("/orders/{order_id}/create-dispatch")
 async def create_dispatch(order_id: str, user: dict = Depends(get_current_user)):
     """Siparişten yalnız taslak e-İrsaliye. İşNet/GİB gönderimi detaydaki nakliye formundan yapılır."""
@@ -18711,38 +18798,36 @@ async def create_dispatch(order_id: str, user: dict = Depends(get_current_user))
     contact = await db.contacts.find_one({"_id": contact_id, "company_id": o["company_id"]})
     if not contact:
         raise HTTPException(status_code=400, detail="Önce cari seçin")
-    number = await _next_number("IRS", db.invoices)
+    number = await _next_dispatch_number(o["company_id"])
     settings = await db.einvoice_settings.find_one({"company_id": o["company_id"]}) or {}
     defaults = _despatch_defaults_view(settings)
-    items = []
+    products = {}
     for it in o.get("items") or []:
-        product = None
         pid = str(it.get("product_id") or "").strip()
-        if pid:
-            product = await db.products.find_one({"_id": pid, "company_id": o["company_id"]})
-        if product is not None and product.get("vat_rate") is not None:
-            vat_rate = product.get("vat_rate")
-        elif it.get("vat_rate") is not None:
-            vat_rate = it.get("vat_rate")
-        else:
-            vat_rate = 0
-        unit = (product or {}).get("unit") or it.get("unit") or "Adet"
-        items.append({
-            "product_id": it.get("product_id"),
-            "name": it.get("product_name") or it.get("name"),
-            "quantity": it.get("quantity"),
-            "unit": unit,
-            "unit_price": it.get("unit_price"),
-            "vat_rate": vat_rate,
-            "total": it.get("total"),
-        })
+        if pid and pid not in products:
+            products[pid] = await db.products.find_one({"_id": pid, "company_id": o["company_id"]})
+    items = _order_lines_for_dispatch(o, products)
+    totals = _dispatch_totals_from_order(o, items)
+    currency = str(o.get("currency") or "TRY").strip().upper() or "TRY"
+    try:
+        fx_rate = float(o.get("fx_rate") or 1)
+    except (TypeError, ValueError):
+        fx_rate = 1.0
     ship = str(o.get("shipping_address") or "").strip() or str((contact or {}).get("address") or "").strip()
     doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"],
            "contact_name": contact.get("name") or o.get("customer_name"),
            "contact_tax_id": invoice_contact_tax_id(contact),
+           "contact_tax_office": (contact or {}).get("tax_office") or "",
            "customer_phone": o.get("customer_phone") or contact.get("phone"), "shipping_address": ship, "city": o.get("city") or contact.get("city"),
            "items": items,
-           "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
+           "subtotal": totals["subtotal"], "vat_total": totals["vat_total"], "discount_total": totals.get("discount_total") or 0,
+           "general_discount_rate": float(o.get("general_discount_rate") or 0),
+           "general_discount_amount": float(totals.get("general_discount_amount") or 0),
+           "grand_total": totals["grand_total"], "currency": currency, "fx_rate": fx_rate, "fx_source": o.get("fx_source"),
+           "customer_order_number": o.get("customer_order_number") or o.get("po_number") or "",
+           "payment_method": o.get("payment_method") or "",
+           "payment_type": o.get("payment_type") or "",
+           "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
            "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier") or defaults.get("carrier_name"), "cargo_tracking_number": o.get("cargo_tracking_number"), "source_channel": o.get("channel", "b2b"),
            "despatch_defaults": defaults,
            "despatch_plate": defaults.get("plate") or "",

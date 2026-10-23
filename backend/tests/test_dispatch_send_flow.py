@@ -79,6 +79,13 @@ class Coll:
                 row.pop(key, None)
             return
 
+    def find(self, q=None, projection=None):
+        class _Cursor:
+            async def to_list(self, n=None):
+                return []
+
+        return _Cursor()
+
     async def find_one_and_update(self, q, upd, upsert=False, return_document=None):
         return {"_id": (q or {}).get("_id"), "seq": 7}
 

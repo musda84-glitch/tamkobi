@@ -213,16 +213,16 @@ def validate_merge_dispatches(dispatches: Sequence[Dict[str, Any]], company_id: 
 
 
 def vat_rate_for_line(item: Dict[str, Any], products: Dict[str, Any]) -> int:
-    """KDV ürün kartından gelir. Kart yoksa satırdaki oran, o da yoksa %20."""
+    """KDV ürün kartından gelir. Kart yoksa satırdaki oran; açık 0 korunur, boşsa %20."""
     pid = item.get("product_id")
     prod = products.get(pid) if pid else None
     if prod is not None and prod.get("vat_rate") not in (None, ""):
         try:
-            return int(round(float(prod.get("vat_rate") or 0)))
+            return int(round(float(prod.get("vat_rate"))))
         except (TypeError, ValueError):
             pass
     explicit = item.get("vat_rate")
-    if explicit not in (None, "", 0, "0", 0.0):
+    if explicit not in (None, ""):
         try:
             return int(round(float(explicit)))
         except (TypeError, ValueError):
@@ -252,6 +252,10 @@ def build_merge_lines(dispatches: Sequence[Dict[str, Any]], products: Dict[str, 
                 "barcode": it.get("barcode") or "",
                 "dispatch_id": did,
             }
+            if it.get("unit_price_incl") not in (None, ""):
+                row["unit_price_incl"] = float(it.get("unit_price_incl") or 0)
+            if it.get("price_includes_vat") not in (None, ""):
+                row["price_includes_vat"] = bool(it.get("price_includes_vat"))
             if it.get("note"):
                 row["note"] = it.get("note")
             if oid:
@@ -304,6 +308,264 @@ def _notes_for(dispatches: Sequence[Dict[str, Any]]) -> str:
     return text.strip()
 
 
+def official_despatch_ref(dispatch: Optional[Dict[str, Any]]) -> Optional[tuple]:
+    """GİB'e gitmiş irsaliyenin resmi numarası ve tarihi. Taslakta veya GİB no yoksa None."""
+    if not dispatch or dispatch_still_draft(dispatch):
+        return None
+    gid = str(dispatch.get("gib_invoice_id") or "").strip()
+    if not gid:
+        return None
+    raw = (
+        dispatch.get("gib_issue_date")
+        or dispatch.get("gib_date")
+        or dispatch.get("issue_date")
+        or dispatch.get("issued_at")
+        or ""
+    )
+    return gid, str(raw)[:10]
+
+
+def _marketplace_sale(dispatches: Sequence[Dict[str, Any]], orders: Sequence[Dict[str, Any]]) -> bool:
+    from marketplace_providers import VAT_INCL_CHANNELS
+
+    for row in list(dispatches) + list(orders):
+        channel = str((row or {}).get("source_channel") or (row or {}).get("channel") or "").strip().lower()
+        if channel in VAT_INCL_CHANNELS:
+            return True
+    return False
+
+
+def _first_text(rows: Sequence[Dict[str, Any]], *keys: str) -> str:
+    for row in rows:
+        if not row:
+            continue
+        for key in keys:
+            text = str(row.get(key) or "").strip()
+            if text and text != "-":
+                return text
+    return ""
+
+
+def party_carry(
+    dispatches: Sequence[Dict[str, Any]],
+    orders: Sequence[Dict[str, Any]],
+    contact: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Birleşik faturaya cari, adres, ödeme ve pazaryeri alanlarını taşır."""
+    rows: List[Dict[str, Any]] = [d for d in dispatches if d] + [o for o in orders if o]
+    if contact:
+        rows.append({
+            "contact_tax_office": contact.get("tax_office") or contact.get("contact_tax_office"),
+            "shipping_address": contact.get("address"),
+            "city": contact.get("city"),
+            "customer_phone": contact.get("phone"),
+        })
+    out: Dict[str, Any] = {
+        "contact_tax_office": _first_text(rows, "contact_tax_office", "tax_office"),
+        "shipping_address": _first_text(rows, "shipping_address", "address"),
+        "city": _first_text(rows, "city"),
+        "customer_phone": _first_text(rows, "customer_phone", "phone"),
+        "payment_method": _first_text(rows, "payment_method"),
+        "payment_type": _first_text(rows, "payment_type"),
+    }
+    numbers: List[str] = []
+    for row in list(dispatches) + list(orders):
+        raw = str((row or {}).get("customer_order_number") or (row or {}).get("po_number") or "").strip()
+        if raw and raw not in numbers:
+            numbers.append(raw)
+    if numbers:
+        out["customer_order_number"] = ", ".join(numbers)
+    if _marketplace_sale(dispatches, orders):
+        out["internet_sale"] = "EVET"
+    return {key: value for key, value in out.items() if value not in ("", None)}
+
+
+def _dispatch_link_ids(inv: Optional[Dict[str, Any]]) -> List[str]:
+    ids: List[str] = []
+    if not inv or inv.get("invoice_type") == "dispatch":
+        return ids
+    for raw in list(inv.get("dispatch_ids") or []):
+        sid = str(raw or "").strip()
+        if sid and sid not in ids:
+            ids.append(sid)
+    one = str(inv.get("dispatch_id") or "").strip()
+    if one and one not in ids:
+        ids.append(one)
+    return ids
+
+
+async def _idempotent_merged_invoice(db, dispatches: Sequence[Dict[str, Any]], company_id: str) -> Optional[Dict[str, Any]]:
+    """Tüm irsaliyeler aynı satış faturasına bağlıysa onu döndür."""
+    ids: List[str] = []
+    for dispatch in dispatches:
+        iid = str(dispatch.get("converted_invoice_id") or "").strip()
+        if not iid or str(dispatch.get("dispatch_status") or "").lower() != "invoiced":
+            return None
+        ids.append(iid)
+    if len(set(ids)) != 1:
+        return None
+    inv = await db.invoices.find_one({"_id": ids[0], "company_id": company_id})
+    return inv if _is_sales_invoice(inv) else None
+
+
+def _order_invoice_blocked(inv: Dict[str, Any]) -> bool:
+    status = str(inv.get("status") or "draft").lower()
+    state = str(inv.get("einvoice_state") or "draft").lower()
+    if status != "draft":
+        return True
+    return state in ("sent", "queued", "accepted")
+
+
+async def _orders_for_merge(db, dispatches: Sequence[Dict[str, Any]], company_id: str):
+    """Sipariş kesilmişse veya faturası taslak değilse 409. Geliş taslaklarını döndür."""
+    oids: List[str] = []
+    for dispatch in dispatches:
+        for oid in order_ids_of(dispatch):
+            if oid not in oids:
+                oids.append(oid)
+    orders: List[Dict[str, Any]] = []
+    drafts: List[Dict[str, Any]] = []
+    seen_draft = set()
+    for oid in oids:
+        order = await db.orders.find_one({"_id": oid, "company_id": company_id})
+        if not order:
+            continue
+        orders.append(order)
+        label = str(order.get("order_number") or oid)
+        if order.get("is_invoiced"):
+            raise MergeBlocked(409, f"Sipariş zaten faturalanmış: {label}.")
+        iid = str(order.get("invoice_id") or "").strip()
+        if not iid or iid in seen_draft:
+            continue
+        inv = await db.invoices.find_one({"_id": iid, "company_id": company_id})
+        if not inv or not _is_sales_invoice(inv):
+            continue
+        if _order_invoice_blocked(inv):
+            raise MergeBlocked(409, f"Sipariş faturası taslak değil: {inv.get('invoice_number') or iid}.")
+        seen_draft.add(iid)
+        drafts.append(inv)
+    return orders, drafts
+
+
+async def _contact_for_merge(db, dispatches: Sequence[Dict[str, Any]], company_id: str) -> Optional[Dict[str, Any]]:
+    contact_id = str((dispatches[0] or {}).get("contact_id") or "").strip() if dispatches else ""
+    contacts = getattr(db, "contacts", None)
+    if not contact_id or contacts is None:
+        return None
+    return await contacts.find_one({"_id": contact_id, "company_id": company_id})
+
+
+async def _point_orders(db, orders: Sequence[Dict[str, Any]], company_id: str, invoice_id: str, invoice_number: str) -> None:
+    for order in orders:
+        oid = order.get("_id") or order.get("id")
+        if not oid:
+            continue
+        await db.orders.update_one(
+            {"_id": oid, "company_id": company_id},
+            {"$set": {"invoice_id": invoice_id, "invoice_number": invoice_number}},
+        )
+
+
+async def _restore_order_invoices(db, snapshots: Sequence[Dict[str, Any]], company_id: str) -> None:
+    for prev in snapshots:
+        oid = prev.get("_id") or prev.get("id")
+        if not oid:
+            continue
+        await db.orders.update_one(
+            {"_id": oid, "company_id": company_id},
+            {"$set": {
+                "invoice_id": prev.get("invoice_id"),
+                "invoice_number": prev.get("invoice_number"),
+            }},
+        )
+
+
+async def _retire_intake_drafts(db, drafts: Sequence[Dict[str, Any]], company_id: str, keep_id: str, removed: List[Dict[str, Any]]) -> None:
+    for draft in drafts:
+        did = str(draft.get("_id") or draft.get("id") or "")
+        if not did or did == keep_id:
+            continue
+        res = await db.invoices.delete_one({
+            "_id": did,
+            "company_id": company_id,
+            "invoice_type": "sales",
+            "status": "draft",
+        })
+        if int(getattr(res, "deleted_count", 0) or 0) == 1:
+            removed.append(draft)
+            continue
+        fresh = await db.invoices.find_one({"_id": did, "company_id": company_id})
+        if fresh and _is_sales_invoice(fresh) and _order_invoice_blocked(fresh):
+            raise MergeBlocked(409, f"Sipariş faturası taslak değil: {fresh.get('invoice_number') or did}.")
+
+
+async def _restore_intake_drafts(db, drafts: Sequence[Dict[str, Any]], company_id: str) -> None:
+    for draft in drafts:
+        did = str(draft.get("_id") or draft.get("id") or "")
+        if not did:
+            continue
+        existing = await db.invoices.find_one({"_id": did, "company_id": company_id})
+        if existing:
+            continue
+        body = dict(draft)
+        body["company_id"] = company_id
+        await db.invoices.insert_one({**body, "company_id": company_id})
+
+
+async def attach_official_despatch_refs(db, inv: Dict[str, Any]) -> Dict[str, Any]:
+    """Kesimde irsaliyeleri yeniden oku. Taslak veya GİB numarası yoksa kesimi durdur."""
+    if not inv or inv.get("invoice_type") == "dispatch" or db is None:
+        return inv
+    ids = _dispatch_link_ids(inv)
+    if not ids:
+        return inv
+    cid = str(inv.get("company_id") or "").strip()
+    if not cid:
+        return inv
+    invoices = getattr(db, "invoices", None)
+    if invoices is None:
+        return inv
+    gib_ids: List[str] = []
+    gib_dates: List[str] = []
+    drafts: List[str] = []
+    missing: List[str] = []
+    for did in ids:
+        row = await invoices.find_one({"_id": did, "company_id": cid})
+        label = str((row or {}).get("invoice_number") or did)
+        if not row:
+            missing.append(label)
+            continue
+        if dispatch_still_draft(row):
+            drafts.append(label)
+            continue
+        ref = official_despatch_ref(row)
+        if not ref:
+            missing.append(label)
+            continue
+        gib_ids.append(ref[0])
+        gib_dates.append(ref[1])
+    if drafts:
+        nums = ", ".join(drafts)
+        raise MergeBlocked(
+            409,
+            f"Bağlı irsaliye henüz GİB'e gönderilmemiş: {nums}. Önce irsaliyeyi GİB'e iletin.",
+        )
+    if missing:
+        nums = ", ".join(missing)
+        raise MergeBlocked(
+            409,
+            f"İrsaliyenin GİB numarası yok: {nums}. Kesim için GİB irsaliye numarası gerekli.",
+        )
+    updated = {**inv, "despatch_gib_ids": gib_ids, "despatch_gib_dates": gib_dates}
+    iid = inv.get("_id") or inv.get("id")
+    if iid:
+        await invoices.update_one(
+            {"_id": iid, "company_id": cid},
+            {"$set": {"despatch_gib_ids": gib_ids, "despatch_gib_dates": gib_dates}},
+        )
+    return updated
+
+
 def merge_header(dispatches: Sequence[Dict[str, Any]], invoice_id: str, invoice_number: str) -> Dict[str, Any]:
     ids = [_doc_id(d) for d in dispatches]
     numbers = [d.get("invoice_number") or "" for d in dispatches]
@@ -328,6 +590,16 @@ def merge_header(dispatches: Sequence[Dict[str, Any]], invoice_id: str, invoice_
         "dispatch_dates": dates,
         "stock_effects_from_dispatch": any(dispatch_posted_stock(d) for d in dispatches),
     }
+    gib_ids: List[str] = []
+    gib_dates: List[str] = []
+    for d in dispatches:
+        ref = official_despatch_ref(d)
+        if not ref:
+            continue
+        gib_ids.append(ref[0])
+        gib_dates.append(ref[1])
+    header["despatch_gib_ids"] = gib_ids
+    header["despatch_gib_dates"] = gib_dates
     if oids:
         header["order_id"] = oids[0]
         header["order_ids"] = oids
@@ -386,12 +658,24 @@ async def _release_one(db, dispatch_id: str, invoice_id: str, previous_status: s
     )
 
 
+_CARRY_KEYS = (
+    "payment_method", "payment_type", "customer_order_number", "internet_sale",
+    "contact_tax_office", "shipping_address", "city", "customer_phone",
+)
+
+
 async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, company_id: str, products: Dict[str, Any], create_invoice) -> Dict[str, Any]:
     """Doğrulanmış irsaliyelerden tek TASLAK satış faturası. Aynı irsaliye ikinci faturaya girmez."""
     cid = str(company_id or "").strip()
     if not cid:
         raise MergeBlocked(404, "İrsaliye bulunamadı.")
+    existing = await _idempotent_merged_invoice(db, dispatches, cid)
+    if existing:
+        return existing
     validate_merge_dispatches(dispatches, cid)
+    orders, drafts = await _orders_for_merge(db, dispatches, cid)
+    contact = await _contact_for_merge(db, dispatches, cid)
+    carry = party_carry(dispatches, orders, contact)
     lines = build_merge_lines(dispatches, products or {})
     if not lines:
         raise MergeBlocked(400, "İrsaliyede kalem yok.")
@@ -402,7 +686,10 @@ async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, c
         "contact_id": first.get("contact_id"),
         "contact_name": first.get("contact_name") or "",
         "contact_tax_id": first.get("contact_tax_id") or "",
-        "contact_tax_office": first.get("contact_tax_office") or "",
+        "contact_tax_office": carry.get("contact_tax_office") or first.get("contact_tax_office") or "",
+        "shipping_address": carry.get("shipping_address") or "",
+        "city": carry.get("city") or "",
+        "customer_phone": carry.get("customer_phone") or "",
         "items": lines,
         "notes": _notes_for(dispatches),
         "source_channel": first.get("source_channel") or "manual",
@@ -414,8 +701,14 @@ async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, c
     if not invoice_id:
         raise MergeBlocked(500, "Satış faturası oluşturulamadı.")
     header = merge_header(dispatches, invoice_id, invoice_number)
+    for key in _CARRY_KEYS:
+        if carry.get(key):
+            header[key] = carry[key]
     await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": header})
     claimed: List[tuple] = []
+    removed: List[Dict[str, Any]] = []
+    snapshots = [dict(order) for order in orders]
+    pointed = False
     try:
         for d in dispatches:
             prev = str(d.get("dispatch_status") or "draft")
@@ -424,12 +717,19 @@ async def merge_loaded_dispatches(db, dispatches: Sequence[Dict[str, Any]], *, c
                 num = d.get("invoice_number") or _doc_id(d)
                 raise MergeBlocked(409, f"İrsaliye zaten faturalanmış: {num}.")
             claimed.append((_doc_id(d), prev))
-        for oid in order_ids_of({"order_ids": header.get("order_ids"), "order_id": header.get("order_id")}):
-            await db.orders.update_one(
-                {"_id": oid, "company_id": cid, "invoice_id": None},
-                {"$set": {"invoice_id": invoice_id, "invoice_number": invoice_number}},
-            )
+        await _point_orders(db, orders, cid, invoice_id, invoice_number)
+        pointed = True
+        await _retire_intake_drafts(db, drafts, cid, invoice_id, removed)
     except Exception:
+        if pointed:
+            try:
+                await _restore_order_invoices(db, snapshots, cid)
+            except Exception:
+                pass
+        try:
+            await _restore_intake_drafts(db, removed, cid)
+        except Exception:
+            pass
         for did, prev in claimed:
             try:
                 await _release_one(db, did, invoice_id, prev, company_id=cid)

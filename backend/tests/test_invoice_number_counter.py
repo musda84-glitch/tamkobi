@@ -225,6 +225,29 @@ def test_create_core_assigns_sales_number_from_counter(db, monkeypatch):
     assert e_export["invoice_number"] == f"IHR{year}00000002"
 
 
+def test_dispatch_numbers_stay_in_each_company_sequence(db, monkeypatch):
+    import server
+
+    year = _year()
+    db.invoices.docs.append(_inv("A", f"IRS-{year}-0004", "irs-a"))
+    before = copy.deepcopy(db.invoices.docs)
+    monkeypatch.setattr(server, "db", db)
+
+    async def _both():
+        return await asyncio.gather(
+            server._next_dispatch_number("A"),
+            server._next_dispatch_number("B"),
+            server._next_dispatch_number("A"),
+            server._next_dispatch_number("B"),
+        )
+
+    nums = _run(_both())
+    assert {nums[0], nums[2]} == {f"IRS-{year}-0005", f"IRS-{year}-0006"}
+    assert {nums[1], nums[3]} == {f"IRS-{year}-0001", f"IRS-{year}-0002"}
+    assert db.invoices.docs == before
+    assert {doc["_id"] for doc in db.counters.docs} == {f"IRS-{year}-A", f"IRS-{year}-B"}
+
+
 def test_create_core_dispatch_keeps_irs_counter(db, monkeypatch):
     import server
 
@@ -235,4 +258,4 @@ def test_create_core_dispatch_keeps_irs_counter(db, monkeypatch):
         {"is_super_admin": True},
     ))
     assert out["invoice_number"] == f"IRS-{year}-0001"
-    assert [doc["_id"] for doc in db.counters.docs] == [f"IRS-{year}"]
+    assert [doc["_id"] for doc in db.counters.docs] == [f"IRS-{year}-co"]

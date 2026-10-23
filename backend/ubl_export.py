@@ -480,19 +480,16 @@ def _tax_after_document_discount(inv: Dict[str, Any], items: list, discount: flo
 
 
 def despatch_document_refs(inv: Dict[str, Any], fallback_date: str = "") -> list:
-    """Her irsaliye için (numara, IssueDate). Çoklu birleştirmede sıra korunur."""
-    numbers = [str(n).strip() for n in (inv.get("dispatch_numbers") or []) if str(n or "").strip()]
-    dates = list(inv.get("dispatch_dates") or [])
-    if numbers:
-        out = []
-        for i, num in enumerate(numbers):
-            raw = dates[i] if i < len(dates) and dates[i] else (inv.get("dispatch_date") or fallback_date)
-            out.append((num, _date(raw or fallback_date)))
-        return out
-    disp_no = str(inv.get("dispatch_number") or "").strip()
-    if not disp_no:
+    """GİB irsaliye numarası ve GİB tarihi. Yerel IRS-… ve gönderilmemiş irsaliye basılmaz."""
+    numbers = [str(n).strip() for n in (inv.get("despatch_gib_ids") or []) if str(n or "").strip()]
+    dates = list(inv.get("despatch_gib_dates") or [])
+    if not numbers:
         return []
-    return [(disp_no, _date(inv.get("dispatch_date") or inv.get("issue_date") or fallback_date))]
+    out = []
+    for i, num in enumerate(numbers):
+        raw = dates[i] if i < len(dates) and dates[i] else fallback_date
+        out.append((num, _date(raw or fallback_date)))
+    return out
 
 
 def _date(s: Any) -> str:
@@ -886,14 +883,6 @@ def build_invoice_ubl(
             _cbc(adr, "IssueDate", issue_date)
             _cbc(adr, "DocumentType", doc_type)
             _cbc(adr, "DocumentDescription", desc)
-
-    disp_no = str(inv.get("dispatch_number") or "").strip()
-    if disp_no:
-        adr = _cac(root, "AdditionalDocumentReference")
-        _cbc(adr, "ID", disp_no)
-        _cbc(adr, "IssueDate", _date(inv.get("dispatch_date") or inv.get("issue_date")))
-        _cbc(adr, "DocumentTypeCode", "IRSALIYE")
-        _cbc(adr, "DocumentType", "İrsaliye")
 
     if xslt:
         attach_xslt_stylesheet(
