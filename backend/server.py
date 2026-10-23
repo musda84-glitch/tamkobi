@@ -327,7 +327,10 @@ _WA_PHONE_NUMBER_ID_PARTIAL = {"phone_number_id": {"$type": "string", "$gt": ""}
 
 
 async def _ensure_whatsapp_phone_number_id_index() -> None:
-    """phone_number_id için kısmi tekil indeks. Mükerrer grup varsa yalnız sayıyı logla, indeksi kurma."""
+    """phone_number_id için kısmi tekil indeks. Mükerrer grup varsa yalnız sayıyı logla, indeksi kurma.
+
+    Ayrıntı salt okunur rapordadır: scripts/report_whatsapp_phone_number_id.py
+    """
     try:
         # tenant-ok: kurulum indeksi; phone_number_id şirketler arası tekil, şirket filtresi yok
         rows = await db.whatsapp_settings.aggregate([
