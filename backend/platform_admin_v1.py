@@ -5,6 +5,7 @@ audit / nonce / last_used kayıtları dışında yan etki yoktur.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -281,7 +282,8 @@ async def admin_v1_system_logs(
     applog.query_log_page (/system/logs ile aynı sorgu). Yazma yok.
     """
     await _auth(request, store.SCOPE_ADMIN_SYSTEM_READ)
-    page = applog.query_log_page(
+    page = await asyncio.to_thread(
+        applog.query_log_page,
         category=_log_filter(category, "category"),
         event=_log_filter(event, "event"),
         user_email=_log_filter(email, "email"),

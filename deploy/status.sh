@@ -35,3 +35,11 @@ done
 if [ -n "${ACTIVE:-}" ]; then
   echo "--- nginx → :$ACTIVE ---"
 fi
+
+# tamkobi-worker iç portu (backend.sh WORKER_PORT ile aynı). Upstream'e girmez.
+echo "tamkobi-worker=$(systemctl is-active tamkobi-worker 2>/dev/null || echo inactive)"
+if curl -fsS --max-time 3 "http://127.0.0.1:8099/api/version" >/tmp/tamkobi-status-worker.json 2>/dev/null; then
+  python3 -c "import json;d=json.load(open('/tmp/tamkobi-status-worker.json'));print('worker git_sha=%s short=%s' % (d.get('git_sha'), d.get('git_sha_short')))"
+else
+  echo "worker version=(yanıt yok)"
+fi

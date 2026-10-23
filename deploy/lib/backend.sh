@@ -185,17 +185,25 @@ backend_write_instance_dropins() {
   mkdir -p "$_drop"
 
   workers="${TAMKOBI_WORKERS:-2}"
-  # Type=simple: clear inherited ExecStart before setting the real one
+  # Type=simple: clear inherited ExecStart before setting the real one.
+  # `/usr/bin/env …=0` wins over EnvironmentFile (.env). systemd applies
+  # EnvironmentFile after Environment=, so the Environment= line alone does not.
   cat >"$_drop/release.conf" <<EOF
 [Service]
 WorkingDirectory=${_rel}
 Environment=PYTHONPATH=${_rel}:${_rel}/docker/stubs
+Environment=TAMKOBI_BACKGROUND_JOBS=0
 ExecStart=
-ExecStart=${_venv}/bin/uvicorn server:app --host 127.0.0.1 --port ${_port} --workers ${workers} --proxy-headers --forwarded-allow-ips=127.0.0.1 --timeout-graceful-shutdown 20
+ExecStart=/usr/bin/env TAMKOBI_BACKGROUND_JOBS=0 ${_venv}/bin/uvicorn server:app --host 127.0.0.1 --port ${_port} --workers ${workers} --proxy-headers --forwarded-allow-ips=127.0.0.1 --timeout-graceful-shutdown 20
 EOF
 
   export GIT_SHA GIT_BRANCH GIT_MESSAGE BUILD_TIME APP_VERSION
   export DROPIN_DIR="$_drop"
+  backend_write_stamp_conf
+}
+
+backend_write_stamp_conf() {
+  # Caller exports DROPIN_DIR plus GIT_SHA, GIT_BRANCH, GIT_MESSAGE, BUILD_TIME, APP_VERSION.
   python3 - <<'PY' >&2
 import os
 from pathlib import Path
@@ -223,6 +231,83 @@ dropin.mkdir(parents=True, exist_ok=True)
 )
 print(f"stamp.conf → {dropin / 'stamp.conf'}")
 PY
+}
+
+# Single background-job process. 8000/8001 stay the nginx blue/green ports.
+WORKER_PORT="${WORKER_PORT:-8099}"
+
+backend_install_worker_unit() {
+  _src="$ROOT/deploy/tamkobi-worker.service"
+  [ -f "$_src" ] || die "$_src yok"
+  backend_detect_service_user
+  _dst="${SYSTEMD_UNIT_ROOT:-/etc/systemd/system}/tamkobi-worker.service"
+  mkdir -p "$(dirname "$_dst")"
+  sed \
+    -e "s|/var/www/tamkobi.com|$ROOT|g" \
+    -e "s|^User=.*|User=${SERVICE_USER}|" \
+    -e "s|^Group=.*|Group=${SERVICE_GROUP}|" \
+    "$_src" >"$_dst"
+  if [ "${SKIP_SYSTEMCTL:-0}" != "1" ]; then
+    systemctl daemon-reload
+  fi
+}
+
+backend_write_worker_dropin() {
+  # backend_write_worker_dropin <sha> <venv>
+  _sha=$1
+  _venv=$2
+  validate_venv_path "$_venv"
+  _wport=${WORKER_PORT:-8099}
+  case "$_wport" in
+    8000|8001)
+      die "WORKER_PORT blue/green portu olamaz: $_wport"
+      ;;
+  esac
+  _rel="$BACKEND_RELEASES/$_sha"
+  _drop="${SYSTEMD_DROPIN_ROOT:-/etc/systemd/system}/tamkobi-worker.service.d"
+  mkdir -p "$_drop"
+  # One unit, one process. env prefix beats EnvironmentFile (see HTTP drop-in).
+  cat >"$_drop/release.conf" <<EOF
+[Service]
+WorkingDirectory=${_rel}
+Environment=PYTHONPATH=${_rel}:${_rel}/docker/stubs
+Environment=TAMKOBI_BACKGROUND_JOBS=1
+ExecStart=
+ExecStart=/usr/bin/env TAMKOBI_BACKGROUND_JOBS=1 ${_venv}/bin/uvicorn server:app --host 127.0.0.1 --port ${_wport} --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --timeout-graceful-shutdown 20
+EOF
+  export GIT_SHA GIT_BRANCH GIT_MESSAGE BUILD_TIME APP_VERSION
+  export DROPIN_DIR="$_drop"
+  backend_write_stamp_conf
+}
+
+backend_sync_worker() {
+  # backend_sync_worker <sha> <venv>
+  # Point the single tamkobi-worker unit at this release. systemctl restart
+  # stops the old process, then starts the new one — no second copy.
+  _sha=$1
+  _venv=$2
+  _wport=${WORKER_PORT:-8099}
+  case "$_wport" in
+    8000|8001)
+      die "WORKER_PORT blue/green portu olamaz: $_wport"
+      ;;
+  esac
+  info "tamkobi-worker tek kopya → sha=${_sha} port=${_wport}"
+  backend_install_worker_unit
+  backend_write_worker_dropin "$_sha" "$_venv"
+  if [ "${SKIP_SYSTEMCTL:-0}" = "1" ]; then
+    return 0
+  fi
+  systemctl daemon-reload
+  systemctl enable tamkobi-worker >/dev/null 2>&1 || true
+  if ! systemctl restart tamkobi-worker; then
+    journalctl -u tamkobi-worker -n 80 --no-pager || true
+    die "tamkobi-worker yeniden başlatılamadı; nginx geri alınmadı, eski instance durdurulmadı"
+  fi
+  if ! backend_health_sha "$_wport" "$_sha"; then
+    journalctl -u tamkobi-worker -n 80 --no-pager || true
+    die "tamkobi-worker sağlık kontrolü başarısız (:${_wport}); nginx geri alınmadı, eski instance durdurulmadı"
+  fi
 }
 
 backend_install_unit_template() {

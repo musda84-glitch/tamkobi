@@ -1,4 +1,5 @@
 """Platform (SaaS) yönetimi: modül kataloğu, paketler, şirket lisansları (modül aç/kapat, deneme, askıya alma), süper admin paneli, yükseltme talepleri."""
+import asyncio
 import os
 import time
 import uuid
@@ -953,7 +954,8 @@ async def system_logs(
     limit: int = 100,
     _: dict = Depends(require_super_admin),
 ):
-    return applog.query_logs(
+    return await asyncio.to_thread(
+        applog.query_logs,
         category=category, event=event, user_email=email,
         level=level, company_id=company_id, limit=limit,
     )
@@ -982,21 +984,21 @@ async def system_client_errors(req: Dict[str, Any], admin: dict = Depends(requir
 
 @router.post("/system/logs/rotate")
 async def rotate_system_logs(_: dict = Depends(require_super_admin)):
-    return applog.rotate_files()
+    return await asyncio.to_thread(applog.rotate_files)
 
 
 @router.get("/system/perf")
 async def system_perf(_: dict = Depends(require_super_admin)):
-    snap = perfmon.collect()
-    perfmon.persist_snapshot(snap)
+    snap = await asyncio.to_thread(perfmon.collect)
+    await asyncio.to_thread(perfmon.persist_snapshot, snap)
     snap["recommendations"] = perfmon.recommendations(snap)
     return snap
 
 
 @router.post("/system/perf/report")
 async def system_perf_report(_: dict = Depends(require_super_admin)):
-    snap = perfmon.collect()
-    path = perfmon.write_report(snap)
+    snap = await asyncio.to_thread(perfmon.collect)
+    path = await asyncio.to_thread(perfmon.write_report, snap)
     return {"status": "ok", "path": str(path), "alerts": snap.get("alerts") or [], "ok": snap.get("ok")}
 
 
