@@ -22,6 +22,7 @@ import saas_billing
 import saas_extras
 import superadmin_2fa
 import support_access
+import storage_admin
 import user_erase
 import platform_store as store
 from platform_admin_v1 import _auth, _item, _redact  # noqa: F401
@@ -276,6 +277,16 @@ _LOG_PHRASE = "LOGLARI DÖNDÜR"
 _LOG_LABEL = "sistem logları"
 _LOG_HINT = "log hedefini birebir yazın"
 _LOG_TEXT_ERROR = "Onay için log hedefini birebir yazın."
+_MOVE_APPLY_PHRASE = "TAŞIMAYI UYGULA"
+_MOVE_ROLLBACK_PHRASE = "TAŞIMAYI GERİ AL"
+_MOVE_RECOVER_PHRASE = "TAŞIMAYI KURTAR"
+_MOVE_PREPARE_PHRASE = "AYRI VERİTABANI HAZIRLA"
+_STORAGE_MOVE_ACTIONS = (
+    "storage_move.apply",
+    "storage_move.rollback",
+    "storage_move.recover",
+    "storage_move.prepare_dedicated",
+)
 
 _ACTIONS = (
     "company.reset_data",
@@ -300,6 +311,10 @@ _ACTIONS = (
     "maintenance.enable",
     "gib.gift",
     "logs.rotate",
+    "storage_move.apply",
+    "storage_move.rollback",
+    "storage_move.recover",
+    "storage_move.prepare_dedicated",
 )
 _PREPARE_COMMON = ("target_id", "reason", "operator_email")
 _PREPARE_EXTRA = {
@@ -328,8 +343,15 @@ _PREPARE_EXTRA = {
     ),
     "gib.gift": ("credits", "note"),
     "logs.rotate": (),
+    "storage_move.apply": ("to_mode", "when"),
+    "storage_move.rollback": ("move_id",),
+    "storage_move.recover": ("move_id",),
+    "storage_move.prepare_dedicated": (),
 }
-_PHRASE_ACTIONS = ("company.reset_data", "user.erase", "maintenance.enable", "gib.gift", "logs.rotate")
+_PHRASE_ACTIONS = (
+    "company.reset_data", "user.erase", "maintenance.enable", "gib.gift", "logs.rotate",
+    *_STORAGE_MOVE_ACTIONS,
+)
 _CONFIRM_COMMON = ("confirmation_token", "confirm_text", "operator_otp")
 
 
@@ -380,11 +402,19 @@ def _phrase_for(action: str) -> Optional[str]:
         return _GIFT_PHRASE
     if action == "logs.rotate":
         return _LOG_PHRASE
+    if action == "storage_move.apply":
+        return _MOVE_APPLY_PHRASE
+    if action == "storage_move.rollback":
+        return _MOVE_ROLLBACK_PHRASE
+    if action == "storage_move.recover":
+        return _MOVE_RECOVER_PHRASE
+    if action == "storage_move.prepare_dedicated":
+        return _MOVE_PREPARE_PHRASE
     return None
 
 
 def _hint_for(action: str) -> str:
-    if action.startswith("company.") or action == "gib.gift":
+    if action.startswith("company.") or action == "gib.gift" or action.startswith("storage_move."):
         return _COMPANY_HINT
     if action == "plan.delete":
         return _PLAN_HINT
@@ -402,7 +432,7 @@ def _hint_for(action: str) -> str:
 
 
 def _text_error(action: str) -> str:
-    if action.startswith("company.") or action == "gib.gift":
+    if action.startswith("company.") or action == "gib.gift" or action.startswith("storage_move."):
         return _COMPANY_TEXT_ERROR
     if action == "plan.delete":
         return _PLAN_TEXT_ERROR
@@ -486,6 +516,15 @@ def _preview_summary(action: str, preview: Dict[str, Any]) -> Dict[str, Any]:
         return {"credits": preview.get("credits")}
     if action == "logs.rotate":
         return {"retention_days": preview.get("retention_days"), "max_bytes": preview.get("max_bytes")}
+    if action in _STORAGE_MOVE_ACTIONS:
+        return {
+            "to_mode": preview.get("to_mode") or "",
+            "when": preview.get("when") or "",
+            "status": preview.get("status") or "",
+            "scheduled_for": preview.get("scheduled_for") or "",
+            "will_create": preview.get("will_create"),
+            "has_dedicated_dsn": preview.get("has_dedicated_dsn"),
+        }
     if action == "user.delete":
         return {"email": preview.get("email")}
     return {"email": preview.get("email")}
@@ -525,6 +564,14 @@ def _result_summary(action: str, result: Dict[str, Any]) -> Dict[str, Any]:
             "rotated": len(result.get("rotated") or []),
             "deleted": len(result.get("deleted") or []),
             "purged_rows": result.get("purged_rows"),
+        }
+    if action in _STORAGE_MOVE_ACTIONS:
+        return {
+            "job_id": result.get("job_id") or "",
+            "status": result.get("status") or "",
+            "scheduled_for": result.get("scheduled_for") or "",
+            "created": result.get("created"),
+            "has_dedicated_dsn": result.get("has_dedicated_dsn"),
         }
     if action == "user.delete":
         return {"status": result.get("status")}
@@ -1074,6 +1121,139 @@ async def _validate_logs_rotate(target_id: str) -> dict:
     }
 
 
+def _storage_db():
+    db = storage_admin._db if storage_admin._db is not None else saas._db
+    if db is None:
+        raise HTTPException(status_code=500, detail="Veritabanı yönetimi hazır değil.")
+    return db
+
+
+def _require_storage_move_write(key_doc: dict) -> None:
+    scopes = key_doc.get("scopes") or []
+    if store.SCOPE_ADMIN_STORAGE_MOVE_WRITE not in scopes:
+        raise HTTPException(status_code=403, detail="Kapsam yetersiz")
+
+
+def _storage_when(payload: Dict[str, Any]) -> str:
+    if "when" not in payload:
+        return "now"
+    when = payload.get("when")
+    if not isinstance(when, str):
+        raise HTTPException(status_code=400, detail="when metin olmalı.")
+    cleaned = when.strip() or "now"
+    if cleaned not in ("now", "maintenance"):
+        raise HTTPException(status_code=400, detail="when now veya maintenance olmalı.")
+    return cleaned
+
+
+def _storage_mode_field(payload: Dict[str, Any]) -> str:
+    mode = payload.get("to_mode")
+    if not isinstance(mode, str) or not mode.strip():
+        raise HTTPException(status_code=400, detail="to_mode zorunlu.")
+    return mode.strip()
+
+
+def _storage_move_id(payload: Dict[str, Any]) -> str:
+    move_id = payload.get("move_id")
+    if not isinstance(move_id, str) or not move_id.strip():
+        raise HTTPException(status_code=400, detail="move_id zorunlu.")
+    return move_id.strip()
+
+
+async def _validate_storage_move(action: str, target_id: str, params: Dict[str, Any]) -> dict:
+    db = _storage_db()
+    if action == "storage_move.prepare_dedicated":
+        plan = await storage_admin._run(storage_admin.describe_prepare_dedicated, db, target_id)
+        label = str(plan.get("company_name") or "").strip() or target_id
+        preview = {
+            "company_id": plan.get("company_id"),
+            "has_dedicated_dsn": bool(plan.get("has_dedicated_dsn")),
+            "will_create": bool(plan.get("will_create")),
+        }
+        return {
+            "label": label,
+            "fp": _fp({
+                "id": target_id,
+                "name": label,
+                "has_dedicated_dsn": preview["has_dedicated_dsn"],
+            }),
+            "preview": preview,
+            "scopes": None,
+            "params": {},
+        }
+    kind = action.split(".", 1)[1]
+    plan = await storage_admin._run(
+        storage_admin.describe_enqueue,
+        db,
+        kind=kind,
+        company_id=target_id,
+        to_mode=str(params.get("to_mode") or ""),
+        move_id=str(params.get("move_id") or ""),
+        when=str(params.get("when") or "now"),
+    )
+    if kind in ("rollback", "recover"):
+        await storage_admin._run(
+            storage_admin.require_move,
+            db,
+            str(params.get("move_id") or ""),
+            str(plan.get("company_id") or ""),
+        )
+    label = str(plan.get("company_name") or "").strip() or str(plan.get("company_id") or target_id)
+    replay = {
+        "to_mode": plan.get("to_mode") or "",
+        "move_id": plan.get("move_id") or "",
+        "when": plan.get("when") or "now",
+    }
+    preview = {
+        "company_id": plan.get("company_id"),
+        "from_mode": plan.get("from_mode"),
+        "to_mode": replay["to_mode"],
+        "move_id": replay["move_id"],
+        "when": replay["when"] if kind == "apply" else "",
+        "status": plan.get("status"),
+        "scheduled_for": plan.get("scheduled_for") or "",
+    }
+    return {
+        "label": label,
+        "fp": _fp({
+            "id": plan.get("company_id"),
+            "name": label,
+            "kind": kind,
+            "from_mode": plan.get("from_mode"),
+            "to_mode": replay["to_mode"],
+            "move_id": replay["move_id"],
+            "when": preview["when"],
+            "scheduled_for": preview["scheduled_for"],
+        }),
+        "preview": preview,
+        "scopes": None,
+        "params": replay,
+    }
+
+
+async def _execute_storage_move(action: str, target_id: str, params: Dict[str, Any], actor: dict) -> dict:
+    db = _storage_db()
+    who = storage_admin._actor({
+        "_id": actor.get("_id"),
+        "name": actor.get("email") or actor.get("name") or "api",
+    })
+    if action == "storage_move.prepare_dedicated":
+        return await storage_admin._run(
+            storage_admin.prepare_dedicated, db, target_id, confirm=True, actor=who,
+        )
+    kind = action.split(".", 1)[1]
+    return await storage_admin._run(
+        storage_admin.enqueue,
+        db,
+        kind=kind,
+        company_id=target_id,
+        actor=who,
+        to_mode=str(params.get("to_mode") or ""),
+        move_id=str(params.get("move_id") or ""),
+        when=str(params.get("when") or "now"),
+    )
+
+
 async def _validate_action(action: str, target_id: str, operator_email: str, params: Dict[str, Any]) -> dict:
     if action == "company.reset_data":
         return await _validate_reset(target_id, params.get("scopes"))
@@ -1117,13 +1297,15 @@ async def _validate_action(action: str, target_id: str, operator_email: str, par
         return await _validate_gift(target_id, params)
     if action == "logs.rotate":
         return await _validate_logs_rotate(target_id)
+    if action in _STORAGE_MOVE_ACTIONS:
+        return await _validate_storage_move(action, target_id, params)
     return await _validate_2fa(target_id, operator_email)
 
 
 def _text_matches(action: str, label: str, text: Any) -> bool:
     if not isinstance(text, str):
         return False
-    if action.startswith("company.") or action in (
+    if action.startswith("company.") or action.startswith("storage_move.") or action in (
         "plan.delete", "product.delete", "key.revoke", "key.admin_create", "key.admin_scopes",
         "key.product_create", "key.product_scopes",
         "maintenance.enable", "gib.gift", "logs.rotate",
@@ -1370,6 +1552,8 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
             request_id=idempotency.header_key(request),
         )
         return {"company_id": target_id, "credits": credits, "balance": bal}
+    if action in _STORAGE_MOVE_ACTIONS:
+        return await _execute_storage_move(action, target_id, params, actor)
     if action == "product.delete":
         doc = await store._get_product_doc(target_id)
         code = (doc or {}).get("code")
@@ -1434,6 +1618,8 @@ async def admin_v1_danger_prepare(action: str, request: Request):
 
     async def prepare(payload: Dict[str, Any], key_doc: dict):
         _known_action(action)
+        if action in _STORAGE_MOVE_ACTIONS:
+            _require_storage_move_write(key_doc or {})
         _reject_unknown(payload, _PREPARE_COMMON + _PREPARE_EXTRA[action])
         reason = _clean_reason(payload)
         operator = await _operator_or_403(payload)
@@ -1570,6 +1756,11 @@ async def admin_v1_danger_prepare(action: str, request: Request):
                 raise HTTPException(status_code=400, detail="target_id platform olmalı.")
         if action == "logs.rotate" and tid != "platform":
             raise HTTPException(status_code=400, detail="target_id platform olmalı.")
+        if action == "storage_move.apply":
+            params["to_mode"] = _storage_mode_field(payload)
+            params["when"] = _storage_when(payload)
+        if action in ("storage_move.rollback", "storage_move.recover"):
+            params["move_id"] = _storage_move_id(payload)
         snap = await _validate_action(action, tid, operator, params)
         held.update(reason=reason, operator=operator, target_id=tid, params=params, snap=snap, payload=payload)
         return ["operator_email", "reason", "target_id"]
@@ -1583,6 +1774,8 @@ async def admin_v1_danger_prepare(action: str, request: Request):
         params = held["params"]
         if action == "company.reset_data":
             params = {"scopes": snap.get("scopes")}
+        if action in _STORAGE_MOVE_ACTIONS and isinstance(snap.get("params"), dict):
+            params = dict(snap["params"])
         await store._db.platform_danger_confirmations.insert_one({  # tenant-ok: platform onay kaydı, şirket verisi değil, _id token hash'i
             "_id": _token_hash(token),
             "action": action,
@@ -1641,8 +1834,10 @@ async def admin_v1_danger_confirm(action: str, request: Request):
         if doc:
             target_id = str(doc.get("target_id") or "")
 
-    async def prepare(payload: Dict[str, Any]):
+    async def prepare(payload: Dict[str, Any], key_doc: dict):
         _known_action(action)
+        if action in _STORAGE_MOVE_ACTIONS:
+            _require_storage_move_write(key_doc or {})
         allowed = _CONFIRM_COMMON + (("confirm_phrase",) if action in _PHRASE_ACTIONS else ())
         _reject_unknown(payload, allowed)
         if not isinstance(payload.get("confirmation_token"), str) or not payload["confirmation_token"].strip():

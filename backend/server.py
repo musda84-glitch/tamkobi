@@ -28040,6 +28040,7 @@ import platform_admin_v1_ops
 import platform_admin_v1_accounts
 import platform_admin_v1_integrations
 import platform_admin_v1_content
+import platform_admin_v1_storage_move
 platform_admin.init(db)
 platform_v1.init(db)
 import user_erase
@@ -28322,6 +28323,7 @@ app.include_router(platform_admin_v1_ops.router)
 app.include_router(platform_admin_v1_accounts.router)
 app.include_router(platform_admin_v1_integrations.router)
 app.include_router(platform_admin_v1_content.router)
+app.include_router(platform_admin_v1_storage_move.router)
 app.include_router(user_erase.router)
 app.include_router(company_reset.router)
 app.include_router(storage_manager.router)
