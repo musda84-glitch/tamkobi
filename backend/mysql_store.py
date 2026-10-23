@@ -154,9 +154,74 @@ def _lock_company(op, kw) -> str:
     return ""
 
 
+def _maintenance_company_ids(op, kw) -> list:
+    import storage_router
+
+    found = _catalog_company_ids(kw.get("query"), kw.get("doc"), kw.get("update"))
+    cid = _lock_company(op, kw)
+    if cid:
+        text = storage_router.canonical_company_id(cid)
+        if text and text not in found:
+            found.append(text)
+    return found
+
+
+async def _reject_maintenance(coll, op: str, **kw) -> None:
+    """Bakım (storage_write_lock) yazmayı keser. Okuma bu fonksiyona gelmez.
+
+    Kontrol koleksiyonu ve taşımanın yazarı geçer. Bellek kataloğunda sayaç artmaz.
+    """
+    if op not in _LOCK_OPS:
+        return
+    import storage_router
+
+    if storage_router._PASSTHROUGH.get():
+        return
+    name = str(getattr(coll, "name", "") or "")
+    if name in storage_router._CONTROL_COLLECTIONS:
+        return
+    db = getattr(coll, "_db", None) or getattr(coll, "db", None)
+    for cid in _maintenance_company_ids(op, kw):
+        if storage_router._writer.get() == cid:
+            continue
+        if await storage_router.maintenance_locked(db, cid):
+            raise storage_router.StorageWriteLocked(
+                storage_router.WRITE_LOCK_MESSAGE, company_id=cid,
+            )
+
+
+def _reject_maintenance_sync(coll, op: str, **kw) -> None:
+    """Senkron yazma. Olay döngüsünde pymysql açmaz; yalnız taze önbelleğe bakar."""
+    if op not in _LOCK_OPS:
+        return
+    import storage_router
+
+    if storage_router._PASSTHROUGH.get():
+        return
+    name = str(getattr(coll, "name", "") or "")
+    if name in storage_router._CONTROL_COLLECTIONS:
+        return
+    db = getattr(coll, "_db", None) or getattr(coll, "db", None)
+    on_loop = storage_router._on_loop()
+    for cid in _maintenance_company_ids(op, kw):
+        if storage_router._writer.get() == cid:
+            continue
+        if on_loop:
+            if storage_router.maintenance_cached(cid):
+                raise storage_router.StorageWriteLocked(
+                    storage_router.WRITE_LOCK_MESSAGE, company_id=cid,
+                )
+            continue
+        if storage_router.company_write_locked(cid, db=db):
+            raise storage_router.StorageWriteLocked(
+                storage_router.WRITE_LOCK_MESSAGE, company_id=cid,
+            )
+
+
 async def _route_write(coll, op: str, **kw):
     import storage_router
 
+    await _reject_maintenance(coll, op, **kw)
     return await storage_router.route_legacy_write(coll, op, **kw)
 
 
@@ -291,6 +356,7 @@ def _pipeline_match(pipeline) -> dict:
 def _route_write_sync(coll, op: str, **kw):
     import storage_router
 
+    _reject_maintenance_sync(coll, op, **kw)
     return storage_router.route_legacy_write_sync(coll, op, **kw)
 
 

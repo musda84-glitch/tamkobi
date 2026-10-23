@@ -648,6 +648,87 @@ class _ShopfloorAccountGuard(BaseHTTPMiddleware):
 app.user_middleware.append(Middleware(_ShopfloorAccountGuard))
 
 
+_MAINTENANCE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _maintenance_toggle_path(path: str) -> bool:
+    parts = [part for part in (path or "").split("/") if part]
+    return (
+        len(parts) == 5
+        and parts[0] == "api"
+        and parts[1] == "system"
+        and parts[2] == "companies"
+        and parts[4] == "maintenance"
+    )
+
+
+def _maintenance_request_skips(path: str) -> bool:
+    """Oturum ve bakım anahtarı yazılır. Sipariş çekme kuyruğa bırakır, 423 yemez."""
+    if (path or "").startswith("/api/auth/"):
+        return True
+    if _maintenance_toggle_path(path):
+        return True
+    if "/integrations/ecommerce/" in (path or "") and path.rstrip("/").endswith("/sync-now"):
+        return True
+    return False
+
+
+def _maintenance_target_ids(request: Request) -> list:
+    found = []
+    query_id = request.query_params.get("company_id")
+    if isinstance(query_id, str) and query_id.strip():
+        found.append(query_id.strip())
+    parts = [part for part in (request.url.path or "").split("/") if part]
+    if len(parts) >= 4 and parts[0] == "api" and parts[1] == "system" and parts[2] == "companies":
+        if parts[3] not in found:
+            found.append(parts[3])
+    return found
+
+
+class _MaintenanceWriteGuard(BaseHTTPMiddleware):
+    """Bakım açıkken yazma 423. Okuma sürer. Gövde okunmaz.
+
+    company_id sorgu veya /api/system/companies/{id} yolundan gelir.
+    Oturum varsa aktif şirket de bakılır. Kilit storage_write_lock'tur.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path or ""
+        if request.method not in _MAINTENANCE_METHODS or not path.startswith("/api"):
+            return await call_next(request)
+        if _maintenance_request_skips(path):
+            return await call_next(request)
+        import storage_router
+
+        targets = _maintenance_target_ids(request)
+        has_auth = bool(request.headers.get("authorization") or request.cookies.get("access_token"))
+        if has_auth:
+            try:
+                user = await get_current_user(request)
+            except Exception:
+                user = None
+            active = str((user or {}).get("active_company_id") or "").strip()
+            if active and active not in targets:
+                targets.append(active)
+        for cid in targets:
+            if await storage_router.maintenance_locked(db, cid):
+                return JSONResponse(
+                    status_code=423,
+                    content={"detail": storage_router.MAINTENANCE_DETAIL},
+                )
+        return await call_next(request)
+
+
+app.user_middleware.append(Middleware(_MaintenanceWriteGuard))
+
+
+@app.exception_handler(__import__("storage_router").StorageWriteLocked)
+async def _maintenance_write_locked(_request: Request, exc):
+    import storage_router
+
+    return JSONResponse(status_code=423, content={"detail": storage_router.MAINTENANCE_DETAIL})
+
+
 # ----------------- AUTH ENDPOINTS -----------------
 class LoginRequest(BaseModel):
     email: str
@@ -1868,6 +1949,58 @@ async def save_einvoice_settings(req: Dict[str, Any], user: Any = Depends(get_cu
 async def system_assign_einvoice(company_id: str, req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
     await einvoice_assign.assign_company_provider(db, company_id, (req.get("provider") or ""))
     return await _einvoice_settings_payload(company_id)
+
+
+class CompanyMaintenanceBody(BaseModel):
+    enabled: bool
+
+
+@api_router.post("/system/companies/{company_id}/maintenance")
+async def system_company_maintenance(
+    company_id: str,
+    req: CompanyMaintenanceBody,
+    request: Request,
+    user: dict = Depends(saas.require_super_admin),
+):
+    """Bakım (salt okunur). Aynı storage_write_lock. Kapanınca bekleyen sipariş yeniden yazılır."""
+    import platform_store
+    import storage_router
+
+    cid = storage_router.canonical_company_id(company_id)
+    company = await db.companies.find_one({"_id": cid})
+    if company is None and cid != str(company_id or "").strip():
+        company = await db.companies.find_one({"_id": str(company_id or "").strip()})
+    if company is None:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    stored = str(company.get("_id") or cid)
+    result = await storage_router.set_company_maintenance(db, stored, bool(req.enabled))
+    replayed = None
+    if not req.enabled:
+        replayed = await _replay_marketplace_holds(result["company_id"])
+    action = "company_maintenance_on" if req.enabled else "company_maintenance_off"
+    await platform_store.write_audit(
+        actor_type="superadmin",
+        actor_id=str(user.get("_id") or user.get("id") or ""),
+        ip=request_ip(request),
+        action=action,
+        target_type="company",
+        target_id=result["company_id"],
+        details={"maintenance": bool(req.enabled)},
+    )
+    body = {
+        "status": "success",
+        "company_id": result["company_id"],
+        "maintenance": result["maintenance"],
+    }
+    if isinstance(replayed, dict):
+        summary = {}
+        for key in ("inserted", "updated", "held"):
+            count = int(replayed.get(key) or 0)
+            if count:
+                summary[key] = count
+        if summary:
+            body["replayed"] = summary
+    return body
 
 
 def _einvoice_password(settings: dict) -> str:
@@ -19511,13 +19644,19 @@ async def _pause_marketplace_cursor(channel_id: str, company_id: str, now: str, 
         if isinstance(res, dict):
             res.pop("held", None)
         return False
-    await db.integration_configs.update_one(
-        {"_id": channel_id, "company_id": company_id},
-        {"$set": {
-            "last_sync_attempt_at": now,
-            "last_error": "Depolama taşıması sırasında sipariş alımı bekletildi. Sonraki senkron yeniden dener.",
-        }},
-    )
+    import storage_router
+
+    with storage_router.bypass_write_lock(company_id):
+        await db.integration_configs.update_one(
+            {"_id": channel_id, "company_id": company_id},
+            {"$set": {
+                "last_sync_attempt_at": now,
+                "last_error": (
+                    "Bakım yapılıyor, kayıt geçici olarak kapalı. "
+                    "Sipariş kuyrukta bekletildi; bakım bitince yeniden denenecek."
+                ),
+            }},
+        )
     await _notify_marketplace_inserted(company_id, res)
     return True
 

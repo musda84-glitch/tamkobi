@@ -15,7 +15,19 @@ import { stackHeaderFallback } from "@/utils/stackHeader";
 import { useFonts } from "expo-font";
 import { type Href, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
+
+function MaintenanceBanner() {
+  const { activeCompany } = useAuth();
+  if (!activeCompany?.storage_write_lock) return null;
+  return (
+    <View style={{ backgroundColor: "#fef3c7", paddingHorizontal: 12, paddingVertical: 8 }} testID="maintenance-banner">
+      <Text style={{ color: "#78350f", fontWeight: "700", textAlign: "center" }}>
+        Bakım yapılıyor, kayıt geçici olarak kapalı
+      </Text>
+    </View>
+  );
+}
 
 function RootStack() {
   const { ready, user, b2bToken } = useAuth();
@@ -127,6 +139,7 @@ export default function RootLayout() {
           <LocationBgBridge />
           <MesaimLockBridge />
           <ConfirmHost />
+          <MaintenanceBanner />
           <RootStack />
         </MesaimGateProvider>
       </BadgeProvider>

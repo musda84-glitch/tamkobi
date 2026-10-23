@@ -275,6 +275,15 @@ export const CompanyLicenseDrawer = ({
       onChanged();
     } catch (e) { toast.error(e.response?.data?.detail || "Durum değiştirilemedi."); } finally { setBusy(""); }
   };
+  const setMaintenance = async (enabled) => {
+    setBusy("maint");
+    try {
+      await axios.post(`${API_URL}/system/companies/${companyId}/maintenance`, { enabled: !!enabled }, cred);
+      toast.success(enabled ? "Bakım modu açıldı. Kayıt geçici olarak kapalı." : "Bakım modu kapatıldı.");
+      await load();
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Bakım modu güncellenemedi."); } finally { setBusy(""); }
+  };
   const remove = async () => {
     if (deleteName.trim() !== (d.name || "").trim()) {
       toast.error("Onay için şirket adını birebir yazın.");
@@ -430,10 +439,12 @@ export const CompanyLicenseDrawer = ({
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">Şirket işlemleri</h3>
                 <p className="text-[10px] text-slate-500 mt-0.5">Pasif (askıda) şirkette tüm modüller kilitlenir. Silme geri alınamaz. Yalnızca fatura/sipariş/stok/teklif sıfırlamak için <a href="/sistem/veri-silme" className="text-amber-700 font-semibold underline" data-testid="company-reset-data-link">Veri Silme</a> ekranını kullanın.</p>
+                {d.storage_write_lock ? <p className="text-[11px] font-semibold text-amber-800 mt-1" data-testid="company-maintenance-note">Bakım yapılıyor, kayıt geçici olarak kapalı</p> : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={() => setActive(true)} disabled={!!busy || isLive} className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${isLive ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100"} disabled:opacity-60`} data-testid="company-activate-btn"><Power className="w-3.5 h-3.5" /> Aktif</button>
                 <button type="button" onClick={() => setActive(false)} disabled={!!busy || lic.status === "suspended"} className={`px-3 py-1.5 rounded-lg font-bold ${lic.status === "suspended" ? "bg-amber-500 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50"} disabled:opacity-60`} data-testid="company-deactivate-btn">Pasif</button>
+                <button type="button" onClick={() => setMaintenance(!d.storage_write_lock)} disabled={!!busy} className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 ${d.storage_write_lock ? "bg-amber-500 text-white" : "border border-amber-300 text-amber-900 bg-amber-50 hover:bg-amber-100"} disabled:opacity-60`} data-testid="company-maintenance-btn">{busy === "maint" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} {d.storage_write_lock ? "Bakımı kapat" : "Bakım modu"}</button>
                 {d.protected ? (
                   <span className="text-[10px] text-slate-400 font-semibold" data-testid="company-delete-protected">Demo şirket silinemez</span>
                 ) : (

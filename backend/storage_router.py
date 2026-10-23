@@ -9,7 +9,10 @@ karşılaştırır; farklıysa yeni kipe yönlenir. Önbellek hiç yoksa giriş
 noktası dışında gerçek sürücüye sorulmaz ve legacy sayılır; hata verilmez.
 Süresi dolmuş kayıt katalogdan yeniden okunur; bayat değer kullanılmaz.
 Katalog okunamazsa bayrak açıkken yazma reddedilir. Yazma kilidi
-katalogdaki storage_write_lock alanındadır; her süreç kısa TTL ile bakar.
+katalogdaki storage_write_lock alanındadır; bakım modu aynı alandır,
+ikinci bir kilit yoktur. Taşıma apply başında bu alanı açar. Doğrulama
+temiz bitince alan açık kalır; süper yönetici kapatana kadar yazma reddedilir.
+Her süreç kısa TTL ile bakar.
 
 Bu sürüm legacy, shared_v2 ve dedicated arka uçlarını tanır.
 shared_v2 kipinde orders, invoices, stock_movements ve bank_transactions
@@ -54,9 +57,10 @@ MODE_FIELD = "storage_mode"
 EPOCH_FIELD = "storage_epoch"
 WRITE_LOCK_FIELD = "storage_write_lock"
 ENV_FLAG = "STORAGE_ROUTER_ENABLED"
+MAINTENANCE_DETAIL = "Bakım yapılıyor, kayıt geçici olarak kapalı"
 WRITE_LOCK_MESSAGE = (
-    "Şirket depolama taşıması sırasında salt okunur. "
-    "Yazma istekleri taşıma bitene kadar reddedilir."
+    "Bakım yapılıyor, kayıt geçici olarak kapalı. "
+    "Şirket salt okunur. Yazma istekleri bakım bitene kadar reddedilir."
 )
 TTL_SECONDS = 15.0
 LOCK_TTL_SECONDS = 2.0
@@ -918,6 +922,67 @@ def lock_company_writes(company_id: str) -> None:
 
 def unlock_company_writes(company_id: str) -> None:
     note_write_lock(company_id, False)
+
+
+def maintenance_cached(company_id: str) -> bool:
+    """Taze kilit önbelleği. Katalog okumaz. Yazarın kendi yazısı geçmez."""
+    cid = canonical_company_id(company_id)
+    if not cid or _writer.get() == cid:
+        return False
+    row = _lock_cache.get(cid)
+    if row is not None and _now() < row[1]:
+        return bool(row[0])
+    cached = _view_cached(cid)
+    if cached is not None:
+        return bool(cached[2])
+    return False
+
+
+async def maintenance_locked(db, company_id: str) -> bool:
+    """Bakım açık mı. Alan storage_write_lock. Yönlendirici bayrağından bağımsız.
+
+    Taze önbellek sorgu atmaz. Bellek kataloğu sayaç artırmaz. Taşımanın
+    yazarı False döner. Gerçek sürücü okunamazsa ve bayrak kapalıysa yazma
+    bu yüzden kapanmaz; bayrak açıkken load_view reddeder.
+    """
+    cid = canonical_company_id(company_id)
+    if not cid or _writer.get() == cid or _PASSTHROUGH.get():
+        return False
+    if maintenance_cached(cid):
+        return True
+    row = _lock_cache.get(cid)
+    if row is not None and _now() < row[1]:
+        return False
+    if db is not None:
+        memory = _memory_doc(db, cid)
+        if memory is not _UNREAD:
+            locked = bool(_view(memory if isinstance(memory, dict) else None)[2])
+            note_write_lock(cid, locked)
+            return locked
+    if enabled():
+        _mode, _epoch, locked = await load_view(db, cid)
+        return bool(locked)
+    doc = await read_company_doc_async(db, cid)
+    if doc is _UNREAD:
+        return False
+    locked = bool(_view(doc if isinstance(doc, dict) else None)[2])
+    note_write_lock(cid, locked)
+    return locked
+
+
+async def set_company_maintenance(db, company_id: str, locked: bool) -> dict:
+    """Aynı storage_write_lock alanını açar veya kapatır. İkinci kilit yazılmaz."""
+    cid = canonical_company_id(company_id)
+    if not cid:
+        raise ValueError("company_id boş")
+    with bypass_write_lock(cid):
+        await db.companies.update_one(
+            {"_id": cid},
+            {"$set": {WRITE_LOCK_FIELD: bool(locked)}},
+        )
+    forget_mode(cid)
+    note_write_lock(cid, bool(locked))
+    return {"company_id": cid, "maintenance": bool(locked)}
 
 
 def assert_writable(company_id: str, db=None) -> None:

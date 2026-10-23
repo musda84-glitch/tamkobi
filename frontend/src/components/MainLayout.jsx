@@ -419,6 +419,9 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           </div>
         </header>
 
+        {activeCompany?.storage_write_lock ? (
+          <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-300 text-amber-950 text-sm font-semibold rounded-xl px-3 py-2" data-testid="maintenance-banner">Bakım yapılıyor, kayıt geçici olarak kapalı</div>
+        ) : null}
         <SupportContactBar companyId={activeCompanyId(activeCompany)} />
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>

@@ -257,6 +257,12 @@ class ScopedCollection:
             )
 
     async def _write(self, fn):
+        cid = self.scope.company_id
+        if storage_router._writer.get() != storage_router.canonical_company_id(cid):
+            if await storage_router.maintenance_locked(self._catalog(), cid):
+                raise storage_router.StorageWriteLocked(
+                    storage_router.WRITE_LOCK_MESSAGE, company_id=cid,
+                )
         await self._align()
         try:
             return await fn()

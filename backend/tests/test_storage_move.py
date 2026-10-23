@@ -429,7 +429,7 @@ def test_apply_matches_queries_and_keeps_source(engine, source, target, tmp_path
         storage_router.forget_mode(world.company_id)
         assert await _snapshot(world) == before
         company = await world.db.companies.find_one({"_id": world.company_id})
-        assert company.get("storage_write_lock") is False
+        assert company.get("storage_write_lock") is True
         record = await world.db.storage_moves.find_one({"_id": report.move_id})
         assert record["status"] == "completed"
         assert "dedicated_dsn_ref" not in record
@@ -537,7 +537,7 @@ def test_rollback_copies_writes_back(engine, source, target, tmp_path, monkeypat
         await _seed(world, source)
         report = await storage_move.apply_move(world.db, world.company_id, target)
         assert report.ok
-        storage_router.forget_mode(world.company_id)
+        await storage_router.set_company_maintenance(world.db, world.company_id, False)
         handle = tenant_db.TenantDB(world.db, _scope(world.company_id))
         await handle.orders.insert_one({
             "_id": "o2",
@@ -606,11 +606,18 @@ def test_write_lock_during_move(engine, source, target, tmp_path, monkeypatch):
         )
         assert report.ok
         assert seen.get("hit")
-        assert not storage_router.company_write_locked(world.company_id)
+        assert storage_router.company_write_locked(world.company_id)
         company = await world.db.companies.find_one({"_id": world.company_id})
-        assert company.get("storage_write_lock") is False
-        storage_router.forget_mode(world.company_id)
+        assert company.get("storage_write_lock") is True
         handle = tenant_db.TenantDB(world.db, _scope(world.company_id))
+        with pytest.raises(storage_router.StorageWriteLocked):
+            await handle.products.insert_one({
+                "_id": "p-kept",
+                "name": "Kilitli",
+                "sku": "K-k",
+                "price": 1,
+            })
+        await storage_router.set_company_maintenance(world.db, world.company_id, False)
         await handle.products.insert_one({
             "_id": "p2",
             "name": "Defter",
@@ -1238,6 +1245,7 @@ def test_routed_collections_follow_the_router(tmp_path, monkeypatch):
             await world.db[name].insert_one({"_id": f"{name}-1", "company_id": cid, "text": "bir"})
         report = await storage_move.apply_move(world.db, cid, "shared_v2")
         assert report.ok, report.errors
+        await storage_router.set_company_maintenance(world.db, cid, False)
         copied = {row["name"] for row in report.collections}
         store = await storage_router.open_company_store(world.db, cid)
         seen = {}
@@ -1268,7 +1276,7 @@ def test_archived_writes_reach_the_live_store(tmp_path, monkeypatch):
         await _seed(world, "legacy")
         moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
         assert moved.ok, moved.errors
-        storage_router.forget_mode(world.company_id)
+        await storage_router.set_company_maintenance(world.db, world.company_id, False)
         broad = {}
         routed_broad = await storage_router.route_legacy_write(
             world.db.products, "update_many", query=broad, update={"$set": {"note": "genel"}},
@@ -1390,7 +1398,7 @@ def test_split_write_is_explicit_when_a_later_store_fails(tmp_path, monkeypatch,
         await _seed(world, "legacy")
         moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
         assert moved.ok, moved.errors
-        storage_router.forget_mode(world.company_id)
+        await storage_router.set_company_maintenance(world.db, world.company_id, False)
         query = {}
         routed = await storage_router.route_legacy_write(
             world.db.products,
@@ -1477,7 +1485,7 @@ def test_noncolumn_split_write_on_mariadb(tmp_path, monkeypatch):
         await _seed(world, "legacy")
         moved = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
         assert moved.ok, moved.errors
-        storage_router.forget_mode(world.company_id)
+        await storage_router.set_company_maintenance(world.db, world.company_id, False)
         await world.db.products.update_one({"_id": "other-p"}, {"$set": {"note": "n"}})
         await world.db.products.update_one({"_id": "p1"}, {"$set": {"note": "n"}})
         shared = storage_router.collection_for_mode(world.db, "shared_v2", world.company_id, "products")
