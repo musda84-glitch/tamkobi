@@ -12,6 +12,7 @@ import copy
 import json
 import os
 import re
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -131,10 +132,10 @@ def changed_window(docs, since: Optional[str], limit: int = 3000):
     return out, cursor, more
 
 
-def _audit_sql(op: str, collection: str, doc_id=None, duration_ms: float = 0):
+def _audit_sql(op: str, collection: str, doc_id=None, duration_ms: float = 0, **fields):
     try:
         from applog import log_sql
-        log_sql(op, collection, doc_id=doc_id, duration_ms=duration_ms)
+        log_sql(op, collection, doc_id=doc_id, duration_ms=duration_ms, **fields)
     except Exception:
         pass
 
@@ -715,7 +716,11 @@ _SQL_SORT_FIELDS = frozenset({"created_at", "date", "issue_date", "account_name"
 _PY_OP_ORDER = ("$regex", "$in", "$nin", "$ne", "$exists", "$gt", "$gte", "$lt", "$lte", "$eq", "$not", "$elemMatch")
 _DATE_SQL = (("$gt", ">"), ("$gte", ">="), ("$lt", "<"), ("$lte", "<="))
 _PARSE_IN_THREAD_AT = 2000
+_OFFLOAD_AT = 32
 _MAX_SQL_LIMIT = 18446744073709551615
+_HOT_NAMES = frozenset({"companies", "users"})
+_HOT_MAX = 2048
+_SQL_SLOT: contextvars.ContextVar = contextvars.ContextVar("mysql_sql_slot", default=None)
 
 
 def sql_page_pushdown_enabled() -> bool:
@@ -740,6 +745,288 @@ async def _loads_rows_async(rows) -> List[dict]:
     if rows is not None and len(rows) >= _PARSE_IN_THREAD_AT:
         return await asyncio.to_thread(_loads_rows, rows)
     return _loads_rows(rows)
+
+
+def _hot_ttl() -> float:
+    try:
+        value = float(os.environ.get("HOT_DOC_CACHE_TTL", "5"))
+    except (TypeError, ValueError):
+        value = 5.0
+    return value if value >= 0 else 0.0
+
+
+class _HotDocs:
+    """companies/users için süreç içi kısa TTL. İstekten bağımsızdır."""
+
+    def __init__(self):
+        self._items: Dict[tuple, tuple] = {}
+
+    def get(self, name: str, doc_id: str):
+        if _hot_ttl() <= 0:
+            return None
+        key = (name, str(doc_id))
+        row = self._items.get(key)
+        if not row:
+            return None
+        expires, doc = row
+        if time.monotonic() >= expires:
+            self._items.pop(key, None)
+            return None
+        return copy.deepcopy(doc)
+
+    def put(self, name: str, doc: dict) -> None:
+        if name not in _HOT_NAMES or _hot_ttl() <= 0 or not isinstance(doc, dict):
+            return
+        ident = doc.get("_id")
+        if ident is None:
+            return
+        self._items[(name, str(ident))] = (time.monotonic() + _hot_ttl(), copy.deepcopy(doc))
+        if len(self._items) > _HOT_MAX:
+            self._items.clear()
+
+    def drop(self, name: str, doc_id=None) -> None:
+        if name not in _HOT_NAMES and doc_id is None:
+            return
+        if doc_id is None:
+            self._items = {key: val for key, val in self._items.items() if key[0] != name}
+            return
+        self._items.pop((name, str(doc_id)), None)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
+_hot_docs = _HotDocs()
+
+
+def lookup_hot(name: str, doc_id: str):
+    return _hot_docs.get(name, doc_id)
+
+
+def remember_hot(name: str, doc: dict) -> None:
+    _hot_docs.put(name, doc)
+
+
+def forget_hot(name: str, doc_id=None) -> None:
+    _hot_docs.drop(name, doc_id)
+
+
+def note_hot_write(name: str, doc_id=None) -> None:
+    """Yazma önbelleği düşürür. Okuma bir sonraki turda taze belge alır."""
+    forget_hot(name, doc_id)
+
+
+def clear_hot_cache() -> None:
+    _hot_docs.clear()
+
+
+def hot_ident(name: str, query, skip=0):
+    if name not in _HOT_NAMES or skip:
+        return None
+    if not isinstance(query, dict) or set(query.keys()) != {"_id"}:
+        return None
+    value = query.get("_id")
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    return str(value)
+
+
+def _caller_label() -> str:
+    """Yavaş sorgu uyarısındaki çağıran. Sorgu parametresi ve VKN yazılmaz."""
+    endpoint = ""
+    try:
+        import applog
+        endpoint = applog.current_sql_endpoint()
+    except Exception:
+        endpoint = ""
+    fn = ""
+    frame = sys._getframe(1)
+    for _ in range(16):
+        frame = frame.f_back
+        if frame is None:
+            break
+        mod = str(frame.f_globals.get("__name__") or "")
+        if "mysql_store" in mod or mod.startswith("asyncio"):
+            continue
+        short = mod.rsplit(".", 1)[-1]
+        fn = f"{short}.{frame.f_code.co_name}"
+        break
+    text = " ".join(part for part in (endpoint, fn) if part)
+    text = re.sub(r"\d{10,}", "#", text)
+    return text[:160]
+
+
+def _emit_sql_slot(process_ms: float = 0) -> None:
+    slot = _SQL_SLOT.get()
+    if not slot:
+        return
+    _SQL_SLOT.set(None)
+    acquire_ms = float(slot.get("acquire_ms") or 0)
+    query_ms = float(slot.get("query_ms") or 0)
+    if process_ms <= 0 and slot.get("mark"):
+        process_ms = (time.perf_counter() - float(slot["mark"])) * 1000
+    _audit_sql(
+        "SELECT",
+        slot.get("collection") or "",
+        duration_ms=acquire_ms + query_ms + process_ms,
+        acquire_ms=round(acquire_ms, 1),
+        query_ms=round(query_ms, 1),
+        process_ms=round(process_ms, 1),
+        caller=_caller_label(),
+    )
+
+
+async def offload(fn, *args, size: int = 0):
+    """Büyük Python işini event loop dışına alır. Küçük liste aynı sonucu yerinde üretir."""
+    if size >= _OFFLOAD_AT:
+        return await asyncio.to_thread(fn, *args)
+    return fn(*args)
+
+
+def _filter_docs(docs, query) -> List[dict]:
+    if not query:
+        return list(docs or [])
+    return [doc for doc in docs or [] if match_query(doc, query)]
+
+
+async def filter_matching(docs, query) -> List[dict]:
+    if not query:
+        return list(docs or [])
+    return await offload(_filter_docs, docs, query, size=len(docs or []))
+
+
+def materialize_docs(rows, query=None) -> List[dict]:
+    docs = [loads(row[0]) for row in rows or []]
+    if query:
+        return [doc for doc in docs if match_query(doc, query)]
+    return docs
+
+
+async def materialize_docs_async(rows, query=None) -> List[dict]:
+    return await offload(materialize_docs, rows, query, size=len(rows or []))
+
+
+def _finish_read(docs, sort, skip, limit, length, projection) -> List[dict]:
+    rows = sort_docs(list(docs or []), sort)
+    if skip:
+        rows = rows[skip:]
+    cap = length if length is not None else limit
+    if limit is not None:
+        rows = rows[:limit]
+    if cap is not None:
+        rows = rows[:cap]
+    return [project_doc(doc, projection) for doc in rows]
+
+
+def changed_since_sql(collection: str, since: Optional[str], company_id: Optional[str], limit: int):
+    """changed_since sayfası. company_id kısa ise indeksli kolon, değilse JSON."""
+    sql = "SELECT doc, updated_at FROM docs WHERE collection=%s"
+    args: List[Any] = [collection]
+    parsed = parse_ts(since)
+    if parsed is not None:
+        sql += " AND updated_at >= %s"
+        args.append(parsed)
+    if company_id:
+        if len(str(company_id)) <= 64:
+            sql += " AND company_id=%s"
+        else:
+            sql += " AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))=%s"
+        args.append(company_id)
+    try:
+        cap = int(limit)
+    except (TypeError, ValueError):
+        cap = 3000
+    if cap < 1:
+        cap = 1
+    sql += " ORDER BY updated_at ASC, id ASC LIMIT %s"
+    args.append(cap + 1)
+    return sql, args, parsed, cap
+
+
+def _materialize_changed(rows, since, limit: int, parsed):
+    more = len(rows) > limit
+    page = list(rows or [])[:limit]
+    docs = []
+    cursor = since
+    for raw, updated in page:
+        doc = loads(raw)
+        stamp = iso_ts(updated)
+        doc["_row_updated_at"] = stamp
+        docs.append(doc)
+        cursor = stamp
+    if not docs and parsed is None:
+        cursor = iso_ts(datetime.now(timezone.utc))
+    elif not docs:
+        cursor = since
+    return docs, cursor, more
+
+
+def indexed_prefilter_keeps(doc: dict, query: Optional[dict]) -> bool:
+    """sql_pushdown WHERE'sinin bu belgeyi elemesi. Uygulanmayan madde elemez.
+
+    Tam eşleşme değildir; ardından match_query çalışır. sql_count_exact
+    doluysa bu süzgeç tek başına match_query ile aynı kümeyi vermelidir.
+    """
+    if not isinstance(doc, dict):
+        return False
+    if not query:
+        return True
+    for key, val in query.items():
+        if str(key).startswith("$") or not _SAFE_FIELD.match(str(key)):
+            continue
+        if key == "_id" and not isinstance(val, dict):
+            if str(doc.get("_id")) != str(val):
+                return False
+            continue
+        if key == "_id" and isinstance(val, dict) and val.get("$in"):
+            if not all(isinstance(item, str) for item in val["$in"]):
+                continue
+            if str(doc.get("_id")) not in [str(item) for item in val["$in"]]:
+                return False
+            continue
+        if key == "company_id" and not isinstance(val, dict):
+            raw = doc.get("company_id")
+            if not isinstance(raw, str) or raw != str(val):
+                return False
+            continue
+        current = doc.get(key, MISSING)
+        if not isinstance(val, dict):
+            if val is None or isinstance(val, (bool, int, float)):
+                continue
+            if not isinstance(current, str) or current != str(val):
+                return False
+            continue
+        if "$regex" in val:
+            rx = str(val.get("$regex") or "")
+            if _PREFIX_RE.match(rx):
+                if not isinstance(current, str) or not current.startswith(rx[1:]):
+                    return False
+        for op, cmpop in (("$gte", ">="), ("$lte", "<="), ("$gt", ">"), ("$lt", "<")):
+            if op not in val:
+                continue
+            bound = val[op]
+            if isinstance(bound, (bool, int, float)) or not _DATEISH.match(str(bound)):
+                continue
+            if not isinstance(current, str):
+                return False
+            if cmpop == ">=" and not current >= str(bound):
+                return False
+            if cmpop == "<=" and not current <= str(bound):
+                return False
+            if cmpop == ">" and not current > str(bound):
+                return False
+            if cmpop == "<" and not current < str(bound):
+                return False
+        if "$ne" in val and isinstance(val["$ne"], str):
+            if isinstance(current, str) and current == val["$ne"]:
+                return False
+        if "$in" in val and val["$in"] and all(isinstance(item, str) for item in val["$in"]):
+            if not isinstance(current, str) or current not in val["$in"]:
+                return False
+        if "$nin" in val and val["$nin"] and all(isinstance(item, str) for item in val["$nin"]):
+            if isinstance(current, str) and current in val["$nin"]:
+                return False
+    return True
 
 
 def _json_extract(field: str) -> str:
@@ -1836,15 +2123,10 @@ class MySQLCursor:
             if pushed is not None:
                 return pushed
         docs = await self._coll._load_filtered(self._query)
-        docs = sort_docs(docs, self._sort)
-        if self._skip:
-            docs = docs[self._skip :]
-        cap = length if length is not None else self._limit
-        if self._limit is not None:
-            docs = docs[: self._limit]
-        if cap is not None:
-            docs = docs[:cap]
-        return [project_doc(d, self._projection) for d in docs]
+        return await offload(
+            _finish_read, docs, self._sort, self._skip, self._limit, length, self._projection,
+            size=len(docs),
+        )
 
     def __aiter__(self):
         self._aiter_docs = None
@@ -1931,13 +2213,25 @@ class MySQLCollection:
         self.name = name
 
     async def _fetch_rows(self, sql: str, params: list):
+        """Havuz beklemesi ile sorgu süresi ayrı ölçülür. İşleme süresi çağıran kapatır."""
+        pending = _SQL_SLOT.get()
+        if pending:
+            _emit_sql_slot(0)
         await self._db._ensure()
-        t0 = time.perf_counter()
+        t_acquire = time.perf_counter()
         async with self._db._pool.acquire() as conn:
+            acquire_ms = (time.perf_counter() - t_acquire) * 1000
+            t_query = time.perf_counter()
             async with conn.cursor() as cur:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
-        _audit_sql("SELECT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+            query_ms = (time.perf_counter() - t_query) * 1000
+        _SQL_SLOT.set({
+            "collection": self.name,
+            "acquire_ms": acquire_ms,
+            "query_ms": query_ms,
+            "mark": time.perf_counter(),
+        })
         return rows
 
     async def _load_all(self) -> List[dict]:
@@ -1957,12 +2251,15 @@ class MySQLCollection:
         try:
             blocked = await self._fetch_rows(plan["probe_sql"], plan["probe_params"])
             if blocked:
+                _emit_sql_slot(0)
                 return None
             docs = await self._load_sql(plan["sql"], plan["params"])
         except Exception:
+            _emit_sql_slot(0)
             return None
         if plan["reorder"]:
-            return [reorder_projected(d, projection) for d in docs]
+            docs = [reorder_projected(d, projection) for d in docs]
+        _emit_sql_slot(0)
         return docs
 
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
@@ -1971,10 +2268,12 @@ class MySQLCollection:
         try:
             docs = await self._load_sql(sql, params)
         except Exception:
+            _emit_sql_slot(0)
             docs = await self._load_all()
-        if not query:
-            return docs
-        return [d for d in docs if match_query(d, query)]
+        if query:
+            docs = await filter_matching(docs, query)
+        _emit_sql_slot(0)
+        return docs
 
     async def distinct_company_ids(self, query: Optional[dict]) -> Optional[List[str]]:
         """Eşleşen satırların company_id değerleri. Hata olursa None; çağıran tam okur."""
@@ -2023,6 +2322,7 @@ class MySQLCollection:
             doc["_id"] = str(uuid.uuid4())
         await self._check_unique(doc, exclude_id=None)
         await self._replace_rows([(self.name, str(doc["_id"]), dumps(doc))])
+        note_hot_write(self.name, doc.get("_id"))
         _emit_company_change(self.name, doc)
 
     async def _delete_ids(self, ids: Sequence[str]) -> int:
@@ -2039,6 +2339,7 @@ class MySQLCollection:
                 )
                 n = cur.rowcount
         _audit_sql("DELETE", self.name, doc_id=",".join(str(i) for i in ids[:8]), duration_ms=(time.perf_counter() - t0) * 1000)
+        note_hot_write(self.name)
         return n
 
     async def _check_unique(self, doc: dict, exclude_id):
@@ -2053,24 +2354,35 @@ class MySQLCollection:
         routed = await _route_read(self, query)
         if routed is not None:
             return await routed.find_one(_aligned_query(query), projection, sort, skip)
+        ident = hot_ident(self.name, query, skip)
+        if ident is not None:
+            hit = lookup_hot(self.name, ident)
+            if hit is not None:
+                return project_doc(hit, projection) if projection else hit
         await _block_shared_copy(self, query=query, write=False)
         if sql_page_pushdown_enabled():
             pushed = await self._read_page(query, normalize_sort(sort), skip, 1, 1, projection)
             if pushed is not None:
-                return pushed[0] if pushed else None
+                found = pushed[0] if pushed else None
+                if ident is not None and found is not None and not projection:
+                    remember_hot(self.name, found)
+                return found
         docs = await self._load_filtered(query)
-        docs = sort_docs(docs, normalize_sort(sort))
-        if skip:
-            docs = docs[skip:]
-        if not docs:
+        page = await offload(
+            _finish_read, docs, normalize_sort(sort), skip, 1, 1, None, size=len(docs),
+        )
+        if not page:
             return None
-        return project_doc(docs[0], projection)
+        if ident is not None:
+            remember_hot(self.name, page[0])
+        return project_doc(page[0], projection) if projection else page[0]
 
     def find(self, query: Optional[dict] = None, projection: Optional[dict] = None):
         _guard(self.name, "find", query=query)
         return MySQLCursor(self, query, projection)
 
     async def insert_one(self, doc: dict):
+        note_hot_write(self.name)
         routed = await _route_write(self, "insert_one", doc=doc)
         if routed is not None:
             return await routed.insert_one(doc)
@@ -2096,6 +2408,7 @@ class MySQLCollection:
                     raise
         _audit_sql("INSERT", self.name, doc_id=doc.get("_id"), duration_ms=(time.perf_counter() - t0) * 1000)
         _emit_company_change(self.name, doc)
+        note_hot_write(self.name, doc.get("_id"))
         return InsertOneResult(doc["_id"])
 
     async def insert_many(self, docs: Iterable[dict], ordered: bool = True):
@@ -2112,6 +2425,7 @@ class MySQLCollection:
         return InsertManyResult(ids)
 
     async def update_one(self, query: dict, update: dict, upsert: bool = False):
+        note_hot_write(self.name)
         routed = await _route_write(self, "update_one", query=query, update=update)
         if routed is not None:
             return await routed.update_one(query, update, upsert=upsert)
@@ -2140,6 +2454,7 @@ class MySQLCollection:
         `matched_count` kilit altında sorgu eşleşmesini yansıtır (eşzamanlı claim için).
         `query` içinde eşitlik `_id` zorunlu.
         """
+        note_hot_write(self.name)
         routed = await _route_write(self, "update_one_atomic", query=query, update=update)
         if routed is not None:
             return await routed.update_one_atomic(query, update)
@@ -2189,6 +2504,7 @@ class MySQLCollection:
                     )
                     if changed:
                         _emit_company_change(self.name, new_doc)
+                    note_hot_write(self.name, doc_id)
                     return UpdateResult(1, 1 if changed else 0, None)
             except Exception:
                 try:
@@ -2198,6 +2514,7 @@ class MySQLCollection:
                 raise
 
     async def update_many(self, query: dict, update: dict, upsert: bool = False):
+        note_hot_write(self.name)
         routed = await _route_write(self, "update_many", query=query, update=update)
         if routed is not None:
             return await routed.update_many(query, update, upsert=upsert)
@@ -2222,11 +2539,13 @@ class MySQLCollection:
                     doc["_id"] = str(uuid.uuid4())
                 rows.append((self.name, str(doc["_id"]), dumps(doc)))
             await self._replace_rows(rows)
+            note_hot_write(self.name)
             for doc in changed:
                 _emit_company_change(self.name, doc)
         return UpdateResult(len(docs), len(changed), None)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
+        note_hot_write(self.name)
         routed = await _route_write(self, "replace_one", query=query, doc=replacement)
         if routed is not None:
             return await routed.replace_one(query, replacement, upsert=upsert)
@@ -2247,6 +2566,7 @@ class MySQLCollection:
         return UpdateResult(1, 1, None)
 
     async def find_one_and_update(self, query: dict, update: dict, upsert: bool = False, return_document=True, projection=None):
+        note_hot_write(self.name)
         routed = await _route_write(self, "find_one_and_update", query=query, update=update)
         if routed is not None:
             return await routed.find_one_and_update(
@@ -2268,6 +2588,7 @@ class MySQLCollection:
         return project_doc(out, projection)
 
     async def delete_one(self, query: dict):
+        note_hot_write(self.name)
         routed = await _route_write(self, "delete_one", query=query)
         if routed is not None:
             return await routed.delete_one(query)
@@ -2283,6 +2604,7 @@ class MySQLCollection:
         return DeleteResult(n)
 
     async def delete_many(self, query: dict):
+        note_hot_write(self.name)
         routed = await _route_write(self, "delete_many", query=query)
         if routed is not None:
             return await routed.delete_many(query)
@@ -2343,36 +2665,12 @@ class MySQLCollection:
                     result = await result
                 return result
             await _block_shared_copy(self, query={"company_id": str(company_id)}, write=False)
-        await self._db._ensure()
-        sql = "SELECT doc, updated_at FROM docs WHERE collection=%s"
-        args: List[Any] = [self.name]
-        parsed = parse_ts(since)
-        if parsed is not None:
-            sql += " AND updated_at >= %s"
-            args.append(parsed)
-        if company_id:
-            sql += " AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id')) = %s"
-            args.append(company_id)
-        sql += " ORDER BY updated_at ASC, id ASC LIMIT %s"
-        args.append(int(limit) + 1)
-        async with self._db._pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(sql, args)
-                rows = await cur.fetchall()
-        more = len(rows) > limit
-        rows = rows[:limit]
-        docs = []
-        cursor = since
-        for raw, updated in rows:
-            doc = loads(raw)
-            stamp = iso_ts(updated)
-            doc["_row_updated_at"] = stamp
-            docs.append(doc)
-            cursor = stamp
-        if not docs and parsed is None:
-            cursor = iso_ts(datetime.now(timezone.utc))
-        elif not docs:
-            cursor = since
+        sql, args, parsed, cap = changed_since_sql(self.name, since, company_id, limit)
+        rows = await self._fetch_rows(sql, args)
+        docs, cursor, more = await offload(
+            _materialize_changed, rows, since, cap, parsed, size=len(rows or []),
+        )
+        _emit_sql_slot(0)
         return docs, cursor, more
 
     async def count_documents(self, query: Optional[dict] = None):
@@ -2385,12 +2683,22 @@ class MySQLCollection:
         if exact:
             sql, params = exact
             await self._db._ensure()
-            t0 = time.perf_counter()
+            t_acquire = time.perf_counter()
             async with self._db._pool.acquire() as conn:
+                acquire_ms = (time.perf_counter() - t_acquire) * 1000
+                t_query = time.perf_counter()
                 async with conn.cursor() as cur:
                     await cur.execute(sql, params)
                     row = await cur.fetchone()
-            _audit_sql("COUNT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+                query_ms = (time.perf_counter() - t_query) * 1000
+            _audit_sql(
+                "COUNT", self.name,
+                duration_ms=acquire_ms + query_ms,
+                acquire_ms=round(acquire_ms, 1),
+                query_ms=round(query_ms, 1),
+                process_ms=0,
+                caller=_caller_label(),
+            )
             return int((row or [0])[0] or 0)
         return len(await self._load_filtered(query))
 
@@ -2416,7 +2724,7 @@ class MySQLCollection:
                     break
             if not matched:
                 docs = await self._load_filtered({})
-            return aggregate_rows(docs, pipeline)
+            return await offload(aggregate_rows, docs, pipeline, size=len(docs))
 
         cursor_box: Dict[str, Any] = {}
 

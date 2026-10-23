@@ -12,9 +12,11 @@ Rotation (size + retention) lives in ``scripts/rotate-logs.sh`` and
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
+import re
 import time
 import traceback
 from datetime import datetime, timezone
@@ -175,10 +177,24 @@ def log_error(event: str, message: str = "", exc: Optional[BaseException] = None
     _emit(ERROR_LOGGER, logging.ERROR, event, message or event, **fields)
 
 
+_sql_endpoint: contextvars.ContextVar[str] = contextvars.ContextVar("tamkobi_sql_endpoint", default="")
+
+
+def current_sql_endpoint() -> str:
+    return _sql_endpoint.get()
+
+
 def log_sql(op: str, collection: str, doc_id: Any = None, duration_ms: float = 0, **fields):
     if collection in _NOISE_SQL_COLLECTIONS:
         return
     slow = duration_ms >= LOG_SQL_SLOW_MS
+    parts = []
+    for key in ("acquire_ms", "query_ms", "process_ms"):
+        if fields.get(key) is not None:
+            parts.append(f"{key}={fields[key]}")
+    if fields.get("caller"):
+        parts.append(f"caller={fields['caller']}")
+    timing = (" " + " ".join(parts)) if parts else ""
     write = op in {"INSERT", "REPLACE", "DELETE", "UPDATE"}
     if not write and not slow:
         return
@@ -187,13 +203,13 @@ def log_sql(op: str, collection: str, doc_id: Any = None, duration_ms: float = 0
         # still file-log writes on lesser collections, skip MySQL persist
         setup_logging()
         logging.getLogger(SQL_LOGGER).info(
-            "%s %s id=%s duration_ms=%.1f", op, collection, doc_id, duration_ms,
+            "%s %s id=%s duration_ms=%.1f%s", op, collection, doc_id, duration_ms, timing,
             extra={"event_data": {"event": "sql_write", "op": op, "collection": collection, "doc_id": str(doc_id) if doc_id else None, "duration_ms": round(duration_ms, 1)}},
         )
         return
     _emit(
         SQL_LOGGER, level, "sql_slow" if slow and not write else "sql_write",
-        f"{op} {collection} id={doc_id} duration_ms={duration_ms:.1f}",
+        f"{op} {collection} id={doc_id} duration_ms={duration_ms:.1f}{timing}",
         op=op, collection=collection, doc_id=str(doc_id) if doc_id else None,
         duration_ms=round(duration_ms, 1), **fields,
     )
@@ -501,32 +517,37 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         t0 = time.perf_counter()
         path = request.url.path
         method = request.method
+        label = re.sub(r"\d{10,}", "#", f"{method} {path}")[:180]
+        token = _sql_endpoint.set(label)
         try:
-            response = await call_next(request)
-        except Exception as exc:
-            log_error(
-                "unhandled_exception",
-                str(exc),
-                exc=exc,
-                method=method,
-                path=path,
-                ip=client_ip(request),
-            )
-            raise
-        ms = (time.perf_counter() - t0) * 1000
-        if response.status_code >= 500:
-            log_error(
-                "http_5xx", f"{method} {path} -> {response.status_code}",
-                method=method, path=path, status_code=response.status_code,
-                duration_ms=round(ms, 1), ip=client_ip(request),
-            )
-        elif path.startswith("/api") and ms >= LOG_SLOW_REQUEST_MS and not path.startswith("/api/health"):
-            log_event(
-                "slow_request", f"{method} {path} {ms:.0f}ms",
-                method=method, path=path, status_code=response.status_code,
-                duration_ms=round(ms, 1), ip=client_ip(request),
-            )
-        return response
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                log_error(
+                    "unhandled_exception",
+                    str(exc),
+                    exc=exc,
+                    method=method,
+                    path=path,
+                    ip=client_ip(request),
+                )
+                raise
+            ms = (time.perf_counter() - t0) * 1000
+            if response.status_code >= 500:
+                log_error(
+                    "http_5xx", f"{method} {path} -> {response.status_code}",
+                    method=method, path=path, status_code=response.status_code,
+                    duration_ms=round(ms, 1), ip=client_ip(request),
+                )
+            elif path.startswith("/api") and ms >= LOG_SLOW_REQUEST_MS and not path.startswith("/api/health"):
+                log_event(
+                    "slow_request", f"{method} {path} {ms:.0f}ms",
+                    method=method, path=path, status_code=response.status_code,
+                    duration_ms=round(ms, 1), ip=client_ip(request),
+                )
+            return response
+        finally:
+            _sql_endpoint.reset(token)
 
 
 def main(argv=None):

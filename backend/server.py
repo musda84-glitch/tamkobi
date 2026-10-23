@@ -531,6 +531,12 @@ async def startup_event():
             logger.warning("storage admin loop skipped")
     else:
         logger.info("TAMKOBI_BACKGROUND_JOBS=0 — arka plan döngüleri başlatılmadı")
+    try:
+        import loop_lag
+
+        asyncio.get_running_loop().create_task(loop_lag.watch())
+    except Exception:
+        logger.warning("loop lag izleyici başlatılamadı")
 
 # Helper Auth Dependency
 async def get_current_user(request: Request) -> dict:

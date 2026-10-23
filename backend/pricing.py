@@ -381,7 +381,7 @@ async def _morning_routed() -> None:
 
 
 async def scheduler_loop():
-    """Her dakika: etkin şirketlerde saat geldiyse ve bugün gönderilmediyse özeti gönder."""
+    """Etkin şirketlerde saat geldiyse ve bugün gönderilmediyse özeti gönder."""
     import storage_router
 
     await asyncio.sleep(20)
@@ -396,4 +396,4 @@ async def scheduler_loop():
                         await send_summary(st["company_id"])
         except Exception as e:  # noqa: BLE001
             logger.warning(f"morning summary scheduler: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(180)

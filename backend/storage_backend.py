@@ -31,6 +31,24 @@ class DeleteResult:
         self.deleted_count = deleted_count
 
 
+def _apply_cursor(docs, sort, skip, limit, length, projection):
+    """sort, skip ve limit. StorageCursor.to_list ile aynı kesim."""
+    from mysql_store import project_doc, sort_docs
+
+    rows = sort_docs(list(docs or []), sort)
+    if skip:
+        rows = rows[skip:]
+    cap = limit
+    if length is not None:
+        wanted = int(length)
+        cap = wanted if cap is None else min(cap, wanted)
+    if cap is not None:
+        rows = rows[:cap]
+    if projection:
+        return [project_doc(doc, projection) for doc in rows]
+    return rows
+
+
 class StorageCursor:
     """find() dönüşü. sort, skip ve limit to_list sırasında uygulanır."""
 
@@ -57,21 +75,21 @@ class StorageCursor:
         return self
 
     async def to_list(self, length=None):
-        from mysql_store import project_doc, sort_docs
+        from mysql_store import _OFFLOAD_AT, offload
 
         docs = list(await self._loader())
-        docs = sort_docs(docs, self._sort)
-        if self._skip:
-            docs = docs[self._skip:]
-        cap = self._limit
-        if length is not None:
-            wanted = int(length)
-            cap = wanted if cap is None else min(cap, wanted)
-        if cap is not None:
-            docs = docs[:cap]
-        if self._projection:
-            return [project_doc(doc, self._projection) for doc in docs]
-        return docs
+        if len(docs) >= _OFFLOAD_AT:
+            return await offload(
+                _apply_cursor,
+                docs,
+                self._sort,
+                self._skip,
+                self._limit,
+                length,
+                self._projection,
+                size=len(docs),
+            )
+        return _apply_cursor(docs, self._sort, self._skip, self._limit, length, self._projection)
 
     def __aiter__(self):
         async def _gen():

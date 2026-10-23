@@ -36,8 +36,10 @@ from mysql_store import (
     index_spec_parts,
     loads,
     match_query,
+    materialize_docs_async,
     new_upsert_doc,
     normalize_sort,
+    offload,
     project_doc,
     scalar_at,
     sort_docs,
@@ -432,7 +434,7 @@ class SharedV2Collection:
         where, reason = self._where_plan(query or {})
         if where is None:
             self._log_fallback(reason)
-            return len(self._python_match(query))
+            return len(await self._scan_match(query))
         sql, params = where
         row = self._run(
             f"SELECT COUNT(*) FROM {self._data_table()} WHERE " + sql, params,
@@ -442,12 +444,7 @@ class SharedV2Collection:
     async def distinct(self, key, query=None):
         _guard(self.name, "distinct", query=query)
         docs = await self._match_docs(query)
-        seen = []
-        for doc in docs:
-            for value in values_at(doc, key) or []:
-                if value not in seen:
-                    seen.append(value)
-        return seen
+        return await offload(_distinct_list, docs, key, size=len(docs))
 
     def aggregate(self, pipeline):
         _guard(self.name, "aggregate", pipeline=pipeline)
@@ -463,7 +460,7 @@ class SharedV2Collection:
                         break
                 if docs is None:
                     docs = await coll._match_docs({})
-                rows = aggregate_rows(docs, stages)
+                rows = await offload(aggregate_rows, docs, stages, size=len(docs))
                 if length is None:
                     return list(rows)
                 return list(rows)[: int(length)]
@@ -480,7 +477,7 @@ class SharedV2Collection:
             if storage_router.canonical_company_id(requested) != storage_router.canonical_company_id(self.company_id):
                 return [], since, False
         docs = await self._match_docs({})
-        return changed_window(docs, since, limit)
+        return await offload(changed_window, docs, since, limit, size=len(docs))
 
     async def insert_one(self, doc):
         await self._touch_lock()
@@ -764,24 +761,31 @@ class SharedV2Collection:
         built, reason = self._read_plan(query, sort, skip, limit, length)
         if built is None:
             self._log_fallback(reason)
-            docs = self._python_match(query)
-            docs = sort_docs(docs, sort)
+            docs = await self._scan_match(query)
+            docs = await offload(sort_docs, docs, sort, size=len(docs))
             docs = _slice_docs(docs, skip, limit, length)
         else:
             sql, params = built
-            docs = self._fetch_docs(sql, params)
-        out = []
-        for doc in docs:
-            out.append(project_doc(doc, projection) if projection else copy.deepcopy(doc))
-        return out
+            docs = await materialize_docs_async(self._fetch_raw(sql, params))
+        return await offload(_copy_projected, docs, projection, size=len(docs))
 
     async def _match_docs(self, query):
         built, reason = self._read_plan(query, [("_id", 1)], 0, None, None)
         if built is None:
             self._log_fallback(reason)
-            return self._python_match(query)
+            return await self._scan_match(query)
         sql, params = built
-        return self._fetch_docs(sql, params)
+        return await materialize_docs_async(self._fetch_raw(sql, params))
+
+    async def _scan_match(self, query):
+        """Firma satırlarını bu iş parçacığında çek, eşleştirmeyi döngü dışına al."""
+        self.store.python_scans += 1
+        scope, scope_params = self._scope()
+        rows = self._fetch_raw(
+            f"SELECT doc FROM {self._data_table()} WHERE {scope} ORDER BY id ASC",
+            tuple(scope_params),
+        )
+        return await materialize_docs_async(rows, query)
 
     async def _first(self, query):
         """Güncelleme ve silme: PK sırasında ilk eşleşme. Tek satır okunur."""
@@ -1414,10 +1418,13 @@ class SharedV2Collection:
     def _log_fallback(self, reason: str) -> None:
         log.warning("shared_v2 pushdown yok collection=%s neden=%s", self.name, reason or "query")
 
-    def _fetch_docs(self, sql, params):
-        rows = self._run(sql, params, plan=True).fetchall()
+    def _fetch_raw(self, sql, params):
+        rows = list(self._run(sql, params, plan=True).fetchall() or [])
         self.store.docs_loaded += len(rows)
-        return [loads(row[0]) for row in rows]
+        return rows
+
+    def _fetch_docs(self, sql, params):
+        return [loads(row[0]) for row in self._fetch_raw(sql, params)]
 
     def _run(self, sql, params, plan: bool = False, unique: bool = False):
         with self.store.op_lock:
@@ -1516,6 +1523,22 @@ def _bounds(skip, limit, length):
         caps.append(number)
     cap = min(caps) if caps else None
     return skip_n, cap
+
+
+def _distinct_list(docs, key):
+    seen = []
+    for doc in docs or []:
+        for value in values_at(doc, key) or []:
+            if value not in seen:
+                seen.append(value)
+    return seen
+
+
+def _copy_projected(docs, projection):
+    out = []
+    for doc in docs or []:
+        out.append(project_doc(doc, projection) if projection else copy.deepcopy(doc))
+    return out
 
 
 def _slice_docs(docs, skip, limit, length):
