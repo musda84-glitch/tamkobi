@@ -66,6 +66,28 @@ def resolve_caller_company(user: Any, requested: Optional[str] = None) -> str:
     return cid
 
 
+_KEEP_CATALOG = object()
+
+
+async def _doc_from_company_store(db: Any, collection: str, doc_id: str, company_id: str):
+    """Dedicated/shared_v2 kaydı kendi deposundan okur.
+
+    Bayrak kapalı veya legacy ise katalog belgesi kalır. Depoda yoksa None:
+    çağıran paylaşılan kopyayı dönmez. DSN hatası yukarı çıkar.
+    """
+    import storage_router
+
+    if not storage_router.enabled():
+        return _KEEP_CATALOG
+    cid = storage_router.canonical_company_id(str(company_id or ""))
+    if not cid:
+        return _KEEP_CATALOG
+    mode, _epoch, _locked = await storage_router.storage_decision(db, cid)
+    if mode == storage_router.LEGACY:
+        return _KEEP_CATALOG
+    return await db[collection].find_one({"_id": doc_id, "company_id": cid})
+
+
 async def get_tenant_doc(
     db: Any,
     collection: str,
@@ -82,6 +104,18 @@ async def get_tenant_doc(
     cid = doc.get("company_id")
     if cid is not None and not user_may_access_company(user, str(cid)):
         raise HTTPException(status_code=status_on_deny, detail=not_found if status_on_deny == 404 else "Bu kayıt için yetkiniz yok.")
+    if cid is not None:
+        live = await _doc_from_company_store(db, collection, doc_id, str(cid))
+        if live is not _KEEP_CATALOG:
+            if not live:
+                raise HTTPException(status_code=404, detail=not_found)
+            live_cid = live.get("company_id")
+            if live_cid is not None and not user_may_access_company(user, str(live_cid)):
+                raise HTTPException(
+                    status_code=status_on_deny,
+                    detail=not_found if status_on_deny == 404 else "Bu kayıt için yetkiniz yok.",
+                )
+            return live
     return doc
 
 

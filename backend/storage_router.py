@@ -14,7 +14,10 @@ katalogdaki storage_write_lock alanındadır; her süreç kısa TTL ile bakar.
 Bu sürüm legacy, shared_v2 ve dedicated arka uçlarını tanır.
 shared_v2 kipinde orders, invoices, stock_movements ve bank_transactions
 kendi tablolarına gider. Diğer koleksiyonlar docs_v2 koleksiyonuna gider.
-dedicated ayrı veritabanına gider. Yazma, DSN referansı yoksa önbelleği
+dedicated ayrı veritabanına gider. Okuma ve yazma aynı kararı kullanır
+(`storage_decision`). Dedicated ve shared_v2 paylaşılan docs kopyasına
+sessiz düşmez. Veritabanı adı `tamkobi_c_<8 hex>` şirket kimliği değildir;
+DSN araması `comp_<8 hex>` ile yapılır. Yazma, DSN referansı yoksa önbelleği
 bırakıp katalogdan bir kez daha okur; hâlâ yoksa hata verir ve yazmaz.
 Bu yenileme koleksiyon adından bağımsızdır.
 Bilinmeyen bir kip sessizce legacy'ye düşmez. Alanı olmayan mevcut
@@ -156,6 +159,44 @@ def normalize_mode(raw: Any) -> str:
     return text
 
 
+# Veritabanı adı `tamkobi_c_<8hex>` veya kısa `c_<8hex>`. Şirket kimliği `comp_<8hex>`.
+_DB_NAME_COMPANY = re.compile(r"^(?:tamkobi_)?c_([0-9a-fA-F]{8})$")
+
+
+def canonical_company_id(company_id: str) -> str:
+    """Şirket kimliği. `tamkobi_c_<8hex>` ve `c_<8hex>` → `comp_<8hex>`.
+
+    `comp_505a96e8` değişmez. DSN ve kip araması bu kimliği kullanır.
+    Veritabanı adındaki `c_` öneki şirket kimliği değildir.
+    """
+    text = str(company_id or "").strip()
+    match = _DB_NAME_COMPANY.fullmatch(text)
+    if not match:
+        return text
+    return f"comp_{match.group(1).lower()}"
+
+
+def dedicated_database_name(company_id: str, prefix: str = "tamkobi") -> str:
+    """Rapor adı. Veritabanı oluşturmaz.
+
+    `comp_505a96e8` → `tamkobi_c_505a96e8`. Başka kimliklerde boş döner.
+    """
+    cid = canonical_company_id(company_id)
+    head = "comp_"
+    if not cid.startswith(head):
+        return ""
+    tail = cid[len(head):]
+    if len(tail) != 8 or any(ch not in "0123456789abcdef" for ch in tail):
+        return ""
+    base = str(prefix or "tamkobi").strip() or "tamkobi"
+    return f"{base}_c_{tail}"
+
+
+def catalog_blocked_message(mode: str, company_id: str, *, write: bool) -> str:
+    verb = "yazılamaz" if write else "okunamaz"
+    return f"{mode} şirket paylaşılan katalogdan {verb}. company={company_id}"
+
+
 def reject_unless_legacy(mode: str, company_id: str = "") -> None:
     if mode == LEGACY:
         return
@@ -244,19 +285,28 @@ def _mode_from_doc(doc: Optional[dict]) -> str:
     return normalize_mode(doc.get(MODE_FIELD))
 
 
+def _same_company(left, right: str) -> bool:
+    raw = str(left or "")
+    cid = str(right or "")
+    if not cid:
+        return False
+    return raw == cid or canonical_company_id(raw) == cid
+
+
 def _memory_doc(db, company_id: str):
     """Bellek içi docs listesi. Gerçek sürücüde _UNREAD."""
     companies = _companies(db)
     docs = getattr(companies, "docs", None)
     if not isinstance(docs, list):
         return _UNREAD
+    cid = canonical_company_id(company_id)
     found = None
     for doc in docs:
         if not isinstance(doc, dict):
             continue
-        if str(doc.get("_id") or "") == company_id:
+        if _same_company(doc.get("_id"), cid):
             return doc
-        if found is None and str(doc.get("id") or "") == company_id:
+        if found is None and _same_company(doc.get("id"), cid):
             found = doc
     return found
 
@@ -385,7 +435,7 @@ def mode_for_handle(db, company_id: str) -> str:
     katalog okunur; gerçek sürücüye sorulmaz ve hata verilmez.
     Süresi dolmuş kayıt katalogdan yeniden okunur.
     """
-    cid = str(company_id or "").strip()
+    cid = canonical_company_id(company_id)
     if not cid:
         raise ValueError("company_id boş")
     hit = _cached(cid)
@@ -423,7 +473,7 @@ async def load_mode(db, company_id: str) -> str:
     shared_v2 / dedicated / bilinmeyen kip burada hata atmaz; seçim
     legacy_collection içindedir. Projeksiyon kip, epoch ve yazma kilidini ister.
     """
-    cid = str(company_id or "").strip()
+    cid = canonical_company_id(company_id)
     if not cid:
         raise ValueError("company_id boş")
     hit = _cached(cid)
@@ -909,7 +959,7 @@ def assert_document_writable(query=None, doc=None, db=None) -> None:
 @contextmanager
 def bypass_write_lock(company_id: str):
     """Taşıma aracı kendi kopyasını yazarken kilidi deler. İstek bunu görmez."""
-    token = _writer.set(str(company_id or ""))
+    token = _writer.set(canonical_company_id(company_id))
     try:
         yield
     finally:
@@ -942,12 +992,17 @@ def forget_mode(company_id: str) -> None:
     açmadan önce en az bir TTL bekler. Mühürlü ref de bu süreçte düşer;
     sonraki okuma kip ile birlikte yeniden alır.
     """
-    cid = str(company_id or "")
+    cid = canonical_company_id(company_id)
+    raw = str(company_id or "").strip()
     _cache.pop(cid, None)
     _lock_cache.pop(cid, None)
     import storage_dedicated
 
     storage_dedicated.forget_ref(cid)
+    if raw and raw != cid:
+        _cache.pop(raw, None)
+        _lock_cache.pop(raw, None)
+        storage_dedicated.forget_ref(raw)
 
 
 def _view_cached(company_id: str):
@@ -1086,7 +1141,7 @@ async def load_view(db, company_id: str) -> tuple[str, int, bool]:
 
     Okunamazsa StorageWriteLocked. Süresi dolmuş önbellek kullanılmaz.
     """
-    cid = str(company_id or "").strip()
+    cid = canonical_company_id(company_id)
     if not cid:
         raise ValueError("company_id boş")
     cached = _view_cached(cid)
@@ -1100,7 +1155,7 @@ async def load_view(db, company_id: str) -> tuple[str, int, bool]:
 
 def load_view_sync(db, company_id: str) -> tuple[str, int, bool]:
     """Senkron yazma yolu. Olay döngüsünde pymysql açmaz; okuyamazsa reddeder."""
-    cid = str(company_id or "").strip()
+    cid = canonical_company_id(company_id)
     if not cid:
         raise ValueError("company_id boş")
     cached = _view_cached(cid)
@@ -1126,7 +1181,7 @@ async def guard_pinned_write(company_id: str, db=None, pinned_mode=None, pinned_
     """
     if not enabled():
         return (LEGACY, 0, False)
-    cid = str(company_id or "").strip()
+    cid = canonical_company_id(company_id)
     if not cid or _writer.get() == cid:
         return (str(pinned_mode or LEGACY), int(pinned_epoch or 0), False)
     mode, epoch, locked = await load_view(db, cid)
@@ -1140,7 +1195,7 @@ async def guard_pinned_write(company_id: str, db=None, pinned_mode=None, pinned_
 def guard_pinned_write_sync(company_id: str, db=None, pinned_mode=None, pinned_epoch=None) -> tuple[str, int, bool]:
     if not enabled():
         return (LEGACY, 0, False)
-    cid = str(company_id or "").strip()
+    cid = canonical_company_id(company_id)
     if not cid or _writer.get() == cid:
         return (str(pinned_mode or LEGACY), int(pinned_epoch or 0), False)
     mode, epoch, locked = load_view_sync(db, cid)
@@ -1197,7 +1252,10 @@ def _payload_companies(op: str, doc, query, update, name: str = "") -> list[str]
     found: list[str] = []
 
     def add(value) -> None:
-        text = str(value or "").strip()
+        if isinstance(value, str):
+            text = canonical_company_id(value)
+        else:
+            text = str(value or "").strip()
         if text and text not in found:
             found.append(text)
 
@@ -1504,13 +1562,97 @@ async def open_company_collection(db, mode: str, company_id: str, name: str):
     return collection_for_mode(db, mode2, company_id, name)
 
 
+def _plain_company(value) -> str:
+    if isinstance(value, str):
+        return canonical_company_id(value)
+    if isinstance(value, dict) and len(value) == 1 and isinstance(value.get("$eq"), str):
+        return canonical_company_id(value["$eq"])
+    return ""
+
+
 def _query_company_id(query) -> str:
     if not isinstance(query, dict):
         return ""
+    direct = _plain_company(query.get("company_id"))
+    if direct:
+        return direct
+    parts = query.get("$and")
+    if not isinstance(parts, list):
+        return ""
+    found: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        one = _plain_company(part.get("company_id"))
+        if one and one not in found:
+            found.append(one)
+    if len(found) == 1:
+        return found[0]
+    return ""
+
+
+def align_query_company(query):
+    """Sorguyu kanonik şirket kimliğine taşır. Çağıranın sözlüğü değişmez."""
+    if not isinstance(query, dict):
+        return query
+    copied = None
+
+    def ensure():
+        nonlocal copied
+        if copied is None:
+            copied = dict(query)
+        return copied
+
+    changed = False
     value = query.get("company_id")
     if isinstance(value, str):
-        return value.strip()
-    return ""
+        cid = canonical_company_id(value)
+        if cid and cid != value:
+            ensure()["company_id"] = cid
+            changed = True
+    elif isinstance(value, dict) and len(value) == 1 and isinstance(value.get("$eq"), str):
+        cid = canonical_company_id(value["$eq"])
+        if cid and cid != value["$eq"]:
+            ensure()["company_id"] = {"$eq": cid}
+            changed = True
+    parts = query.get("$and")
+    if isinstance(parts, list):
+        new_parts = []
+        parts_changed = False
+        for part in parts:
+            aligned = align_query_company(part) if isinstance(part, dict) else part
+            if aligned is not part:
+                parts_changed = True
+            new_parts.append(aligned)
+        if parts_changed:
+            ensure()["$and"] = new_parts
+            changed = True
+    return copied if changed else query
+
+
+def align_pipeline_company(pipeline):
+    if not isinstance(pipeline, (list, tuple)):
+        return pipeline
+    changed = False
+    out = []
+    for stage in pipeline:
+        if isinstance(stage, dict) and isinstance(stage.get("$match"), dict):
+            aligned = align_query_company(stage["$match"])
+            if aligned is not stage["$match"]:
+                changed = True
+                stage = {**stage, "$match": aligned}
+        out.append(stage)
+    return out if changed else pipeline
+
+
+async def storage_decision(db, company_id: str) -> tuple[str, int, bool]:
+    """Okuma ve yazmanın ortak kararı: kip, epoch, kilit."""
+    return await load_view(db, company_id)
+
+
+def storage_decision_sync(db, company_id: str) -> tuple[str, int, bool]:
+    """Senkron yolun ortak kararı. Olay döngüsünde pymysql açmaz."""
+    return load_view_sync(db, company_id)
 
 
 async def route_legacy_read(coll, query=None):
@@ -1530,7 +1672,7 @@ async def route_legacy_read(coll, query=None):
     if not cid or _writer.get() == cid:
         return None
     db = getattr(coll, "_db", None) or getattr(coll, "db", None)
-    mode, _epoch, _locked = await load_view(db, cid)
+    mode, _epoch, _locked = await storage_decision(db, cid)
     if mode == LEGACY:
         return None
     return await open_company_collection(db, mode, cid, name)
@@ -1576,7 +1718,7 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
     for cid in known:
         if _writer.get() == cid:
             continue
-        views.append((cid, await load_view(db, cid)))
+        views.append((cid, await storage_decision(db, cid)))
     if not views:
         return None
     if any(locked for _cid, (_mode, _epoch, locked) in views):
@@ -1648,7 +1790,7 @@ def route_legacy_write_sync(coll, op: str, *, doc=None, query=None, update=None)
     for cid in known:
         if _writer.get() == cid:
             continue
-        views.append((cid, load_view_sync(db, cid)))
+        views.append((cid, storage_decision_sync(db, cid)))
     if not views:
         return None
     if any(locked for _cid, (_mode, _epoch, locked) in views):

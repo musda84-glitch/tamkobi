@@ -956,3 +956,319 @@ def test_bank_read_missing_dsn_is_not_an_empty_catalog(monkeypatch, tmp_path, ca
         assert "sqlite://" not in caplog.text
     finally:
         _restore(monkeypatch, previous, comm_service)
+
+
+def test_database_name_is_not_the_company_id(monkeypatch, tmp_path, caplog):
+    """tamkobi_c_505a96e8 veritabanı adıdır. DSN araması comp_505a96e8 kullanır."""
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    fresh = "comp_505a96e8"
+    try:
+        assert storage_router.canonical_company_id(fresh) == fresh
+        assert storage_router.canonical_company_id("comp_nexus_main_01") == "comp_nexus_main_01"
+        assert storage_router.canonical_company_id("505a96e8") == "505a96e8"
+        assert storage_router.canonical_company_id("c_505a96e8") == fresh
+        assert storage_router.canonical_company_id("tamkobi_c_505a96e8") == fresh
+        assert storage_router.dedicated_database_name(fresh) == "tamkobi_c_505a96e8"
+        assert storage_router.dedicated_database_name("tamkobi_c_505a96e8") == "tamkobi_c_505a96e8"
+        path = tmp_path / "alias.db"
+        dsn = f"sqlite:///{path}"
+        _migrate(dsn)
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        company = {
+            "_id": fresh,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+            storage_router.DSN_FIELD: sealed,
+        }
+
+        class _AliasCompanies:
+            def __init__(self, doc):
+                self.docs = [dict(doc)]
+                self.queries = []
+
+            async def find_one(self, query, projection=None):
+                self.queries.append(dict(query))
+                if str((query or {}).get("_id") or "") == fresh:
+                    return dict(self.docs[0])
+                return None
+
+        class _AliasDb:
+            def __init__(self, doc):
+                self.companies = _AliasCompanies(doc)
+
+            def __getitem__(self, name):
+                if name == "companies":
+                    return self.companies
+                raise KeyError(name)
+
+        db = _AliasDb(company)
+
+        async def run():
+            mode = await storage_router.load_mode(db, "tamkobi_c_505a96e8")
+            assert mode == "dedicated"
+            assert db.companies.queries[0]["_id"] == fresh
+            opened = storage_dedicated.collection(db, "c_505a96e8", "bank_transactions")
+            assert opened.company_id == fresh
+            await opened.insert_one({
+                "_id": "tx_alias",
+                "company_id": fresh,
+                "amount": 1,
+                "type": "outflow",
+            })
+            rows = await opened.find({"company_id": fresh}).to_list(5)
+            assert [row["_id"] for row in rows] == ["tx_alias"]
+
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(run())
+        assert SECRET not in caplog.text
+        assert "gAAAA" not in caplog.text
+        assert "sqlite://" not in caplog.text
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+def test_read_and_write_share_decision_and_refuse_catalog(monkeypatch, tmp_path):
+    """Yazılan satır aynı depodan okunur. Katalog yolu dedicated şirkete kapalıdır."""
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    monkeypatch.setenv("MYSQL_STORE_SQL_PUSHDOWN", "1")
+    fresh = "comp_505a96e8"
+    try:
+        path = tmp_path / "round.db"
+        dsn = f"sqlite:///{path}"
+        _migrate(dsn)
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        company = {
+            "_id": fresh,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+            storage_router.DSN_FIELD: sealed,
+        }
+        db = _ReadCatalog(company)
+        decisions = {"n": 0}
+        real_decision = storage_router.storage_decision
+
+        async def _count_decision(database, company_id):
+            decisions["n"] += 1
+            return await real_decision(database, company_id)
+
+        monkeypatch.setattr(storage_router, "storage_decision", _count_decision)
+
+        async def run():
+            coll = mysql_store.MySQLCollection(db, "bank_transactions")
+
+            async def ban(*_args, **_kwargs):
+                raise AssertionError("paylaşılan katalog kullanıldı")
+
+            coll._save = ban
+            coll._replace_rows = ban
+            coll._load_filtered = ban
+            coll._read_page = ban
+            coll._fetch_rows = ban
+            await coll.insert_one({
+                "_id": "tx_new",
+                "company_id": fresh,
+                "amount": 9,
+                "type": "outflow",
+                "account_id": "acc_matek",
+            })
+            rows = await coll.find({"company_id": fresh}).to_list(10)
+            assert [row["_id"] for row in rows] == ["tx_new"]
+            assert await coll.count_documents({"company_id": fresh}) == 1
+            grouped = await coll.aggregate([
+                {"$match": {"company_id": {"$eq": fresh}}},
+                {"$group": {"_id": "$account_id", "n": {"$sum": 1}}},
+            ]).to_list(None)
+            assert grouped and grouped[0]["_id"] == "acc_matek"
+            assert decisions["n"] >= 2
+
+            async def no_route(*_args, **_kwargs):
+                return None
+
+            monkeypatch.setattr(storage_router, "route_legacy_read", no_route)
+            monkeypatch.setattr(storage_router, "route_legacy_write", no_route)
+            refused = mysql_store.MySQLCollection(db, "bank_transactions")
+            refused._save = ban
+            refused._replace_rows = ban
+            refused._load_filtered = ban
+            refused._read_page = ban
+            refused._fetch_rows = ban
+            with pytest.raises(storage_router.StorageModeError, match=r"katalogdan okunamaz"):
+                await refused.find({"company_id": fresh}).to_list(5)
+            with pytest.raises(storage_router.StorageModeError, match=r"katalogdan okunamaz"):
+                await refused.aggregate([{"$match": {"company_id": fresh}}]).to_list(None)
+            with pytest.raises(storage_router.StorageModeError, match=r"katalogdan okunamaz"):
+                await refused.changed_since(company_id=fresh)
+            with pytest.raises(storage_router.StorageModeError, match=r"katalogdan yazılamaz"):
+                await refused.insert_one({"_id": "tx_skip", "company_id": fresh, "amount": 1})
+            with pytest.raises(storage_router.StorageModeError, match=r"katalogdan yazılamaz"):
+                await refused.update_one({"company_id": fresh}, {"$set": {"amount": 2}})
+
+        asyncio.run(run())
+        assert len(_bodies(path, "bank_transactions")) == 1
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+def test_sync_read_and_tenant_doc_skip_stale_catalog(monkeypatch, tmp_path):
+    """Senkron okuma ve _id-only banka kaydı eski kopyayı başarılı dönmez."""
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    fresh = "comp_505a96e8"
+    try:
+        path = tmp_path / "tenant.db"
+        dsn = f"sqlite:///{path}"
+        _migrate(dsn)
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        company = {
+            "_id": fresh,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+            storage_router.DSN_FIELD: sealed,
+        }
+        user = {"company_ids": [fresh], "active_company_id": fresh, "role": "admin"}
+
+        class _DocsDb:
+            def __init__(self, doc):
+                self.companies = _MemoryCompanies(doc)
+                self.bank_accounts = None
+
+            def __getitem__(self, name):
+                if name == "companies":
+                    return self.companies
+                if name == "bank_accounts":
+                    return self.bank_accounts
+                raise KeyError(name)
+
+        db = _DocsDb(company)
+        coll = mysql_store.MySQLCollection(db, "bank_accounts")
+        db.bank_accounts = coll
+        shared = {
+            "_id": "acc_matek",
+            "company_id": fresh,
+            "account_name": "eski",
+            "balance": 1,
+        }
+
+        async def catalog_rows(query=None, *_args, **_kwargs):
+            if isinstance(query, dict) and query.get("company_id"):
+                raise AssertionError("paylaşılan katalog okundu")
+            return [dict(shared)]
+
+        coll._load_filtered = catalog_rows
+        coll._read_page = catalog_rows
+
+        async def seed():
+            await storage_dedicated.collection(db, fresh, "bank_accounts").insert_one({
+                "_id": "acc_matek",
+                "company_id": fresh,
+                "account_name": "guncel",
+                "balance": 99,
+                "type": "bank",
+            })
+
+        asyncio.run(seed())
+        import tenant_access
+
+        async def run():
+            sync = mysql_store.SyncMySQLCollection(db, "bank_transactions")
+
+            def boom(*_args, **_kwargs):
+                raise AssertionError("paylaşılan katalog okundu")
+
+            sync._load_filtered = boom
+            sync._read_page = boom
+            with pytest.raises(storage_router.StorageModeError, match=rf"company={fresh}"):
+                sync.find({"company_id": fresh}).to_list(5)
+            with pytest.raises(storage_router.StorageModeError, match=rf"company={fresh}"):
+                sync.count_documents({"company_id": fresh})
+            with pytest.raises(storage_router.StorageModeError, match=rf"company={fresh}"):
+                sync.distinct("account_id", {"company_id": fresh})
+            doc = await tenant_access.get_tenant_doc(db, "bank_accounts", "acc_matek", user)
+            assert doc["account_name"] == "guncel"
+            assert doc["balance"] == 99
+
+        asyncio.run(run())
+
+        async def missing():
+            empty = mysql_store.MySQLCollection(db, "bank_accounts")
+
+            async def only_shared(query=None, *_args, **_kwargs):
+                if isinstance(query, dict) and query.get("company_id"):
+                    raise AssertionError("paylaşılan katalog okundu")
+                return [{"_id": "acc_only_shared", "company_id": fresh, "account_name": "eski"}]
+
+            empty._load_filtered = only_shared
+            empty._read_page = only_shared
+            db.bank_accounts = empty
+            with pytest.raises(HTTPException) as raised:
+                await tenant_access.get_tenant_doc(db, "bank_accounts", "acc_only_shared", user)
+            assert raised.value.status_code == 404
+
+        asyncio.run(missing())
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+def test_reconcile_dry_run_reports_counts_without_connecting(tmp_path):
+    """1455/1465 farkı raporlanır. Betik bağlantı açmaz, --apply yazmaz."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "storage_reconcile.py"
+    spec = importlib.util.spec_from_file_location("storage_reconcile_offline", path)
+    reconcile = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reconcile)
+    shared = {
+        "bank_accounts": [f"a{i}" for i in range(8)],
+        "bank_transactions": [f"t{i}" for i in range(1455)],
+        "contacts": [f"c{i}" for i in range(2374)],
+        "partner_transactions": [f"p{i}" for i in range(76)],
+        "stock_movements": [f"s{i}" for i in range(86)],
+    }
+    dedicated = {name: list(ids) for name, ids in shared.items()}
+    dedicated["bank_transactions"] = list(shared["bank_transactions"]) + [f"new{i}" for i in range(10)]
+    rows = reconcile.compare_collections(shared, dedicated)
+    by_name = {row["collection"]: row for row in rows}
+    bank = by_name["bank_transactions"]
+    assert bank["shared"] == 1455
+    assert bank["dedicated"] == 1465
+    assert bank["only_shared"] == 0
+    assert bank["only_dedicated"] == 10
+    assert by_name["contacts"]["shared"] == 2374
+    assert by_name["contacts"]["dedicated"] == 2374
+    assert by_name["bank_accounts"]["only_dedicated"] == 0
+    assert by_name["partner_transactions"]["only_shared"] == 0
+    assert by_name["stock_movements"]["shared"] == 86
+    text = reconcile.render_report(rows)
+    assert "dry-run" in text
+    assert "gAAAA" not in text
+    assert "sqlite://" not in text
+    assert SECRET not in text
+    assert reconcile.main([]) == 0
+    assert reconcile.main(["--apply"]) == 2
+    blob = {
+        "bank_transactions": [{"_id": "t0", "amount": 10, "note": "gizli"}, "new0"],
+    }
+    folder = tmp_path / "ids"
+    folder.mkdir()
+    shared_path = folder / "shared.json"
+    dedicated_path = folder / "dedicated.json"
+    shared_path.write_text('{"bank_transactions": ["t0"]}', encoding="utf-8")
+    dedicated_path.write_text(
+        __import__("json").dumps(blob),
+        encoding="utf-8",
+    )
+    assert reconcile.main([
+        "--shared-json", str(shared_path),
+        "--dedicated-json", str(dedicated_path),
+    ]) == 0
+    captured = reconcile.compare_collections(
+        {"bank_transactions": ["t0"]},
+        reconcile._load_ids(str(dedicated_path)),
+    )
+    assert captured[0]["only_dedicated_ids"] == ["new0"]
+    assert "gizli" not in reconcile.render_report(captured)

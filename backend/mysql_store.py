@@ -167,6 +167,120 @@ async def _route_read(coll, query):
     return await storage_router.route_legacy_read(coll, query)
 
 
+def _aligned_query(query):
+    import storage_router
+
+    return storage_router.align_query_company(query)
+
+
+def _catalog_company_ids(query=None, doc=None, update=None) -> list:
+    import storage_router
+
+    found = []
+
+    def add(value) -> None:
+        if not isinstance(value, str):
+            return
+        text = storage_router.canonical_company_id(value)
+        if text and text not in found:
+            found.append(text)
+
+    direct = storage_router._query_company_id(query)
+    if direct and direct not in found:
+        found.append(direct)
+    if isinstance(doc, dict):
+        add(doc.get("company_id"))
+    elif isinstance(doc, (list, tuple)):
+        for item in doc:
+            if isinstance(item, dict):
+                add(item.get("company_id"))
+    if isinstance(update, dict):
+        for key in ("$set", "$setOnInsert"):
+            body = update.get(key)
+            if isinstance(body, dict):
+                add(body.get("company_id"))
+    return found
+
+
+def _catalog_db(coll):
+    return getattr(coll, "_db", None) or getattr(coll, "db", None)
+
+
+def _catalog_skips(coll, cid: str) -> bool:
+    import storage_router
+
+    if not storage_router.enabled() or storage_router._PASSTHROUGH.get():
+        return True
+    name = str(getattr(coll, "name", "") or "")
+    if name in storage_router._CONTROL_COLLECTIONS:
+        return True
+    if not cid or storage_router._writer.get() == cid:
+        return True
+    return False
+
+
+async def _block_shared_copy(coll, *, query=None, doc=None, update=None, write: bool = False) -> None:
+    """Dedicated/shared_v2 paylaşılan docs kopyasına inmez.
+
+    Bayrak kapalı, kontrol koleksiyonu, legacy ve taşımanın yazarı serbest.
+    Okuma ile yazma `storage_decision` kullanır.
+    """
+    import storage_router
+
+    db = _catalog_db(coll)
+    for cid in _catalog_company_ids(query, doc, update):
+        if _catalog_skips(coll, cid):
+            continue
+        mode, _epoch, locked = await storage_router.storage_decision(db, cid)
+        if mode == storage_router.LEGACY:
+            continue
+        if locked and write:
+            raise storage_router.StorageWriteLocked(
+                storage_router.WRITE_LOCK_MESSAGE, company_id=cid,
+            )
+        raise storage_router.StorageModeError(
+            storage_router.catalog_blocked_message(mode, cid, write=write),
+            company_id=cid,
+            mode=mode,
+        )
+
+
+def _sync_catalog_mode(db, cid: str) -> str:
+    import storage_router
+
+    cached = storage_router._view_cached(cid)
+    if cached is not None:
+        return cached[0]
+    if db is not None:
+        memory = storage_router._memory_doc(db, cid)
+        if memory is not storage_router._UNREAD:
+            return storage_router._mode_from_doc(memory if isinstance(memory, dict) else None)
+    if storage_router._on_loop():
+        return "unknown"
+    mode, _epoch, _locked = storage_router.storage_decision_sync(db, cid)
+    return mode
+
+
+def _block_shared_copy_sync(coll, *, query=None, doc=None, update=None, write: bool = False) -> None:
+    """Senkron yol dedicated satırı docs tablosundan okumaz ve yazmaz."""
+    import storage_router
+
+    db = _catalog_db(coll)
+    for cid in _catalog_company_ids(query, doc, update):
+        if _catalog_skips(coll, cid):
+            continue
+        mode = _sync_catalog_mode(db, cid)
+        if mode == storage_router.LEGACY:
+            continue
+        if mode == "unknown":
+            message = f"Kip doğrulanamadı; paylaşılan katalog kullanılmadı. company={cid}"
+            known = ""
+        else:
+            message = storage_router.catalog_blocked_message(mode, cid, write=write)
+            known = mode
+        raise storage_router.StorageModeError(message, company_id=cid, mode=known)
+
+
 def _pipeline_match(pipeline) -> dict:
     for stage in pipeline or []:
         if isinstance(stage, dict) and isinstance(stage.get("$match"), dict):
@@ -1585,7 +1699,8 @@ class MySQLCursor:
     async def to_list(self, length=None):
         routed = await _route_read(self._coll, self._query)
         if routed is not None:
-            cursor = routed.find(self._query, self._projection)
+            query = _aligned_query(self._query)
+            cursor = routed.find(query, self._projection)
             if self._sort:
                 cursor.sort(self._sort)
             if self._skip:
@@ -1594,6 +1709,7 @@ class MySQLCursor:
                 cursor.limit(self._limit)
             rows = await cursor.to_list(length)
             return list(rows or [])
+        await _block_shared_copy(self._coll, query=self._query, write=False)
         if sql_page_pushdown_enabled():
             pushed = await self._coll._read_page(
                 self._query, self._sort, self._skip, self._limit, length, self._projection,
@@ -1715,6 +1831,7 @@ class MySQLCollection:
 
     async def _read_page(self, query, sort, skip, limit, length, projection) -> Optional[List[dict]]:
         """Exact SQL page, or None so the caller runs the historical Python read."""
+        await _block_shared_copy(self, query=query, write=False)
         plan = plan_exact_page(self.name, query, sort, skip, limit, length, projection)
         if not plan:
             return None
@@ -1730,6 +1847,7 @@ class MySQLCollection:
         return docs
 
     async def _load_filtered(self, query: Optional[dict]) -> List[dict]:
+        await _block_shared_copy(self, query=query, write=False)
         sql, params = sql_pushdown(self.name, query)
         try:
             docs = await self._load_sql(sql, params)
@@ -1815,7 +1933,8 @@ class MySQLCollection:
         _guard(self.name, "find_one", query=query)
         routed = await _route_read(self, query)
         if routed is not None:
-            return await routed.find_one(query, projection, sort, skip)
+            return await routed.find_one(_aligned_query(query), projection, sort, skip)
+        await _block_shared_copy(self, query=query, write=False)
         if sql_page_pushdown_enabled():
             pushed = await self._read_page(query, normalize_sort(sort), skip, 1, 1, projection)
             if pushed is not None:
@@ -1836,6 +1955,7 @@ class MySQLCollection:
         routed = await _route_write(self, "insert_one", doc=doc)
         if routed is not None:
             return await routed.insert_one(doc)
+        await _block_shared_copy(self, doc=doc, write=True)
         _guard(self.name, "insert_one", doc=doc, catalog=self._db)
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
@@ -1864,6 +1984,7 @@ class MySQLCollection:
         routed = await _route_write(self, "insert_many", doc=docs)
         if routed is not None:
             return await routed.insert_many(docs, ordered=ordered)
+        await _block_shared_copy(self, doc=docs, write=True)
         _guard(self.name, "insert_many", doc=docs, catalog=self._db)
         ids = []
         for d in docs:
@@ -1875,6 +1996,7 @@ class MySQLCollection:
         routed = await _route_write(self, "update_one", query=query, update=update)
         if routed is not None:
             return await routed.update_one(query, update, upsert=upsert)
+        await _block_shared_copy(self, query=query, update=update, write=True)
         _guard(self.name, "update_one", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
@@ -1902,6 +2024,7 @@ class MySQLCollection:
         routed = await _route_write(self, "update_one_atomic", query=query, update=update)
         if routed is not None:
             return await routed.update_one_atomic(query, update)
+        await _block_shared_copy(self, query=query, update=update, write=True)
         _guard(self.name, "update_one_atomic", query=query, update=update, catalog=self._db)
         q = query or {}
         doc_id = q.get("_id")
@@ -1959,6 +2082,7 @@ class MySQLCollection:
         routed = await _route_write(self, "update_many", query=query, update=update)
         if routed is not None:
             return await routed.update_many(query, update, upsert=upsert)
+        await _block_shared_copy(self, query=query, update=update, write=True)
         _guard(self.name, "update_many", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
@@ -1987,6 +2111,7 @@ class MySQLCollection:
         routed = await _route_write(self, "replace_one", query=query, doc=replacement)
         if routed is not None:
             return await routed.replace_one(query, replacement, upsert=upsert)
+        await _block_shared_copy(self, query=query, doc=replacement, write=True)
         _guard(self.name, "replace_one", query=query, doc=replacement, catalog=self._db)
         replacement = copy.deepcopy(replacement)
         docs = await self._load_filtered(query)
@@ -2008,6 +2133,7 @@ class MySQLCollection:
             return await routed.find_one_and_update(
                 query, update, upsert=upsert, return_document=return_document, projection=projection,
             )
+        await _block_shared_copy(self, query=query, update=update, write=True)
         _guard(self.name, "find_one_and_update", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
@@ -2026,6 +2152,7 @@ class MySQLCollection:
         routed = await _route_write(self, "delete_one", query=query)
         if routed is not None:
             return await routed.delete_one(query)
+        await _block_shared_copy(self, query=query, write=True)
         _guard(self.name, "delete_one", query=query, catalog=self._db)
         docs = await self._load_filtered(query)
         if not docs:
@@ -2040,6 +2167,7 @@ class MySQLCollection:
         routed = await _route_write(self, "delete_many", query=query)
         if routed is not None:
             return await routed.delete_many(query)
+        await _block_shared_copy(self, query=query, write=True)
         _guard(self.name, "delete_many", query=query, catalog=self._db)
         docs = await self._load_filtered(query)
         await self._record_tombstones(docs)
@@ -2072,6 +2200,8 @@ class MySQLCollection:
     async def changed_since(self, since: Optional[str] = None, company_id: Optional[str] = None, limit: int = 3000) -> Tuple[List[dict], Optional[str], bool]:
         """SQL-level delta: rows whose docs.updated_at is >= since, optionally scoped by company_id."""
         _guard(self.name, "changed_since", company_id=company_id)
+        if company_id:
+            await _block_shared_copy(self, query={"company_id": str(company_id)}, write=False)
         await self._db._ensure()
         sql = "SELECT doc, updated_at FROM docs WHERE collection=%s"
         args: List[Any] = [self.name]
@@ -2108,7 +2238,8 @@ class MySQLCollection:
         _guard(self.name, "count_documents", query=query)
         routed = await _route_read(self, query)
         if routed is not None:
-            return int(await routed.count_documents(query) or 0)
+            return int(await routed.count_documents(_aligned_query(query)) or 0)
+        await _block_shared_copy(self, query=query, write=False)
         exact = sql_count_exact(self.name, query)
         if exact:
             sql, params = exact
@@ -2129,9 +2260,12 @@ class MySQLCollection:
         async def _rows():
             routed = await _route_read(self, _pipeline_match(pipeline))
             if routed is not None:
-                cursor = routed.aggregate(pipeline)
+                import storage_router
+
+                cursor = routed.aggregate(storage_router.align_pipeline_company(pipeline))
                 rows = await cursor.to_list(None)
                 return list(rows or [])
+            await _block_shared_copy(self, query=_pipeline_match(pipeline), write=False)
             docs: List[dict] = []
             matched = False
             for stage in pipeline or []:
@@ -2160,7 +2294,8 @@ class MySQLCollection:
         _guard(self.name, "distinct", query=query)
         routed = await _route_read(self, query)
         if routed is not None:
-            return await routed.distinct(key, query)
+            return await routed.distinct(key, _aligned_query(query))
+        await _block_shared_copy(self, query=query, write=False)
         docs = await self._load_filtered(query)
         seen = []
         for d in docs:
@@ -2341,6 +2476,7 @@ class SyncMySQLCursor:
         return self
 
     def to_list(self, length=None):
+        _block_shared_copy_sync(self._coll, query=self._query, write=False)
         if sql_page_pushdown_enabled():
             pushed = self._coll._read_page(
                 self._query, self._sort, self._skip, self._limit, length, self._projection,
@@ -2399,6 +2535,7 @@ class SyncMySQLCollection:
         return found
 
     def _load_filtered(self, query):
+        _block_shared_copy_sync(self, query=query, write=False)
         sql, params = sql_pushdown(self.name, query)
         self._db._ensure()
         t0 = time.perf_counter()
@@ -2445,6 +2582,7 @@ class SyncMySQLCollection:
         return rows
 
     def _read_page(self, query, sort, skip, limit, length, projection):
+        _block_shared_copy_sync(self, query=query, write=False)
         plan = plan_exact_page(self.name, query, sort, skip, limit, length, projection)
         if not plan:
             return None
@@ -2460,6 +2598,7 @@ class SyncMySQLCollection:
 
     def find_one(self, query=None, projection=None, sort=None, skip=0):
         _guard(self.name, "find_one", query=query)
+        _block_shared_copy_sync(self, query=query, write=False)
         if sql_page_pushdown_enabled():
             pushed = self._read_page(query, normalize_sort(sort), skip, 1, 1, projection)
             if pushed is not None:
@@ -2476,6 +2615,7 @@ class SyncMySQLCollection:
 
     def insert_one(self, doc: dict):
         _route_write_sync(self, "insert_one", doc=doc)
+        _block_shared_copy_sync(self, doc=doc, write=True)
         _guard(self.name, "insert_one", doc=doc, catalog=self._db)
         doc = copy.deepcopy(doc)
         if not doc.get("_id"):
@@ -2485,11 +2625,13 @@ class SyncMySQLCollection:
 
     def insert_many(self, docs, ordered=True):
         _route_write_sync(self, "insert_many", doc=docs)
+        _block_shared_copy_sync(self, doc=docs, write=True)
         _guard(self.name, "insert_many", doc=docs, catalog=self._db)
         return InsertManyResult([self.insert_one(d).inserted_id for d in docs])
 
     def update_one(self, query, update, upsert=False):
         _route_write_sync(self, "update_one", query=query, update=update)
+        _block_shared_copy_sync(self, query=query, update=update, write=True)
         _guard(self.name, "update_one", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
@@ -2508,6 +2650,7 @@ class SyncMySQLCollection:
 
     def update_many(self, query, update, upsert=False):
         _route_write_sync(self, "update_many", query=query, update=update)
+        _block_shared_copy_sync(self, query=query, update=update, write=True)
         _guard(self.name, "update_many", query=query, update=update, upsert=upsert, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
@@ -2529,6 +2672,7 @@ class SyncMySQLCollection:
 
     def replace_one(self, query, replacement, upsert=False):
         _route_write_sync(self, "replace_one", query=query, doc=replacement)
+        _block_shared_copy_sync(self, query=query, doc=replacement, write=True)
         _guard(self.name, "replace_one", query=query, doc=replacement, catalog=self._db)
         replacement = copy.deepcopy(replacement)
         docs = self._load_filtered(query)
@@ -2545,6 +2689,7 @@ class SyncMySQLCollection:
 
     def delete_one(self, query):
         _route_write_sync(self, "delete_one", query=query)
+        _block_shared_copy_sync(self, query=query, write=True)
         _guard(self.name, "delete_one", query=query, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
@@ -2559,6 +2704,7 @@ class SyncMySQLCollection:
 
     def delete_many(self, query):
         _route_write_sync(self, "delete_many", query=query)
+        _block_shared_copy_sync(self, query=query, write=True)
         _guard(self.name, "delete_many", query=query, catalog=self._db)
         docs = self._load_filtered(query)
         if not docs:
@@ -2578,6 +2724,7 @@ class SyncMySQLCollection:
 
     def count_documents(self, query=None):
         _guard(self.name, "count_documents", query=query)
+        _block_shared_copy_sync(self, query=query, write=False)
         exact = sql_count_exact(self.name, query)
         if exact:
             sql, params = exact
@@ -2592,6 +2739,7 @@ class SyncMySQLCollection:
 
     def distinct(self, key, query=None):
         _guard(self.name, "distinct", query=query)
+        _block_shared_copy_sync(self, query=query, write=False)
         seen = []
         for d in self._load_filtered(query):
             for v in values_at(d, key) or []:

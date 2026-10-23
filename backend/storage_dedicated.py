@@ -201,7 +201,7 @@ def expected_schema_version() -> int:
 
 async def note_company(db, company_id: str) -> None:
     """Mühürlü referansı hatırlar. Düz metin DSN saklamaz."""
-    cid = str(company_id or "").strip()
+    cid = storage_router.canonical_company_id(company_id)
     if not cid:
         return
     docs = _memory_docs(db)
@@ -215,7 +215,7 @@ async def note_company(db, company_id: str) -> None:
 
 def collection(db, company_id: str, name: str) -> "DedicatedCollection":
     """Koleksiyon. Bağlantı ilk işlemde açılır. Legacy dönmez."""
-    cid = str(company_id or "").strip()
+    cid = storage_router.canonical_company_id(company_id)
     dsn = _dsn_for(db, cid)
     add_secret(dsn)
     coll = DedicatedCollection(cid, str(name or ""), dsn)
@@ -331,6 +331,7 @@ def _close_unlocked(company_id: str) -> None:
 
 
 def _dsn_for(db, company_id: str) -> str:
+    company_id = storage_router.canonical_company_id(company_id)
     spec_name = f"{storage_router.DEDICATED}:{company_id}"
     try:
         spec = parse_target(spec_name)
@@ -378,16 +379,16 @@ def _safe_id(company_id: str) -> str:
 
 def _doc_for_company(docs, company_id: str):
     """Önce `_id`, yoksa JSON `id`. Satır kimliği ile belge kimliği ayrı olabilir."""
-    cid = str(company_id or "")
+    cid = storage_router.canonical_company_id(company_id)
     if not cid:
         return None
     fallback = None
     for doc in docs or []:
         if not isinstance(doc, dict):
             continue
-        if str(doc.get("_id") or "") == cid:
+        if storage_router._same_company(doc.get("_id"), cid):
             return doc
-        if fallback is None and str(doc.get("id") or "") == cid:
+        if fallback is None and storage_router._same_company(doc.get("id"), cid):
             fallback = doc
     return fallback
 
