@@ -766,7 +766,7 @@ class SharedV2Collection:
             docs = _slice_docs(docs, skip, limit, length)
         else:
             sql, params = built
-            docs = await materialize_docs_async(self._fetch_raw(sql, params))
+            docs = await materialize_docs_async(await self._fetch_offloop(sql, params))
         return await offload(_copy_projected, docs, projection, size=len(docs))
 
     async def _match_docs(self, query):
@@ -775,13 +775,13 @@ class SharedV2Collection:
             self._log_fallback(reason)
             return await self._scan_match(query)
         sql, params = built
-        return await materialize_docs_async(self._fetch_raw(sql, params))
+        return await materialize_docs_async(await self._fetch_offloop(sql, params))
 
     async def _scan_match(self, query):
-        """Firma satırlarını bu iş parçacığında çek, eşleştirmeyi döngü dışına al."""
+        """Firma satırlarını çek, eşleştirmeyi döngü dışına al. MySQL okuması da döngüde kalmaz."""
         self.store.python_scans += 1
         scope, scope_params = self._scope()
-        rows = self._fetch_raw(
+        rows = await self._fetch_offloop(
             f"SELECT doc FROM {self._data_table()} WHERE {scope} ORDER BY id ASC",
             tuple(scope_params),
         )
@@ -1419,9 +1419,24 @@ class SharedV2Collection:
         log.warning("shared_v2 pushdown yok collection=%s neden=%s", self.name, reason or "query")
 
     def _fetch_raw(self, sql, params):
-        rows = list(self._run(sql, params, plan=True).fetchall() or [])
+        cursor = self._run(sql, params, plan=True)
+        rows = []
+        while True:
+            chunk = cursor.fetchmany(200) if cursor is not None else None
+            if not chunk:
+                break
+            rows.extend(chunk)
         self.store.docs_loaded += len(rows)
         return rows
+
+    async def _fetch_offloop(self, sql, params):
+        """Büyük SELECT doc okuması. MySQL soketi döngü iş parçacığında bekletilmez."""
+        self.store.ensure_dialect()
+        if self.store.dialect != "mysql":
+            return self._fetch_raw(sql, params)
+        import platform_lease
+
+        return await platform_lease.call_blocking(self._fetch_raw, sql, params)
 
     def _fetch_docs(self, sql, params):
         return [loads(row[0]) for row in self._fetch_raw(sql, params)]

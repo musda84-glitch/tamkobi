@@ -1058,3 +1058,21 @@ def test_mariadb_noncolumn_find_and_update_many():
     assert len(again) == 1
     assert again[0]["note"] == "iki"
     assert again[0]["qty"] == 3
+
+
+def test_mysql_doc_read_leaves_the_event_loop(conn):
+    coll = _shared(CO, "orders")
+    seen = {}
+
+    def wrapped(sql, params):
+        seen["ident"] = threading.get_ident()
+        return []
+
+    coll._fetch_raw = wrapped
+    coll.store.dialect = "mysql"
+
+    async def run():
+        return await coll._fetch_offloop("SELECT doc FROM docs_v2", ())
+
+    assert asyncio.run(run()) == []
+    assert seen["ident"] != threading.get_ident()

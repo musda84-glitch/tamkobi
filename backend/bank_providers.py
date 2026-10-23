@@ -1786,8 +1786,9 @@ def _norm_key(name: Any) -> str:
 
 
 # Aynı satırda onlarca alan okunur. Anahtar katlaması satır başına bir kez yapılır.
-# Değerler her okumada dict'ten alınır; anahtar kümesi değişirse harita yenilenir.
+# Değerler her okumada dict'ten alınır. dict zayıf referans tutmaz; gövde önbelleğe yazılmaz.
 _ci_cache = threading.local()
+_CI_SLOTS = 8
 
 
 def _ci_key_map(raw: dict) -> dict:
@@ -1797,14 +1798,14 @@ def _ci_key_map(raw: dict) -> dict:
         _ci_cache.slots = slots
     keys = tuple(raw)
     hit = slots.get(id(raw))
-    if hit is not None and hit[0] is raw and hit[1] == keys:
-        return hit[2]
+    if hit is not None and hit[0] == keys:
+        return hit[1]
     folded: Dict[str, Any] = {}
     for key in keys:
         folded[_norm_key(key)] = key
-    if len(slots) > 32:
+    if len(slots) >= _CI_SLOTS:
         slots.clear()
-    slots[id(raw)] = (raw, keys, folded)
+    slots[id(raw)] = (keys, folded)
     return folded
 
 

@@ -65,6 +65,7 @@ _DOC_ID_MAX = 191
 _COMPANY_ID_MAX = 64
 _EXT_MAX = 191
 _BANK_KEY_TABLE = "storage_bank_external"
+_FETCH_PAGE = 200
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
@@ -711,7 +712,7 @@ class DedicatedCollection(StorageCollection):
                 raise DedicatedStorageError("Dedicated işlemi kesildi.", company_id=self.company_id) from None
 
     def _narrow_sql(self, query):
-        """İndeksli doc_id / company_id daraltması. Eşleşmeyi match_query doğrular."""
+        """doc_id, company_id ve external_id. Eşleşmeyi match_query doğrular."""
         sql = "SELECT doc FROM storage_records WHERE collection = ?"
         args = [self.name]
         if not isinstance(query, dict):
@@ -733,11 +734,58 @@ class DedicatedCollection(StorageCollection):
         if isinstance(company, str) and len(company) <= 64:
             sql += " AND company_id = ?"
             args.append(company)
+        # Banka turu her harekette external_id arar. Yalnız düz metin; eşleşmeyi match_query doğrular.
+        ext = query.get("external_id")
+        if isinstance(ext, str) and len(ext) <= _EXT_MAX:
+            sql += " AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.external_id')) = ?"
+            args.append(ext)
         return sql, args
 
     def _fetch_rows(self, session, query):
         sql, args = self._narrow_sql(query)
-        return list(session.fetchall(sql, tuple(args)))
+        cursor = session.execute(sql, tuple(args))
+        rows = []
+        while True:
+            chunk = cursor.fetchmany(_FETCH_PAGE)
+            if not chunk:
+                break
+            rows.extend(chunk)
+        return rows
+
+    def _external_conflict(self, session, ext: str, own: str) -> bool:
+        """Aynı external_id var mı. Belgenin tamamı okunmaz; kırpma Python'daki gibidir."""
+        sql = (
+            "SELECT doc_id, "
+            "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id')), "
+            "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.external_id')) "
+            "FROM storage_records WHERE collection = ?"
+        )
+        cursor = session.execute(sql, (self.name,))
+        while True:
+            chunk = cursor.fetchmany(_FETCH_PAGE)
+            if not chunk:
+                return False
+            for doc_id, company, raw_ext in chunk:
+                if str(doc_id or "") == own:
+                    continue
+                if str(raw_ext or "").strip() != ext:
+                    continue
+                owner = str(company or "")
+                if owner and storage_router.canonical_company_id(owner) != self.company_id:
+                    continue
+                return True
+
+    def _use_thread(self) -> bool:
+        text = str(self._dsn or "").lower()
+        return text.startswith("mysql") or text.startswith("mariadb")
+
+    async def _run_async(self, fn):
+        """MySQL okuma ve yazma döngünün dışında. SQLite test bağlantısı aynı iş parçacığında kalır."""
+        if not self._use_thread():
+            return self._run(fn)
+        import platform_lease
+
+        return await platform_lease.call_blocking(self._run, fn)
 
     def _load(self, session, query=None) -> list:
         return [loads(row[0]) for row in self._fetch_rows(session, query)]
@@ -797,17 +845,7 @@ class DedicatedCollection(StorageCollection):
         if not ext:
             return
         own = str(doc.get("_id") or "")
-        conflict = False
-        for existing in self._load(session):
-            if str(existing.get("_id") or "") == own:
-                continue
-            if _external_text(existing) != ext:
-                continue
-            owner = str(existing.get("company_id") or "")
-            if owner and storage_router.canonical_company_id(owner) != self.company_id:
-                continue
-            conflict = True
-            break
+        conflict = self._external_conflict(session, ext, own)
         if conflict:
             if inserting:
                 raise DuplicateKeyError("Kayıt zaten var.")
@@ -856,7 +894,7 @@ class DedicatedCollection(StorageCollection):
         self._guard("find", query=query)
 
         async def load():
-            rows = self._run(lambda session: self._fetch_rows(session, query))
+            rows = await self._run_async(lambda session: self._fetch_rows(session, query))
             return await materialize_docs_async(rows, query)
 
         return StorageCursor(load, projection)
@@ -878,19 +916,19 @@ class DedicatedCollection(StorageCollection):
         requested = str(company_id or "").strip()
         if requested and storage_router.canonical_company_id(requested) != self.company_id:
             return [], since, False
-        rows = self._run(lambda session: self._fetch_rows(session, None))
+        rows = await self._run_async(lambda session: self._fetch_rows(session, None))
         docs = await materialize_docs_async(rows)
         return await offload(_owned_window, docs, self.company_id, since, limit, size=len(docs))
 
     async def count_documents(self, query=None):
         self._guard("count_documents", query=query)
-        rows = self._run(lambda session: self._fetch_rows(session, query))
+        rows = await self._run_async(lambda session: self._fetch_rows(session, query))
         docs = await materialize_docs_async(rows, query)
         return len(docs)
 
     async def distinct(self, key, query=None):
         self._guard("distinct", query=query)
-        rows = self._run(lambda session: self._fetch_rows(session, query))
+        rows = await self._run_async(lambda session: self._fetch_rows(session, query))
         docs = await materialize_docs_async(rows, query)
         return await offload(_distinct_values, docs, key, size=len(docs))
 
@@ -899,7 +937,7 @@ class DedicatedCollection(StorageCollection):
         match = _pipeline_match(pipeline)
 
         async def load():
-            rows = self._run(lambda session: self._fetch_rows(session, match))
+            rows = await self._run_async(lambda session: self._fetch_rows(session, match))
             docs = await materialize_docs_async(rows)
             return await offload(aggregate_rows, docs, pipeline, size=len(docs))
 
@@ -930,7 +968,7 @@ class DedicatedCollection(StorageCollection):
                     raise DuplicateKeyError("Kayıt zaten var.") from None
                 raise
 
-        self._run(work)
+        await self._run_async(work)
         return InsertOneResult(body["_id"])
 
     async def insert_many(self, docs, ordered: bool = True):
@@ -976,7 +1014,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return UpdateResult(1, 1, None)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def update_one_atomic(self, query: dict, update: dict):
         _reject_update_lengths(query, update)
@@ -1012,7 +1050,7 @@ class DedicatedCollection(StorageCollection):
                 session.commit()
             return UpdateResult(len(found), changed, None)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
         body = copy.deepcopy(replacement or {})
@@ -1036,7 +1074,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return UpdateResult(1, 1, None)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def find_one_and_update(
         self,
@@ -1067,7 +1105,7 @@ class DedicatedCollection(StorageCollection):
             chosen = new_doc if return_document else old
             return project_doc(chosen, projection)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def delete_one(self, query: dict):
         _reject_update_lengths(query, None)
@@ -1082,7 +1120,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return DeleteResult(1)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def delete_many(self, query: dict):
         _reject_update_lengths(query, None)
@@ -1097,7 +1135,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return DeleteResult(len(found))
 
-        return self._run(work)
+        return await self._run_async(work)
 
     def _replace_doc(self, session, old: dict, new_doc: dict) -> None:
         old_id = old.get("_id")
