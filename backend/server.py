@@ -10452,34 +10452,123 @@ async def _guard_effect_storage(company_id: str) -> None:
     storage_dedicated.collection(db, cid, "invoices")
 
 
+async def _undo_contact_balance(company_id: str, contact_id: str, delta: float) -> None:
+    """Uygulanan cari farkının tersi. Eşzamanlı bakiyeyi ezmez."""
+    if not company_id or not contact_id:
+        return
+    await db.contacts.update_one(
+        {"_id": contact_id, "company_id": company_id},
+        {"$inc": {"balance": -float(delta)}},
+    )
+
+
+async def _undo_product_stock(company_id: str, product_id: str, delta: float) -> None:
+    """Uygulanan stok farkının tersi."""
+    if not company_id or not product_id:
+        return
+    await db.products.update_one(
+        {"_id": product_id, "company_id": company_id},
+        {"$inc": {"stock_quantity": -float(delta)}},
+    )
+
+
+async def _restore_lot_snapshot(company_id: str, lot_id: str, quantity, is_active) -> None:
+    """Seri ve miktar lotlarında yazıdan önceki miktar ve aktiflik."""
+    if not company_id or not lot_id:
+        return
+    await db.stock_lots.update_one(
+        {"_id": lot_id, "company_id": company_id},
+        {"$set": {"quantity": quantity, "is_active": is_active}},
+    )
+
+
+def _note_lot(steps: list, before) -> None:
+    if before is None:
+        return
+    steps.append(("lot", before[0], before[1], before[2], before[3]))
+
+
+async def _lot_before(item: dict, company_id: str):
+    """Lot yazısından önceki miktar. Lot yoksa None; yazılmaz."""
+    lot_id = (item or {}).get("lot_id")
+    try:
+        qty = float((item or {}).get("quantity") or 0)
+    except (TypeError, ValueError):
+        return None
+    cid = str(company_id or "").strip()
+    if not lot_id or qty <= 0 or not cid:
+        return None
+    lot = await db.stock_lots.find_one({"_id": lot_id, "company_id": cid})
+    if not lot:
+        return None
+    return (cid, lot_id, lot.get("quantity"), lot.get("is_active"))
+
+
+async def _undo_effect_step(step) -> None:
+    kind = step[0]
+    if kind == "contact":
+        await _undo_contact_balance(step[1], step[2], step[3])
+    elif kind == "product":
+        await _undo_product_stock(step[1], step[2], step[3])
+    elif kind == "lot":
+        await _restore_lot_snapshot(step[1], step[2], step[3], step[4])
+
+
+async def _compensate_effect_failure(steps: list) -> None:
+    """Cari, stok veya lot yarım kaldıysa uygulanan adımları geri al."""
+    for step in reversed(steps):
+        try:
+            await _undo_effect_step(step)
+        except Exception:
+            logging.getLogger(__name__).exception("Fatura etki telafisi yazılamadı")
+
+
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + satış stok düşümü / alış stok girişi. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
         return
     cid = str(inv.get("company_id") or "").strip()
     await _guard_effect_storage(cid)
-    if inv.get("contact_id"):
-        change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
-        await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
-    # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
-    skip_stock = bool(inv.get("stock_effects_from_dispatch"))
-    if inv.get("invoice_type") == "sales" and not skip_stock:
-        for item in inv.get("items", []):
-            pid, qty = _invoice_item_pid_qty(item)
-            if pid:
-                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-            await _apply_lot_delta(item, -1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv) and not skip_stock:
-        # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
-        if inv.get("stock_effects_applied") is False:
+    steps = []
+    try:
+        if inv.get("contact_id"):
+            change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
+            await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
+            steps.append(("contact", cid, inv["contact_id"], change))
+        # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
+        skip_stock = bool(inv.get("stock_effects_from_dispatch"))
+        if inv.get("invoice_type") == "sales" and not skip_stock:
             for item in inv.get("items", []):
                 pid, qty = _invoice_item_pid_qty(item)
                 if pid:
-                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-                await _apply_lot_delta(item, +1.0, inv.get("company_id"))
-        if inv.get("_id"):
-            await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
-        inv["stock_effects_applied"] = True
+                    delta = -float(qty or 0)
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                    steps.append(("product", cid, pid, delta))
+                before = await _lot_before(item, cid)
+                try:
+                    await _apply_lot_delta(item, -1.0, inv.get("company_id"))
+                finally:
+                    _note_lot(steps, before)
+        elif _purchase_tracks_stock(inv) and not skip_stock:
+            # False = reverse sonrası yeniden uygula; None+edoc = edocs stoku girdi, yalnız işaretle
+            if inv.get("stock_effects_applied") is False:
+                for item in inv.get("items", []):
+                    pid, qty = _invoice_item_pid_qty(item)
+                    if pid:
+                        delta = float(qty or 0)
+                        await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                        steps.append(("product", cid, pid, delta))
+                    before = await _lot_before(item, cid)
+                    try:
+                        await _apply_lot_delta(item, +1.0, inv.get("company_id"))
+                    finally:
+                        _note_lot(steps, before)
+            if inv.get("_id"):
+                await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
+            inv["stock_effects_applied"] = True
+    except Exception:
+        await _compensate_effect_failure(steps)
+        raise
 
 
 async def _reverse_invoice_effects(inv: dict):
@@ -10488,25 +10577,43 @@ async def _reverse_invoice_effects(inv: dict):
         return
     cid = str(inv.get("company_id") or "").strip()
     await _guard_effect_storage(cid)
-    if inv.get("contact_id"):
-        change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
-        await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
-    skip_stock = bool(inv.get("stock_effects_from_dispatch"))
-    if inv.get("invoice_type") == "sales" and not skip_stock:
-        for item in inv.get("items", []):
-            pid, qty = _invoice_item_pid_qty(item)
-            if pid:
-                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": float(qty or 0)}})
-            await _apply_lot_delta(item, +1.0, inv.get("company_id"))
-    elif _purchase_tracks_stock(inv) and not skip_stock and inv.get("stock_effects_applied") is not False:
-        for item in inv.get("items", []):
-            pid, qty = _invoice_item_pid_qty(item)
-            if pid:
-                await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": -float(qty or 0)}})
-            await _apply_lot_delta(item, -1.0, inv.get("company_id"))
-        if inv.get("_id"):
-            await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
-        inv["stock_effects_applied"] = False
+    steps = []
+    try:
+        if inv.get("contact_id"):
+            change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
+            await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
+            steps.append(("contact", cid, inv["contact_id"], change))
+        skip_stock = bool(inv.get("stock_effects_from_dispatch"))
+        if inv.get("invoice_type") == "sales" and not skip_stock:
+            for item in inv.get("items", []):
+                pid, qty = _invoice_item_pid_qty(item)
+                if pid:
+                    delta = float(qty or 0)
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                    steps.append(("product", cid, pid, delta))
+                before = await _lot_before(item, cid)
+                try:
+                    await _apply_lot_delta(item, +1.0, inv.get("company_id"))
+                finally:
+                    _note_lot(steps, before)
+        elif _purchase_tracks_stock(inv) and not skip_stock and inv.get("stock_effects_applied") is not False:
+            for item in inv.get("items", []):
+                pid, qty = _invoice_item_pid_qty(item)
+                if pid:
+                    delta = -float(qty or 0)
+                    await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+                    steps.append(("product", cid, pid, delta))
+                before = await _lot_before(item, cid)
+                try:
+                    await _apply_lot_delta(item, -1.0, inv.get("company_id"))
+                finally:
+                    _note_lot(steps, before)
+            if inv.get("_id"):
+                await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
+            inv["stock_effects_applied"] = False
+    except Exception:
+        await _compensate_effect_failure(steps)
+        raise
 
 
 def incoming_purchase_ledger_posted(inv: dict) -> bool:
@@ -10816,19 +10923,38 @@ async def _commit_invoice_effects_update(inv: dict, invoice_id: str, allowed: di
     """
     company_id = inv.get("company_id")
     q = {"_id": invoice_id, "company_id": company_id}
+    allowed = dict(allowed or {})
+    allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
+    reversed_effects = False
     if reapply_effects:
         try:
             await _reverse_invoice_effects(inv)
+            reversed_effects = True
         except Exception:
             logging.getLogger(__name__).exception(
                 "Onaylı fatura düzenleme: eski etkiler geri alınamadı %s", invoice_id
             )
             raise HTTPException(status_code=500, detail="Fatura etkileri geri alınamadı; düzenleme iptal.")
-    await db.invoices.update_one(q, {"$set": allowed})
+    try:
+        await db.invoices.update_one(q, {"$set": allowed})
+    except Exception:
+        if reversed_effects:
+            logging.getLogger(__name__).exception(
+                "Onaylı fatura düzenleme: belge yazılamadı %s", invoice_id
+            )
+            try:
+                await _apply_invoice_effects(inv)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Onaylı fatura düzenleme: belge yazılamadı, eski etkiler geri yazılamadı %s", invoice_id
+                )
+        raise
     updated = await db.invoices.find_one(q)
     if reapply_effects and updated:
+        applied = False
         try:
             await _apply_invoice_effects(updated)
+            applied = True
             paid = float(updated.get("paid_amount") or 0)
             ps = _invoice_payment_status(paid, updated.get("grand_total") or 0)
             if ps != updated.get("payment_status"):
@@ -10839,11 +10965,13 @@ async def _commit_invoice_effects_update(inv: dict, invoice_id: str, allowed: di
                 "Onaylı fatura düzenleme: yeni etkiler uygulanamadı %s — eski hâle dönülüyor", invoice_id
             )
             try:
-                await _reverse_invoice_effects(updated)
-                await db.invoices.update_one(q, {"$set": {
-                    k: inv.get(k) for k in allowed.keys() if k in inv
-                }})
-                await _apply_invoice_effects(inv)
+                if applied:
+                    await _reverse_invoice_effects(updated)
+                restored = {k: inv.get(k) for k in allowed.keys() if k in inv}
+                restored["updated_at"] = datetime.now(timezone.utc).isoformat()
+                await db.invoices.update_one(q, {"$set": restored})
+                if reversed_effects:
+                    await _apply_invoice_effects(inv)
             except Exception:
                 logging.getLogger(__name__).exception(
                     "Onaylı fatura düzenleme rollback başarısız: %s", invoice_id
@@ -10884,6 +11012,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
         if not allowed or set(req.keys()) - {"due_date", "notes"}:
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
+        allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id, "company_id": cid}))
     editable = {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "contact_tax_id", "contact_tax_office", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code", "post_stock"}

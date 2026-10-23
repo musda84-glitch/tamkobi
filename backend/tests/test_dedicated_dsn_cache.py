@@ -346,3 +346,302 @@ def test_marketplace_lock_keeps_order_for_next_sync(monkeypatch, caplog):
     finally:
         server.db = previous_db
         server.clear_marketplace_holds()
+
+
+class LateCompanies:
+    """İlk okuma DSN alanını düşürür. İkinci okuma mühürü verir."""
+
+    def __init__(self, doc: dict, sealed: str = ""):
+        self.doc = dict(doc)
+        self.sealed = sealed
+        self.reads = 0
+
+    async def find_one(self, query, projection=None):
+        self.reads += 1
+        body = dict(self.doc)
+        if self.reads >= 2 and self.sealed:
+            body[storage_router.DSN_FIELD] = self.sealed
+        if str((query or {}).get("_id") or "") != str(body.get("_id") or ""):
+            return None
+        if not projection:
+            return body
+        out = {"_id": body.get("_id")}
+        for key, flag in projection.items():
+            if key == "_id" or not flag:
+                continue
+            if key in body:
+                out[key] = body[key]
+        return out
+
+
+class LateCatalog:
+    def __init__(self, companies: LateCompanies):
+        self.companies = companies
+
+    def __getitem__(self, name):
+        if name == "companies":
+            return self.companies
+        raise KeyError(name)
+
+
+def test_dsn_reread_serves_every_collection(monkeypatch, tmp_path, caplog):
+    """İlk katalog anlığı ref'siz. İkinci okuma yazmayı orders dahil her ada bırakır."""
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    try:
+        path = tmp_path / SECRET / "retry.db"
+        path.parent.mkdir()
+        dsn = f"sqlite:///{path}"
+        _migrate(dsn)
+        sealed = storage_router.seal_dedicated_dsn(dsn)
+        company = {
+            "_id": CO,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+        }
+        companies = LateCompanies(company, sealed)
+        db = LateCatalog(companies)
+        contacts = LegacyColl(db, "contacts")
+        orders = LegacyColl(db, "orders")
+
+        async def run():
+            contact = {"_id": "ct_worker", "company_id": CO, "name": "Cari"}
+            routed = await storage_router.route_legacy_write(contacts, "insert_one", doc=contact)
+            await routed.insert_one(contact)
+            assert companies.reads == 2
+            routed = await storage_router.route_legacy_write(
+                contacts, "update_one",
+                query={"_id": "ct_worker", "company_id": CO},
+                update={"$set": {"name": "Cari-2"}},
+            )
+            await routed.update_one({"_id": "ct_worker", "company_id": CO}, {"$set": {"name": "Cari-2"}})
+            order = {"_id": "ord_worker", "company_id": CO, "order_number": "S-1"}
+            routed = await storage_router.route_legacy_write(orders, "insert_one", doc=order)
+            await routed.insert_one(order)
+            routed = await storage_router.route_legacy_write(
+                orders, "update_many",
+                query={"company_id": CO},
+                update={"$set": {"printed": True}},
+            )
+            await routed.update_many({"company_id": CO}, {"$set": {"printed": True}})
+            assert companies.reads == 2
+            assert contacts.writes == []
+            assert orders.writes == []
+
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(run())
+        contact_body = _bodies(path, "contacts")
+        order_body = _bodies(path, "orders")
+        assert len(contact_body) == 1 and "Cari-2" in contact_body[0]
+        assert len(order_body) == 1 and "printed" in order_body[0]
+        assert SECRET not in caplog.text
+        assert "sqlite://" not in caplog.text
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+def test_second_catalog_read_still_missing_dsn_writes_nothing(monkeypatch, tmp_path, caplog):
+    """İkinci okuma da boşsa hata çıkar, sqlite dosyası açılmaz."""
+    previous, comm_service = _seal(monkeypatch, tmp_path)
+    monkeypatch.setenv("STORAGE_ROUTER_ENABLED", "1")
+    try:
+        path = tmp_path / SECRET / "missing.db"
+        company = {
+            "_id": CO,
+            "storage_mode": "dedicated",
+            "storage_epoch": 1,
+            "storage_write_lock": False,
+        }
+        companies = LateCompanies(company, "")
+        db = LateCatalog(companies)
+        orders = LegacyColl(db, "orders")
+
+        async def run():
+            with pytest.raises(DedicatedStorageError, match="DSN referansı yok"):
+                await storage_router.route_legacy_write(
+                    orders, "insert_one", doc={"_id": "ord_x", "company_id": CO},
+                )
+            with pytest.raises(DedicatedStorageError, match="DSN referansı yok"):
+                await storage_router.route_legacy_write(
+                    orders, "update_one",
+                    query={"_id": "ord_x", "company_id": CO},
+                    update={"$set": {"printed": True}},
+                )
+            with pytest.raises(DedicatedStorageError, match="DSN referansı yok"):
+                await storage_router.route_legacy_write(
+                    orders, "update_many",
+                    query={"company_id": CO},
+                    update={"$set": {"printed": True}},
+                )
+            assert companies.reads == 6
+            assert orders.writes == []
+
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(run())
+        assert not path.exists()
+        assert SECRET not in caplog.text
+        assert "sqlite://" not in caplog.text
+    finally:
+        _restore(monkeypatch, previous, comm_service)
+
+
+def test_product_failure_undoes_contact_balance():
+    """Cari $inc yazıldıktan sonra stok düşerse bakiye ve stok başa döner."""
+    db = MemDB()
+    previous = server.db
+    server.db = db
+    try:
+        async def run():
+            await db.contacts.insert_one({"_id": "cnt_worker", "company_id": CO, "balance": 10})
+            await db.products.insert_one({"_id": "prd_worker", "company_id": CO, "stock_quantity": 5})
+            await db.stock_lots.insert_one({
+                "_id": "lot_worker", "company_id": CO, "quantity": 4, "is_active": True,
+            })
+
+            async def reject_stock(query, update, upsert=False):
+                raise RuntimeError("stok yazılamadı")
+
+            db.products.update_one = reject_stock
+            invoice = _sales_invoice()
+            invoice["items"] = [{
+                "product_id": "prd_worker", "quantity": 1, "unit_price": 10, "lot_id": "lot_worker",
+            }]
+            with pytest.raises(RuntimeError, match="stok yazılamadı"):
+                await server._apply_invoice_effects(invoice)
+            contact = await db.contacts.find_one({"_id": "cnt_worker", "company_id": CO})
+            product = await db.products.find_one({"_id": "prd_worker", "company_id": CO})
+            lot = await db.stock_lots.find_one({"_id": "lot_worker", "company_id": CO})
+            assert contact["balance"] == 10
+            assert product["stock_quantity"] == 5
+            assert lot["quantity"] == 4
+            assert lot["is_active"] is True
+
+        asyncio.run(run())
+    finally:
+        server.db = previous
+
+
+def test_lot_failure_restores_snapshot(monkeypatch):
+    """Lot yazısı düşerse miktar anlığı, cari ve stok birlikte geri alınır."""
+    db = MemDB()
+    previous = server.db
+    server.db = db
+    real_lot = server._apply_lot_delta
+
+    async def boom(item, sign, company_id):
+        await real_lot(item, sign, company_id)
+        raise RuntimeError("lot yazılamadı")
+
+    monkeypatch.setattr(server, "_apply_lot_delta", boom)
+    try:
+        async def run():
+            await db.contacts.insert_one({"_id": "cnt_worker", "company_id": CO, "balance": 10})
+            await db.products.insert_one({"_id": "prd_worker", "company_id": CO, "stock_quantity": 5})
+            await db.stock_lots.insert_one({
+                "_id": "lot_worker", "company_id": CO, "quantity": 4, "is_active": True,
+            })
+            invoice = _sales_invoice()
+            invoice["items"] = [{
+                "product_id": "prd_worker", "quantity": 1, "unit_price": 10, "lot_id": "lot_worker",
+            }]
+            with pytest.raises(RuntimeError, match="lot yazılamadı"):
+                await server._apply_invoice_effects(invoice)
+            contact = await db.contacts.find_one({"_id": "cnt_worker", "company_id": CO})
+            product = await db.products.find_one({"_id": "prd_worker", "company_id": CO})
+            lot = await db.stock_lots.find_one({"_id": "lot_worker", "company_id": CO})
+            assert contact["balance"] == 10
+            assert product["stock_quantity"] == 5
+            assert lot["quantity"] == 4
+            assert lot["is_active"] is True
+
+        asyncio.run(run())
+    finally:
+        server.db = previous
+
+
+def test_commit_failure_restores_invoice_and_old_effects():
+    """Yeniden uygulama düşünce not eski kalır, cari eski etkisine döner."""
+    db = MemDB()
+    previous = server.db
+    server.db = db
+    try:
+        async def run():
+            await db.contacts.insert_one({"_id": "cnt_worker", "company_id": CO, "balance": 100})
+            await db.products.insert_one({"_id": "prd_worker", "company_id": CO, "stock_quantity": 5})
+            invoice = _sales_invoice()
+            invoice["notes"] = "eski"
+            invoice["effects_applied"] = True
+            await db.invoices.insert_one(dict(invoice))
+            real = db.products.update_one
+            state = {"neg": 0}
+
+            async def update_one(query, update, upsert=False):
+                inc = (update or {}).get("$inc") or {}
+                if float(inc.get("stock_quantity") or 0) < 0:
+                    state["neg"] += 1
+                    if state["neg"] == 1:
+                        raise RuntimeError("stok yazılamadı")
+                return await real(query, update, upsert=upsert)
+
+            db.products.update_one = update_one
+            with pytest.raises(HTTPException) as caught:
+                await server._commit_invoice_effects_update(
+                    invoice, invoice["_id"], {"notes": "yeni"}, True,
+                )
+            assert caught.value.status_code == 500
+            assert "geri alındı" in str(caught.value.detail)
+            saved = await db.invoices.find_one({"_id": invoice["_id"], "company_id": CO})
+            contact = await db.contacts.find_one({"_id": "cnt_worker", "company_id": CO})
+            product = await db.products.find_one({"_id": "prd_worker", "company_id": CO})
+            assert saved["notes"] == "eski"
+            assert saved.get("updated_at")
+            assert contact["balance"] == 100
+            assert product["stock_quantity"] == 5
+
+        asyncio.run(run())
+    finally:
+        server.db = previous
+
+
+def test_invoice_edit_stamps_updated_at(monkeypatch):
+    """Düzenleme ve GİB kilitli vade/not yolu updated_at yazar."""
+    db = MemDB()
+    previous = server.db
+    server.db = db
+    try:
+        async def run():
+            draft = _sales_invoice()
+            draft["status"] = "draft"
+            draft["effects_applied"] = False
+            draft["notes"] = "eski"
+            await db.invoices.insert_one(dict(draft))
+            updated = await server._commit_invoice_effects_update(
+                draft, draft["_id"], {"notes": "yeni"}, False,
+            )
+            assert updated["notes"] == "yeni"
+            assert updated.get("updated_at")
+
+            locked = {
+                "_id": "inv_gib",
+                "company_id": CO,
+                "status": "approved",
+                "invoice_type": "sales",
+                "e_type": "efatura",
+                "einvoice_state": "sent",
+                "notes": "eski not",
+                "due_date": "2026-01-01",
+            }
+            await db.invoices.insert_one(locked)
+
+            async def get_doc(*_args, **_kwargs):
+                return await db.invoices.find_one({"_id": "inv_gib", "company_id": CO})
+
+            monkeypatch.setattr(server.tenant_access, "get_tenant_doc", get_doc)
+            out = await server.update_invoice("inv_gib", {"notes": "yeni not"}, {"company_id": CO})
+            assert out["notes"] == "yeni not"
+            assert out.get("updated_at")
+
+        asyncio.run(run())
+    finally:
+        server.db = previous

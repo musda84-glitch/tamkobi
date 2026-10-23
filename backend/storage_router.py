@@ -14,7 +14,9 @@ katalogdaki storage_write_lock alanındadır; her süreç kısa TTL ile bakar.
 Bu sürüm legacy, shared_v2 ve dedicated arka uçlarını tanır.
 shared_v2 kipinde orders, invoices, stock_movements ve bank_transactions
 kendi tablolarına gider. Diğer koleksiyonlar docs_v2 koleksiyonuna gider.
-dedicated ayrı veritabanına gider.
+dedicated ayrı veritabanına gider. Yazma, DSN referansı yoksa önbelleği
+bırakıp katalogdan bir kez daha okur; hâlâ yoksa hata verir ve yazmaz.
+Bu yenileme koleksiyon adından bağımsızdır.
 Bilinmeyen bir kip sessizce legacy'ye düşmez. Alanı olmayan mevcut
 firmalar legacy sayılır. Hiçbir firma burada dedicated veya shared_v2 yapılmaz.
 
@@ -1398,6 +1400,36 @@ async def _matched_company_ids(coll, query, name: str) -> list[str]:
     return _company_ids_from_rows(rows, name)
 
 
+def _dsn_missing(exc: BaseException) -> bool:
+    """Yalnız boş dedicated ref. Çözülemedi veya başka kip hatası yenilenmez."""
+    import storage_dedicated
+
+    return (
+        isinstance(exc, storage_dedicated.DedicatedStorageError)
+        and "DSN referansı yok" in str(exc)
+    )
+
+
+async def open_company_collection(db, mode: str, company_id: str, name: str):
+    """Koleksiyon. Dedicated ref yoksa katalogdan bir kez tazeler.
+
+    Ad fark etmez: orders, invoices ve diğerleri aynı yolu kullanır.
+    İkinci okuma da boşsa aynı hata çıkar. Bu çağrı yazmaz.
+    """
+    if mode != DEDICATED:
+        return collection_for_mode(db, mode, company_id, name)
+    try:
+        return collection_for_mode(db, mode, company_id, name)
+    except Exception as exc:
+        if not _dsn_missing(exc):
+            raise
+    forget_mode(company_id)
+    mode2, _epoch, locked = await load_view(db, company_id)
+    if locked:
+        raise StorageWriteLocked(WRITE_LOCK_MESSAGE, company_id=company_id)
+    return collection_for_mode(db, mode2, company_id, name)
+
+
 async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None):
     """Ham legacy yazmayı kilit ve güncel kipe göre bırakır, yönlendirir veya reddeder.
 
@@ -1449,7 +1481,7 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
         return None
     if len(archived) == 1 and not legacy:
         cid, (mode, _epoch, _locked) = views[0]
-        return collection_for_mode(db, mode, cid, name)
+        return await open_company_collection(db, mode, cid, name)
     if op not in _MANY_WRITES or not isinstance(query, dict):
         raise StorageEpochStale(
             "Yazma birden fazla şirketin deposuna dağılmış. Uygulanmadı.",
@@ -1459,7 +1491,7 @@ async def route_legacy_write(coll, op: str, *, doc=None, query=None, update=None
     for cid, (mode, _epoch, _locked) in views:
         if mode == LEGACY:
             continue
-        parts.append((cid, collection_for_mode(db, mode, cid, name), copy.deepcopy(query)))
+        parts.append((cid, await open_company_collection(db, mode, cid, name), copy.deepcopy(query)))
     legacy_coll = coll if legacy else None
     legacy_query = narrow_legacy_query(query, archived) if legacy else None
     return SplitWrite(legacy_coll, legacy_query, legacy, parts)
@@ -1552,7 +1584,9 @@ class BoundCollection:
         if mode != self._store.mode or epoch != self._store.epoch:
             self._store.mode = mode
             self._store.epoch = epoch
-            self._raw = collection_for_mode(self._store._db, mode, self._store.company_id, self._name)
+            self._raw = await open_company_collection(
+                self._store._db, mode, self._store.company_id, self._name,
+            )
         return self._raw
 
     async def insert_one(self, doc):
