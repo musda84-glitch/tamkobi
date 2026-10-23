@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -51,7 +52,7 @@ _CRITICAL_COLLECTIONS = {
 }
 
 _configured = False
-_persist_lock = 0
+_persist_guard = threading.Lock()
 
 
 def log_dir() -> Path:
@@ -215,19 +216,12 @@ def log_sql(op: str, collection: str, doc_id: Any = None, duration_ms: float = 0
     )
 
 
-def persist_record(rec: dict) -> None:
-    """Best-effort INSERT into system_logs. Never raises."""
-    global _persist_lock
-    if os.environ.get("LOG_DB_PERSIST", "1").lower() in {"0", "false", "no"}:
-        return
-    if _persist_lock:
-        return
+def _persist_record_blocking(rec: dict) -> None:
+    """pymysql INSERT. Çağıran kiliti tutar. Olay döngüsünde çağrılmaz."""
     category = rec.get("category") or "event"
     event = rec.get("event") or "unknown"
-    # Don't persist high-volume SQL file-only noise
     if category == "sql" and rec.get("collection") not in _CRITICAL_COLLECTIONS and rec.get("event") != "sql_slow":
         return
-    _persist_lock = 1
     try:
         from mysql_store import mysql_settings_from_env
         import db_ssl
@@ -271,8 +265,39 @@ def persist_record(rec: dict) -> None:
             conn.close()
     except Exception:
         pass
-    finally:
-        _persist_lock = 0
+
+
+def persist_record(rec: dict) -> None:
+    """Best-effort INSERT into system_logs. Never raises.
+
+    Olay döngüsündeyken pymysql bağlantısı döngüyü kilitlemez; kısa ömürlü
+    bir iş parçacığı yazar. Döngü yoksa (CLI, test) çağrı senkron kalır.
+    """
+    if os.environ.get("LOG_DB_PERSIST", "1").lower() in {"0", "false", "no"}:
+        return
+    if not _persist_guard.acquire(blocking=False):
+        return
+    snapshot = dict(rec)
+    try:
+        import asyncio
+        asyncio.get_running_loop()
+        on_loop = True
+    except RuntimeError:
+        on_loop = False
+    if not on_loop:
+        try:
+            _persist_record_blocking(snapshot)
+        finally:
+            _persist_guard.release()
+        return
+
+    def _run() -> None:
+        try:
+            _persist_record_blocking(snapshot)
+        finally:
+            _persist_guard.release()
+
+    threading.Thread(target=_run, name="applog-persist", daemon=True).start()
 
 
 def _log_where(
@@ -519,6 +544,8 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
         method = request.method
         label = re.sub(r"\d{10,}", "#", f"{method} {path}")[:180]
         token = _sql_endpoint.set(label)
+        import loop_lag
+        req_token = loop_lag.note_request(label)
         try:
             try:
                 response = await call_next(request)
@@ -547,6 +574,7 @@ class RequestLogMiddleware(BaseHTTPMiddleware):
                 )
             return response
         finally:
+            loop_lag.end_request(req_token)
             _sql_endpoint.reset(token)
 
 

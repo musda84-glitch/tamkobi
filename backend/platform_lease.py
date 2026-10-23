@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS platform_locks (
 
 # ensure_table runs at most once per process
 _table_ready = False
+# run_exclusive görevleri. Kapanış bunları iptal eder; kira iş durunca bırakılır.
+_runners: set = set()
+_closing = False
 
 
 def background_jobs_enabled() -> bool:
@@ -59,6 +62,22 @@ def _reset_table_ready_for_tests() -> None:
     """Test helper — do not use in production."""
     global _table_ready
     _table_ready = False
+
+
+def _reset_runtime_for_tests() -> None:
+    """Test helper — do not use in production."""
+    global _closing
+    _closing = False
+    _runners.clear()
+
+
+def _clear_cancel() -> None:
+    """İptal edilmiş görev finally içinde await edebilsin (3.11+)."""
+    task = asyncio.current_task()
+    if task is None or not hasattr(task, "uncancel"):
+        return
+    while task.uncancel():
+        pass
 
 
 async def try_acquire(db, name: str, owner: str, ttl_s: int = DEFAULT_TTL_S) -> bool:
@@ -124,6 +143,31 @@ async def renew_while(
             pass
 
 
+async def _finish_hold(
+    db,
+    name: str,
+    owner: str,
+    stop: asyncio.Event,
+    work: Optional[asyncio.Task],
+    renew_task: Optional[asyncio.Task],
+) -> None:
+    """İşi durdur, sonra kirayı bırak. Bırakılan kira yeni sürecin işi başlatmasına izin verir."""
+    stop.set()
+    if work is not None and not work.done():
+        work.cancel()
+    if renew_task is not None and not renew_task.done():
+        renew_task.cancel()
+    for task in (work, renew_task):
+        if task is None:
+            continue
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    logger.info("lease bırakıldı %s owner=%s", name, owner)
+    await release(db, name, owner)
+
+
 async def run_exclusive(
     db,
     name: str,
@@ -133,46 +177,71 @@ async def run_exclusive(
     wait_s: float = 5.0,
 ) -> None:
     """Run `coro_factory()` only while holding the named lease (one process wins)."""
+    if _closing:
+        logger.info("lease kapalı %s — iş başlatılmadı", name)
+        return
     owner = new_owner()
-    while True:
-        try:
-            got = await try_acquire(db, name, owner, ttl_s=ttl_s)
-        except Exception as exc:
-            logger.warning("lease acquire %s: %s", name, exc)
-            got = False
-        if not got:
-            await asyncio.sleep(wait_s)
-            continue
-        stop = asyncio.Event()
-        renew_task = asyncio.create_task(
-            renew_while(db, name, owner, ttl_s=ttl_s, stop=stop)
-        )
-        work: Optional[asyncio.Task] = None
-        try:
-            work = asyncio.create_task(coro_factory())
-            done, _pending = await asyncio.wait(
-                {work, renew_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if renew_task in done and not work.done():
-                work.cancel()
-                try:
-                    await work
-                except (asyncio.CancelledError, Exception):
-                    pass
+    me = asyncio.current_task()
+    if me is not None:
+        _runners.add(me)
+    try:
+        while not _closing:
+            try:
+                got = await try_acquire(db, name, owner, ttl_s=ttl_s)
+            except Exception as exc:
+                logger.warning("lease acquire %s: %s", name, exc)
+                got = False
+            if not got:
                 await asyncio.sleep(wait_s)
                 continue
-            if work in done:
-                # Unexpected exit of a forever-loop — restart after short pause
-                exc = work.exception() if not work.cancelled() else None
-                if exc:
-                    logger.error("background %s crashed: %s", name, exc, exc_info=exc)
-                await asyncio.sleep(wait_s)
-        finally:
-            stop.set()
-            renew_task.cancel()
+            logger.info("lease alındı %s owner=%s", name, owner)
+            stop = asyncio.Event()
+            renew_task = asyncio.create_task(
+                renew_while(db, name, owner, ttl_s=ttl_s, stop=stop)
+            )
+            work: Optional[asyncio.Task] = None
             try:
-                await renew_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            await release(db, name, owner)
+                try:
+                    work = asyncio.create_task(coro_factory())
+                except Exception as exc:
+                    logger.error("background %s başlamadı: %s", name, exc)
+                    await asyncio.sleep(wait_s)
+                    continue
+                done, _pending = await asyncio.wait(
+                    {work, renew_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if renew_task in done and not work.done():
+                    logger.warning("lease düştü %s owner=%s", name, owner)
+                elif work.done():
+                    exc = work.exception() if not work.cancelled() else None
+                    if exc:
+                        logger.error("background %s crashed: %s", name, exc, exc_info=exc)
+            finally:
+                # İptal, ilk await'de temizliği atlar. Önce sayacı sıfırla.
+                _clear_cancel()
+                await _finish_hold(db, name, owner, stop, work, renew_task)
+            if _closing:
+                return
+            await asyncio.sleep(wait_s)
+    finally:
+        if me is not None:
+            _runners.discard(me)
+
+
+async def shutdown() -> None:
+    """Kapanış: çalışan arka plan işlerini durdur, sonra kirayı bırak."""
+    global _closing
+    _closing = True
+    tasks = [
+        task
+        for task in list(_runners)
+        if task is not asyncio.current_task() and not task.done()
+    ]
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass

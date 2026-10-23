@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -1356,7 +1357,7 @@ async def _execute(action: str, target_id: str, params: Dict[str, Any], actor: d
         admin = {"email": actor.get("email"), "_id": operator.get("_id") or actor.get("_id")}
         return await platform_notices.system_put_maintenance(body, admin)
     if action == "logs.rotate":
-        return applog.rotate_files()
+        return await asyncio.to_thread(applog.rotate_files)
     if action == "gib.gift":
         import gib_credits
         import idempotency

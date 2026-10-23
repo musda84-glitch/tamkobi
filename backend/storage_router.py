@@ -80,6 +80,8 @@ _write_locks: set[str] = set()
 _any_move: tuple[bool, float] = (False, 0.0)
 _move_owner: Optional[str] = None
 _move_guard = threading.Lock()
+_mode_refresh_inflight: set[str] = set()
+_mode_refresh_after: dict[str, float] = {}
 _writer: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "tamkobi_storage_move_writer",
     default="",
@@ -133,6 +135,8 @@ def reset() -> None:
     read_count = 0
     _write_locks.clear()
     _move_owner = None
+    _mode_refresh_inflight.clear()
+    _mode_refresh_after.clear()
     _BOUND.set(None)
     import storage_dedicated
 
@@ -432,12 +436,50 @@ def _refresh_mode(db, company_id: str):
     return stored
 
 
+def _schedule_mode_refresh(db, company_id: str) -> None:
+    """Süresi dolmuş kipi döngüyü kilitlemeden tazeler. load_mode zaten async."""
+    if not company_id or company_id in _mode_refresh_inflight:
+        return
+    now = _now()
+    if _mode_refresh_after.get(company_id, 0.0) > now:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if len(_mode_refresh_after) > CACHE_MAX:
+        _mode_refresh_after.clear()
+    _mode_refresh_inflight.add(company_id)
+
+    async def _go() -> None:
+        try:
+            await load_mode(db, company_id)
+        except Exception:
+            _mode_refresh_after[company_id] = _now() + 30.0
+        else:
+            _mode_refresh_after.pop(company_id, None)
+        finally:
+            _mode_refresh_inflight.discard(company_id)
+
+    task = loop.create_task(_go())
+
+    def _done(fut) -> None:
+        if fut.cancelled():
+            _mode_refresh_inflight.discard(company_id)
+            return
+        fut.exception()
+
+    task.add_done_callback(_done)
+
+
 def mode_for_handle(db, company_id: str) -> str:
     """TenantDB kurulumunda sabitlenecek kip.
 
     Taze önbellek hemen döner. Önbellek hiç yoksa yalnız bellek içi
     katalog okunur; gerçek sürücüye sorulmaz ve hata verilmez.
-    Süresi dolmuş kayıt katalogdan yeniden okunur.
+    Süresi dolmuş kayıt, olay döngüsü yoksa katalogdan yeniden okunur.
+    Döngüde pymysql ve thread.join yapılmaz; bayat kip döner ve async
+    load_mode önbelleği tazeler.
     """
     cid = canonical_company_id(company_id)
     if not cid:
@@ -449,6 +491,13 @@ def mode_for_handle(db, company_id: str) -> str:
         synced = _read_sync(db, cid)
         if synced is not None:
             return synced
+        _schedule_mode_refresh(db, cid)
+        return LEGACY
+    if _on_loop() and _memory_doc(db, cid) is _UNREAD:
+        _schedule_mode_refresh(db, cid)
+        stale = _stale(cid)
+        if stale is not _MISS:
+            return stale
         return LEGACY
     refreshed = _refresh_mode(db, cid)
     if refreshed is not None:

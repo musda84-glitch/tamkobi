@@ -28420,6 +28420,11 @@ async def mobile_manifest():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    try:
+        import platform_lease
+        await platform_lease.shutdown()
+    except Exception as exc:
+        logger.warning("arka plan kirası kapatılamadı: %s", exc)
     await client.close_async()
 
 
