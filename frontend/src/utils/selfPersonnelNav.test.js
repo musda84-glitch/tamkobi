@@ -41,6 +41,7 @@ describe("selfPersonnelNav", () => {
     expect(isPersonelRole(p)).toBe(true);
     expect(personelMenuPathAllowed("/mesai", p)).toBe(true);
     expect(personelMenuPathAllowed("/personelim", p)).toBe(true);
+    expect(personelMenuPathAllowed("/mesajlar", p)).toBe(true);
     expect(personelMenuPathAllowed("/atolye", p)).toBe(false);
     expect(personelMenuPathAllowed("/sayim", p)).toBe(false);
     expect(personelMenuPathAllowed("/sevk", p)).toBe(false);

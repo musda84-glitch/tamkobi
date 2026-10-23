@@ -86,6 +86,9 @@ describe("pathAllowedOnHost / preferredHostForPath", () => {
     expect(pathAllowedOnHost("/panel", "site")).toBe(false);
     expect(preferredHostForPath("/invoices")).toBe("app");
     expect(preferredHostForPath("/login")).toBe("app");
+    expect(pathAllowedOnHost("/mesajlar", "app")).toBe(true);
+    expect(pathAllowedOnHost("/mesajlar", "ik")).toBe(false);
+    expect(preferredHostForPath("/mesajlar")).toBe("app");
   });
 
   test("b2b and ik paths", () => {

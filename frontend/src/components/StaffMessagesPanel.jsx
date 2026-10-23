@@ -10,8 +10,10 @@ import {
   chatAvatarColor,
   chatClockLabel,
   chatInitials,
+  chatListPreview,
   chatPeer,
   chatTimeLabel,
+  clipChatPreview,
   filterChatList,
   MESSAGES_COLLAPSED_KEY,
   inboxUnreadTotal,
@@ -102,12 +104,104 @@ function ChatRow({ row, onClick, testId }) {
   );
 }
 
+const PANEL_FORBIDDEN = "Mesajları görmek için personel kartı veya yönetici yetkisi gerekir.";
+
+function OverviewCard({ testId, data }) {
+  if (!data) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 text-xs text-slate-400 flex items-center gap-2 shadow-sm" data-testid={testId}>
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mesajlar yükleniyor…
+      </div>
+    );
+  }
+  if (data.error) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm" data-testid={testId}>
+        <div className="text-sm font-bold text-slate-900">Mesajlar</div>
+        <p className="mt-2 text-xs text-slate-500">Mesajlar yüklenemedi.</p>
+      </div>
+    );
+  }
+  if (data.forbidden) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm" data-testid={testId}>
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-violet-600 text-white flex items-center justify-center shrink-0">
+            <MessageSquare className="w-4 h-4" />
+          </div>
+          <div className="text-sm font-bold text-slate-900">Mesajlar</div>
+        </div>
+        <p className="mt-3 text-xs text-slate-600" data-testid={`${testId}-forbidden`}>{data.detail || PANEL_FORBIDDEN}</p>
+      </div>
+    );
+  }
+  const selfId = data.self_user_id || "";
+  const chats = (Array.isArray(data.chats) ? data.chats : []).slice(0, 3);
+  const badge = Number(data.unread_total) || 0;
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden" data-testid={testId}>
+      <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
+        <div className="w-9 h-9 rounded-xl bg-violet-600 text-white flex items-center justify-center shrink-0">
+          <MessageSquare className="w-4 h-4" />
+        </div>
+        <div className="text-sm font-bold text-slate-900 flex-1">Mesajlar</div>
+        {badge > 0 ? (
+          <span className="min-w-[22px] text-center text-[11px] font-extrabold px-1.5 py-0.5 rounded-full bg-emerald-600 text-white" data-testid={`${testId}-unread`}>{badge}</span>
+        ) : null}
+        <Link to="/mesajlar" className="text-xs font-bold text-violet-700 hover:text-violet-900" data-testid={`${testId}-all`}>Tümü ›</Link>
+      </div>
+      {chats.length ? (
+        <div className="px-2 pb-1" data-testid={`${testId}-list`}>
+          {chats.map((row) => {
+            const preview = clipChatPreview(chatListPreview(row, selfId), 64);
+            return (
+              <Link
+                key={row.key || row.id}
+                to={`/mesajlar?c=${encodeURIComponent(row.key || "")}`}
+                className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-slate-50"
+                data-testid={`${testId}-row-${row.id}`}
+              >
+                <div className="w-10 h-10 rounded-full text-white flex items-center justify-center shrink-0 text-[12px] font-extrabold" style={{ backgroundColor: chatAvatarColor(row.key || row.id) }}>
+                  {chatInitials(row.name)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[13px] truncate flex-1 ${row.unread ? "font-extrabold text-slate-900" : "font-semibold text-slate-800"}`}>{row.name}</span>
+                    {row.at ? <span className="text-[10px] font-bold text-slate-400 shrink-0">{chatTimeLabel(row.at)}</span> : null}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[12px] text-slate-500 truncate flex-1">{preview}</span>
+                    {row.unread > 0 ? <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" data-testid={`${testId}-dot-${row.id}`} /> : null}
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="px-4 pb-2 text-xs text-slate-500" data-testid={`${testId}-empty`}>Yeni mesaj yok · Ekibinizle panel içinden yazışın.</p>
+      )}
+      <div className="px-3 pb-3 pt-1">
+        <Link
+          to="/mesajlar?yeni=1"
+          className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-sm font-bold text-slate-800 py-2"
+          data-testid={`${testId}-new`}
+        >
+          <Plus className="w-4 h-4" /> Yeni mesaj
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export function StaffMessagesPanel({
   employeeId,
   compact,
   slimWhenEmpty = false,
+  variant = "",
   testId = "staff-messages-panel",
 }) {
+  const overview = (variant === "overview" || slimWhenEmpty) && !employeeId;
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -128,11 +222,24 @@ export function StaffMessagesPanel({
   const [announceAll, setAnnounceAll] = useState(true);
 
   const load = useCallback(() => {
+    if (overview) {
+      axios.get(`${API_URL}/personnel/messages/panel`, { params: { limit: 3 }, withCredentials: true })
+        .then((r) => setData(r.data))
+        .catch((err) => {
+          const status = err.response?.status;
+          if (status === 403) {
+            setData({ forbidden: true, detail: err.response?.data?.detail || PANEL_FORBIDDEN });
+            return;
+          }
+          setData({ error: true, chats: [], unread_total: 0 });
+        });
+      return;
+    }
     const params = employeeId ? { employee_id: employeeId } : peerQuery(channel);
     axios.get(`${API_URL}/personnel/messages`, { params, withCredentials: true })
       .then((r) => setData(r.data))
       .catch((err) => setData(err.response?.status === 403 ? { mode: "none", thread: [], inbox: [] } : null));
-  }, [channel, employeeId]);
+  }, [channel, employeeId, overview]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setChannel(employeeId ? { kind: "emp", id: employeeId } : null); }, [employeeId]);
@@ -147,10 +254,12 @@ export function StaffMessagesPanel({
     try { localStorage.setItem(MESSAGES_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* ignore */ }
   };
   useEffect(() => {
+    if (overview) return undefined;
     const peer = employeeId ? { kind: "emp", id: employeeId } : channel;
-    if (!peer?.id) return;
+    if (!peer?.id) return undefined;
     axios.post(`${API_URL}/personnel/messages/read`, peerPostBody(peer), { withCredentials: true }).catch(() => {});
-  }, [channel, employeeId]);
+    return undefined;
+  }, [channel, employeeId, overview]);
 
   const managers = data?.managers || [];
   const selfId = data?.self_user_id || "";
@@ -288,6 +397,8 @@ export function StaffMessagesPanel({
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   };
 
+  if (overview) return <OverviewCard testId={testId} data={data} />;
+
   if (data?.mode === "none") return null;
 
   if (!data) {
@@ -295,20 +406,6 @@ export function StaffMessagesPanel({
       <div className="bg-white border border-violet-200 rounded-[20px] p-2.5 text-xs text-slate-400 flex items-center gap-2" data-testid={testId}>
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Mesajlar yükleniyor…
       </div>
-    );
-  }
-
-  if (slimWhenEmpty && !locked && !showThread && !badge) {
-    return (
-      <Link
-        to="/personelim"
-        className="bg-white rounded-2xl border border-slate-200 px-4 py-2.5 flex items-center gap-2 hover:bg-slate-50"
-        data-testid={testId}
-      >
-        <MessageSquare className="w-4 h-4 text-violet-600 shrink-0" />
-        <span className="text-sm font-bold text-slate-900">Mesajlar</span>
-        <span className="ml-auto text-xs text-slate-400">Yeni mesaj yok · Mesajlara git ›</span>
-      </Link>
     );
   }
 
@@ -338,7 +435,7 @@ export function StaffMessagesPanel({
           </div>
         </div>
         {badge > 0 && !showThread ? (
-          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white" data-testid={`${testId}-unread`}>{badge}</span>
+          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white" data-testid={`${testId}-panel-unread`}>{badge}</span>
         ) : null}
         {!locked && !showThread && !collapsed ? (
           <button

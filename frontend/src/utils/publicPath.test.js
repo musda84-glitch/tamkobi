@@ -33,6 +33,7 @@ test("ERP shell paths are not public", () => {
 test("unknown paths skip login so SPA 404 can render", () => {
   expect(requiresSession("/bu-yol-yok")).toBe(false);
   expect(requiresSession("/panel")).toBe(true);
+  expect(requiresSession("/mesajlar")).toBe(true);
   expect(requiresSession("/invoices")).toBe(true);
   expect(requiresSession("/yardim")).toBe(true);
   expect(requiresSession("/vpos/result/abc")).toBe(true);

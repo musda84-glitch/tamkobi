@@ -7,6 +7,7 @@ export const SELF_PERSONNEL_PATHS = ["/personelim", "/mesai"];
 export const PERSONEL_MENU_PATHS = [
   "/",
   "/panel",
+  "/mesajlar",
   "/mesai",
   "/personelim",
   "/communication",

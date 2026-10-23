@@ -36,6 +36,7 @@ describe("authAccess fail-closed", () => {
   test("authPermPath aliases panel and personelim", () => {
     expect(authPermPath("/panel")).toBe("/");
     expect(authPermPath("/personelim")).toBe("/mesai");
+    expect(authPermPath("/mesajlar")).toBe("/");
     expect(authPermPath("/orders")).toBe("/orders");
   });
 

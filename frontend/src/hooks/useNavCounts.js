@@ -14,10 +14,11 @@ export function useNavCounts(companyId) {
     if (!companyId) return;
     try {
       const params = { company_id: companyId };
-      const [pending, overview, ops] = await Promise.all([
+      const [pending, overview, ops, messages] = await Promise.all([
         axios.get(`${API_URL}/personnel/pending-requests`, { params }).catch(() => null),
         axios.get(`${API_URL}/dashboard/overview`, { params }).catch(() => null),
         axios.get(`${API_URL}/dashboard/ops-alerts`, { params }).catch(() => null),
+        axios.get(`${API_URL}/personnel/messages/panel`, { params: { limit: 1 } }).catch(() => null),
       ]);
       const next = {};
       const pc = Number(pending?.data?.count || 0);
@@ -28,6 +29,9 @@ export function useNavCounts(companyId) {
       const newOrders = Number((ops?.data?.groups || []).find((g) => g.key === "new_orders")?.count || 0);
       const orderCount = Math.max(pendingOrders, newOrders);
       if (orderCount > 0) next["/orders"] = orderCount;
+
+      const unread = Number(messages?.data?.unread_total || 0);
+      if (unread > 0) next["/mesajlar"] = unread;
 
       setCounts(next);
     } catch {

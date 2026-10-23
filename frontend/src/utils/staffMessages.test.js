@@ -20,7 +20,10 @@ import {
   chatClockLabel,
   chatDayLabel,
   chatInitials,
+  chatListPreview,
   chatPeer,
+  clipChatPreview,
+  orderedPeerGroups,
   chatTimeLabel,
   filterChatList,
   isOwnMessage,
@@ -101,6 +104,13 @@ describe("staffMessages", () => {
     expect(chats.map((c) => c.key)).toEqual(["m:u1", "g:g1", "a:a1"]);
     expect(filterChatList(chats, "montaj").map((c) => c.id)).toEqual(["g1"]);
     expect(chatPeer(chats[0])).toEqual({ kind: "manager", id: "u1" });
+    expect(chatListPreview({ last: { body: "gel", from_user_id: "me" }, own: true }, "me")).toBe("Siz: gel");
+    expect(chatListPreview({ last: { body: "selam", from_user_id: "u2" }, preview: "selam" }, "me")).toBe("selam");
+    expect(clipChatPreview("a".repeat(80), 10).endsWith("…")).toBe(true);
+    expect(orderedPeerGroups([
+      { label: "Personel", options: [] },
+      { label: "Yöneticiler", options: [] },
+    ]).map((g) => g.label)).toEqual(["Yöneticiler", "Personel"]);
     expect(chatPeer(chats[2])).toBeNull();
     expect(isOwnMessage({ from_side: "staff", from_user_id: "me" }, "me", "both")).toBe(true);
     expect(isOwnMessage({ from_side: "manager" }, "x", "staff")).toBe(false);

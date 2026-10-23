@@ -45,6 +45,7 @@ const BASE_MENU = [
   { label: "Üretim & Reçete (BOM)", path: "/production" },
   { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
   { label: "Personel & Bordro", path: "/personnel" },
+  { label: "Mesajlar", path: "/mesajlar" },
   { label: "Benim Sayfam", path: "/personelim", badge: "Self" },
   { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
   { label: "İletişim: Mail & SMS", path: "/communication", badge: "SMS" },

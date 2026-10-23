@@ -147,7 +147,7 @@ export default function Dashboard() {
         </Link>
       ) : null}
       <div className={staffHome ? "xl:col-span-2" : "xl:col-span-3"}>
-        <StaffMessagesPanel compact slimWhenEmpty testId="dashboard-messages" />
+        <StaffMessagesPanel variant="overview" testId="dashboard-messages" />
       </div>
     </div>
   );
