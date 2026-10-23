@@ -21,6 +21,9 @@ class _Cursor:
     def sort(self, *args, **kwargs):
         return self
 
+    def limit(self, n=None):
+        return self
+
     async def to_list(self, n=None):
         rows = self.rows if n is None else self.rows[:n]
         return [dict(r) for r in rows]
@@ -103,6 +106,8 @@ class FakeDB:
         self.bank_transactions = FakeColl()
         self.partner_transactions = FakeColl()
         self.counters = FakeColl()
+        self.companies = FakeColl()
+        self.einvoice_settings = FakeColl()
         self.idempotency_keys = None
 
     def __getitem__(self, name):
@@ -181,6 +186,8 @@ def test_two_dispatches_become_one_draft_with_two_despatch_refs():
         "d2", "IRS-2", order_id="o2", order_number="SIP-2", issue_date="2026-10-03",
         dispatch_status="sent", einvoice_state="sent",
         gib_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        gib_invoice_id="GIB2026000002",
+        gib_issue_date="2026-10-04",
         items=[_item("Kalem C", 3)],
     )
     _seed(db, [d1, d2], [
@@ -220,9 +227,11 @@ def test_two_dispatches_become_one_draft_with_two_despatch_refs():
         {"name": "Satıcı", "tax_number": "1234567801", "city": "İstanbul", "address": "A"},
         {"name": "Alıcı", "tax_number_or_id": "1234567890", "city": "Ankara"},
     ).decode()
-    assert xml.count("<cac:DespatchDocumentReference>") == 2
-    assert "IRS-1" in xml and "IRS-2" in xml
-    assert "2026-10-01" in xml and "2026-10-03" in xml
+    assert xml.count("<cac:DespatchDocumentReference>") == 1
+    assert "GIB2026000002" in xml
+    assert "2026-10-04" in xml
+    assert "<cbc:DocumentTypeCode>IRSALIYE</cbc:DocumentTypeCode>" not in xml
+    assert inv.get("despatch_gib_ids") == ["GIB2026000002"]
     assert doc["invoice_number"] == inv["invoice_number"]
 
     async def _warn():
@@ -340,9 +349,10 @@ def test_delete_draft_releases_dispatches_and_orders():
     d2 = _dispatch("d2", "IRS-2", order_id="o2", dispatch_status="sent", einvoice_state="sent")
     _seed(db, [d1, d2], [
         {"_id": "o1", "company_id": "c1"},
-        {"_id": "o2", "company_id": "c1", "is_invoiced": True},
+        {"_id": "o2", "company_id": "c1"},
     ])
     doc = _run(_merge(server, db, ["d1", "d2"]))
+    next(x for x in db.orders.docs if x["_id"] == "o2")["is_invoiced"] = True
 
     async def _delete():
         with patch.object(server, "db", db), patch.object(
@@ -532,3 +542,309 @@ def test_single_convert_uses_merge_and_keeps_exists_and_linked():
     fresh_row = next(x for x in db.invoices.docs if x["_id"] == "d-new")
     assert fresh_row["dispatch_status"] == "invoiced"
     assert fresh_row["converted_invoice_number"] == created["invoice"]["invoice_number"]
+
+
+def test_vat_rate_keeps_explicit_zero_and_defaults_missing():
+    import dispatch_invoice
+
+    assert dispatch_invoice.vat_rate_for_line({"vat_rate": 0}, {}) == 0
+    assert dispatch_invoice.vat_rate_for_line({"vat_rate": "0"}, {}) == 0
+    assert dispatch_invoice.vat_rate_for_line({}, {}) == 20
+    assert dispatch_invoice.vat_rate_for_line({"vat_rate": None}, {}) == 20
+    assert dispatch_invoice.vat_rate_for_line({"product_id": "p", "vat_rate": 0}, {"p": {"vat_rate": 10}}) == 10
+    assert dispatch_invoice.vat_rate_for_line({"product_id": "p", "vat_rate": 0}, {"p": {"vat_rate": 0}}) == 0
+
+
+def test_marketplace_intake_drafts_collapse_and_repeat_is_idempotent():
+    import server
+
+    db = FakeDB()
+    draft = {
+        "_id": "draft-old",
+        "company_id": "c1",
+        "invoice_type": "sales",
+        "invoice_number": "TA-OLD",
+        "status": "draft",
+        "einvoice_state": "draft",
+        "order_id": "o1",
+        "grand_total": 10,
+    }
+    d1 = _dispatch(
+        "d1", "IRS-1", order_id="o1", order_number="SIP-1", currency="TRY", fx_rate=1,
+        source_channel="trendyol", shipping_address="Adres 1", city="İstanbul",
+        customer_order_number="TY-100", payment_method="Kredi Kartı",
+        items=[_item("Kalem A", 1, price=80, discount=0)],
+    )
+    d2 = _dispatch(
+        "d2", "IRS-2", order_id="o1", order_number="SIP-1", currency="TRY", fx_rate=1,
+        source_channel="trendyol",
+        items=[_item("Kalem B", 1, price=40, discount=0)],
+    )
+    order = {
+        "_id": "o1",
+        "company_id": "c1",
+        "order_number": "SIP-1",
+        "channel": "trendyol",
+        "invoice_id": "draft-old",
+        "invoice_number": "TA-OLD",
+        "is_invoiced": False,
+        "customer_order_number": "TY-100",
+        "payment_method": "Kredi Kartı",
+        "shipping_address": "Adres 1",
+        "city": "İstanbul",
+    }
+    _seed(db, [draft, d1, d2], [order])
+    db.contacts.docs[0]["tax_office"] = "Kadıköy"
+    first = _run(_merge(server, db, ["d1", "d2"]))
+    second = _run(_merge(server, db, ["d1", "d2"]))
+    drafts = [d for d in _sales(db) if str(d.get("status") or "") == "draft"]
+    assert len(drafts) == 1
+    assert drafts[0]["_id"] == first["_id"] == second["_id"]
+    assert all(d["_id"] != "draft-old" for d in db.invoices.docs)
+    saved = next(x for x in db.orders.docs if x["_id"] == "o1")
+    assert saved["invoice_id"] == first["_id"]
+    assert saved["invoice_number"] == first["invoice_number"]
+    assert saved.get("is_invoiced") is not True
+    assert first.get("internet_sale") == "EVET"
+    assert first.get("customer_order_number") == "TY-100"
+    assert first.get("payment_method") == "Kredi Kartı"
+    assert first.get("shipping_address") == "Adres 1"
+    assert first.get("contact_tax_office") == "Kadıköy"
+
+
+def test_merge_blocks_issued_order_and_non_draft_invoice():
+    import server
+
+    async def _expect(order, code, needle):
+        db = FakeDB()
+        d1 = _dispatch("d1", "IRS-1", order_id="o1", currency="TRY", fx_rate=1, items=[_item("A", 1)])
+        _seed(db, [d1], [order])
+        with patch.object(server, "db", db), pytest.raises(HTTPException) as exc:
+            await server._merge_dispatches_core(["d1"], USER, company_id="c1")
+        assert exc.value.status_code == code
+        assert needle in exc.value.detail
+        assert len(_sales(db)) == (1 if order.get("invoice_id") == "sf-live" else 0)
+
+    issued = {
+        "_id": "o1", "company_id": "c1", "order_number": "SIP-1",
+        "is_invoiced": True, "invoice_id": None,
+    }
+    _run(_expect(issued, 409, "faturalanmış"))
+    live = {
+        "_id": "sf-live", "company_id": "c1", "invoice_type": "sales",
+        "invoice_number": "TA-LIVE", "status": "approved", "einvoice_state": "sent",
+    }
+    order = {
+        "_id": "o1", "company_id": "c1", "order_number": "SIP-1",
+        "is_invoiced": False, "invoice_id": "sf-live", "invoice_number": "TA-LIVE",
+    }
+
+    async def _live():
+        db = FakeDB()
+        d1 = _dispatch("d1", "IRS-1", order_id="o1", currency="TRY", fx_rate=1, items=[_item("A", 1)])
+        _seed(db, [d1, live], [order])
+        with patch.object(server, "db", db), pytest.raises(HTTPException) as exc:
+            await server._merge_dispatches_core(["d1"], USER, company_id="c1")
+        return exc.value, db
+
+    err, db = _run(_live())
+    assert err.status_code == 409
+    assert "taslak değil" in err.detail
+    assert any(d["_id"] == "sf-live" for d in db.invoices.docs)
+    assert len([d for d in _sales(db) if d.get("status") == "draft"]) == 0
+
+
+def _zero_vat_order():
+    line = {
+        "product_id": "p0",
+        "product_name": "İhracat",
+        "quantity": 2,
+        "unit": "Adet",
+        "unit_price": 100,
+        "unit_price_incl": 100,
+        "vat_rate": 0,
+        "discount_rate": 10,
+        "sku": "SKU0",
+        "barcode": "8690000000001",
+        "price_includes_vat": False,
+        "total": 180,
+    }
+    return {
+        "_id": "o-fx",
+        "company_id": "c1",
+        "order_number": "SIP-FX",
+        "contact_id": "ct1",
+        "customer_name": "Cari A",
+        "channel": "manual",
+        "currency": "EUR",
+        "fx_rate": 36.5,
+        "fx_source": "manual",
+        "shipping_address": "Adres",
+        "city": "İstanbul",
+        "subtotal": 180,
+        "vat_total": 0,
+        "discount_total": 20,
+        "grand_total": 180,
+        "items": [line],
+    }
+
+
+def test_dispatch_and_merge_keep_zero_vat_discount_and_currency():
+    import server
+
+    db = FakeDB()
+    order = _zero_vat_order()
+    db.orders.docs.append(order)
+    db.products.docs.append({"_id": "p0", "company_id": "c1", "vat_rate": 0, "unit": "Adet", "sku": "SKU0", "barcode": "8690000000001"})
+    db.contacts.docs.append({
+        "_id": "ct1", "company_id": "c1", "name": "Cari A",
+        "tax_number_or_id": "1234567890", "tax_office": "Kadıköy", "balance": 0,
+    })
+
+    async def _go():
+        with patch.object(server, "db", db):
+            created = await server.create_dispatch("o-fx", USER)
+            merged = await server._merge_dispatches_core([created["dispatch"]["id"]], USER, company_id="c1")
+            return created, merged
+
+    created, merged = _run(_go())
+    disp = next(x for x in db.invoices.docs if x.get("invoice_type") == "dispatch")
+    line = disp["items"][0]
+    assert int(line["vat_rate"]) == 0
+    assert float(line["discount_rate"]) == 10
+    assert line["sku"] == "SKU0"
+    assert line["barcode"] == "8690000000001"
+    assert "unit_price_incl" in line
+    assert disp["currency"] == "EUR"
+    assert float(disp["fx_rate"]) == 36.5
+    assert float(disp["subtotal"]) == 180
+    assert float(disp["vat_total"]) == 0
+    assert float(disp["grand_total"]) == 180
+    assert merged["currency"] == "EUR"
+    assert float(merged["fx_rate"]) == 36.5
+    assert float(merged["grand_total"]) == 180
+    assert float(merged["vat_total"]) == 0
+    assert float(merged["subtotal"]) == 180
+    assert int(merged["items"][0]["vat_rate"]) == 0
+    assert float(merged["items"][0]["discount_rate"]) == 10
+    saved = db.orders.docs[0]
+    assert saved["invoice_id"] == merged["_id"]
+
+
+def test_issue_rejects_draft_dispatch_and_ubl_uses_gib_number_once():
+    import e_invoice
+    import server
+    import ubl_export
+
+    db = FakeDB()
+    d_draft = _dispatch("d1", "IRS-1", currency="TRY", fx_rate=1, items=[_item("A", 1, discount=0)])
+    d_ok = _dispatch(
+        "d2", "IRS-2", currency="TRY", fx_rate=1,
+        dispatch_status="sent", einvoice_state="sent",
+        gib_uuid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        gib_invoice_id="GIB2026000009",
+        gib_issue_date="2026-10-09",
+        items=[_item("B", 1, discount=0)],
+    )
+    _seed(db, [d_draft, d_ok])
+    merged = _run(_merge(server, db, ["d2"]))
+    stored = next(x for x in db.invoices.docs if x["_id"] == merged["_id"])
+    stored["dispatch_ids"] = ["d1"]
+    stored["dispatch_id"] = "d1"
+    prev = e_invoice._db
+    e_invoice._db = db
+
+    async def _reject():
+        with pytest.raises(HTTPException) as exc:
+            await e_invoice.issue_invoice(merged["_id"], company_id="c1")
+        return exc.value
+
+    try:
+        draft_err = _run(_reject())
+    finally:
+        e_invoice._db = prev
+    assert draft_err.status_code == 409
+    assert "gönderilmemiş" in draft_err.detail
+    assert "IRS-1" in draft_err.detail
+
+    async def _refs():
+        row = dict(merged)
+        row["dispatch_ids"] = ["d2"]
+        row["dispatch_id"] = "d2"
+        return await server.dispatch_invoice.attach_official_despatch_refs(db, row)
+
+    stamped = _run(_refs())
+    xml = ubl_export.build_invoice_ubl(
+        stamped,
+        {"name": "Satıcı", "tax_number": "1234567801", "city": "İstanbul", "address": "A"},
+        {"name": "Alıcı", "tax_number_or_id": "1234567890", "city": "Ankara"},
+    ).decode()
+    assert xml.count("<cac:DespatchDocumentReference>") == 1
+    assert xml.count("GIB2026000009") == 1
+    assert "2026-10-09" in xml
+    assert "IRS-2" not in xml.split("<cac:DespatchDocumentReference>")[1].split("</cac:DespatchDocumentReference>")[0]
+    assert "<cbc:DocumentTypeCode>IRSALIYE</cbc:DocumentTypeCode>" not in xml
+
+
+ERSAY = "ERSAY HOME ÜRETİM TEDARİK İÇ VE DIŞ TİCARET LİMİTED ŞTİ."
+
+
+def test_merge_and_convert_do_not_create_b2b_order():
+    """Alıcı ünvanı başka bir TamKobi şirketi olsa da birleştirme ve dönüşüm sipariş açmaz."""
+    import server
+
+    db = FakeDB()
+    db.companies.docs.append({"_id": "comp_9039c0ec", "name": ERSAY})
+    shelf = _item("Duvar Rafı", 2, price=4567.08, discount=0)
+    d1 = _dispatch(
+        "d1", "IRS-1", order_id="o1", order_number="SIP-1",
+        contact_name=ERSAY, items=[shelf], currency="TRY", fx_rate=1, fx_source="manual",
+    )
+    d2 = _dispatch(
+        "d2", "IRS-2", order_id="o2", order_number="SIP-2",
+        contact_name=ERSAY, items=[_item("Duvar Rafı", 1, price=1826.84, discount=0)],
+        currency="TRY", fx_rate=1, fx_source="manual",
+    )
+    d3 = _dispatch(
+        "d3", "IRS-3", order_id="o3", order_number="SIP-3",
+        contact_name=ERSAY, items=[dict(shelf)],
+        currency="TRY", fx_rate=1, fx_source="manual",
+        general_discount_rate=0,
+    )
+    _seed(db, [d1, d2, d3], [
+        {
+            "_id": "o1", "company_id": "c1", "invoice_id": None, "is_invoiced": False,
+            "order_number": "SIP-1", "contact_id": "ct1", "customer_name": ERSAY,
+            "channel": "manual", "order_status": "approved",
+            "items": [{"product_id": "p1", "product_name": "Duvar Rafı", "quantity": 2, "unit_price": 100, "vat_rate": 20, "total": 200}],
+            "currency": "TRY", "subtotal": 200, "vat_total": 40, "grand_total": 240,
+        },
+        {
+            "_id": "o2", "company_id": "c1", "invoice_id": None, "is_invoiced": False,
+            "order_number": "SIP-2", "contact_id": "ct1", "customer_name": ERSAY,
+            "channel": "b2b", "order_status": "approved",
+        },
+        {
+            "_id": "o3", "company_id": "c1", "invoice_id": None, "is_invoiced": False,
+            "order_number": "SIP-3", "contact_id": "ct1", "customer_name": ERSAY,
+            "channel": "manual", "order_status": "approved",
+        },
+    ])
+    db.contacts.docs[0]["name"] = ERSAY
+
+    async def _go():
+        with patch.object(server, "db", db):
+            merged = await server._merge_dispatches_core(["d1", "d2"], USER, company_id="c1")
+            after_merge = [o["_id"] for o in db.orders.docs]
+            converted = await server.convert_dispatch_to_invoice("d3", {}, USER)
+            dispatched = await server.create_dispatch("o1", USER)
+        return merged, converted, dispatched, after_merge
+
+    merged, converted, dispatched, after_merge = _run(_go())
+    assert [o["_id"] for o in db.orders.docs] == ["o1", "o2", "o3"]
+    assert after_merge == ["o1", "o2", "o3"]
+    assert [o.get("order_number") for o in db.orders.docs] == ["SIP-1", "SIP-2", "SIP-3"]
+    assert not any(str(c.get("_id") or "").startswith("B2B-") for c in db.counters.docs)
+    assert merged["contact_name"] == ERSAY
+    assert converted["status"] == "success"
+    assert dispatched["status"] in ("success", "exists")

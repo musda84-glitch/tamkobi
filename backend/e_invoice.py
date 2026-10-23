@@ -761,6 +761,13 @@ async def issue_invoice(
     if invoice_already_submitted(inv):
         raise HTTPException(status_code=409, detail=ALREADY_SUBMITTED_DETAIL)
 
+    if inv.get("invoice_type") != "dispatch":
+        import dispatch_invoice as _dispatch_refs
+        try:
+            inv = await _dispatch_refs.attach_official_despatch_refs(_db, inv)
+        except _dispatch_refs.MergeBlocked as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
     inv = await apply_issue_stamp(
         invoice_id,
         inv,
