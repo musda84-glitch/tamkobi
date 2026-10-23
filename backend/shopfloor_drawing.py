@@ -80,8 +80,12 @@ def safe_storage_path(path: Any) -> str:
     return norm
 
 
+# Belge olarak açılan SVG'de betik yok. style-src satır içi sunumu bozmasın.
+DISPLAY_SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+
+
 def is_active_svg(media: Any, path: Any, data: Any = None) -> bool:
-    """SVG, tarayıcıda betik çalıştırabilir. İmzalı indirmede etkin içerik sayılmaz."""
+    """SVG, tarayıcıda betik çalıştırabilir. Düz sunum CSP ile, imzalı indirme ek olarak kapanır."""
     ctype = str(media or "").split(";")[0].strip().lower()
     if ctype == "image/svg+xml":
         return True
@@ -95,6 +99,33 @@ def is_active_svg(media: Any, path: Any, data: Any = None) -> bool:
     if head.startswith(b"<?xml") and b"<svg" in head:
         return True
     return False
+
+
+def serves_as_svg_image(media: Any, path: Any) -> bool:
+    """Tür veya uzantı SVG ise yanıt image/svg+xml kalır; <img> logo ve ürün görselini çizer."""
+    ctype = str(media or "").split(";")[0].strip().lower()
+    if ctype == "image/svg+xml":
+        return True
+    clean = str(path or "").split("?", 1)[0].strip().lower()
+    return clean.endswith(".svg")
+
+
+def display_svg_response_headers() -> dict:
+    """<img> içinde kalsın. Üst düzey gezinmede sandbox betiği çalıştırmaz."""
+    return {
+        "Content-Security-Policy": DISPLAY_SVG_CSP,
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "public, max-age=86400",
+    }
+
+
+def sniffed_svg_response_headers() -> dict:
+    """Gövde SVG, ilan edilen tür değil. nosniff yeniden yorumlamayı keser."""
+    return {
+        "Content-Security-Policy": DISPLAY_SVG_CSP,
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "public, max-age=86400",
+    }
 
 
 def signed_svg_response_headers() -> dict:
