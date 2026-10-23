@@ -782,8 +782,9 @@ def test_rollback_refuses_when_source_is_gone(tmp_path, monkeypatch):
         await _seed(world, "legacy")
         report = await storage_move.apply_move(world.db, world.company_id, "shared_v2")
         assert report.ok
-        for name in ("orders", "products", "invoices"):
-            await world.db[name].delete_many({"company_id": world.company_id})
+        with storage_router.bypass_write_lock(world.company_id):
+            for name in ("orders", "products", "invoices"):
+                await world.db[name].delete_many({"company_id": world.company_id})
         back = await storage_move.rollback_move(world.db, report.move_id)
         assert back.ok is False
         assert "durmuyor" in back.errors[0]
