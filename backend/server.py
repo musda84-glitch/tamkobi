@@ -130,7 +130,8 @@ from invoice_status import is_cancelled_invoice
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
 from expense_extract import extract_expense_file, public_expense_match
 from receipt_extract import extract_receipt_file
-from storage_service import init_storage, put_object, get_object, APP_NAME
+from storage_service import init_storage, put_object, get_object, stat_object, APP_NAME
+import file_cache
 import image_opt
 import bank_providers
 import bank_guard
@@ -9446,13 +9447,19 @@ async def _store_product_image_bytes(
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya HEIC yükleyebilirsiniz.")
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
-    opt = image_opt.optimize_product_upload(data, content_type, filename or "")
+    opt = await asyncio.to_thread(image_opt.optimize_product_upload, data, content_type, filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     company_id = str(product.get("company_id") or "").strip()
     if not company_id:
         raise HTTPException(status_code=400, detail="Kayıtta firma bilgisi yok.")
-    thumb = image_opt.make_thumbnail(data, content_type, filename or "")
-    extra = len(data) + (len(thumb.data) if thumb and thumb.data else 0)
+    derived = []
+    for edge in (200, 600):
+        thumb = await asyncio.to_thread(
+            image_opt.make_thumbnail, data, content_type, filename or "", edge, 70, "webp",
+        )
+        if thumb and thumb.data:
+            derived.append((edge, thumb))
+    extra = len(data) + sum(len(thumb.data) for _edge, thumb in derived)
     await saas.check_storage_limit(company_id, extra)
     try:
         import storage_manager
@@ -9463,7 +9470,7 @@ async def _store_product_image_bytes(
         path = f"{APP_NAME}/products/{company_id}/{uuid.uuid4()}.{ext}"
         area_key = "products"
     try:
-        result = put_object(path, data, content_type)
+        result = await asyncio.to_thread(put_object, path, data, content_type)
     except Exception as e:
         logger.exception("Image upload failed path=%s: %s", path, e)
         raise HTTPException(status_code=502, detail=f"Görsel depolama servisine yüklenemedi: {e}")
@@ -9484,18 +9491,17 @@ async def _store_product_image_bytes(
     })
     image_url = f"/api/files/{result['path']}"
     thumbnail_url = None
-    if thumb and thumb.data:
+    for edge, thumb in derived:
+        cache_key = image_opt.resize_cache_path(result["path"], edge, thumb.ext)
+        if not cache_key or cache_key == result["path"]:
+            continue
         try:
-            try:
-                import storage_manager as _sm
-                thumb_path = _sm.object_path(company_id, "product", thumb.ext)
-            except Exception:
-                thumb_path = f"{APP_NAME}/products/{company_id}/thumbs/{uuid.uuid4()}.{thumb.ext}"
-            thumb_res = put_object(thumb_path, thumb.data, thumb.content_type)
+            file_cache.forget(cache_key)
+            thumb_res = await asyncio.to_thread(put_object, cache_key, thumb.data, thumb.content_type)
             await db.files.insert_one({
                 "_id": str(uuid.uuid4()),
                 "storage_path": thumb_res["path"],
-                "original_filename": f"thumb_{filename or 'image'}.{thumb.ext}",
+                "original_filename": f"thumb_{edge}_{filename or 'image'}.{thumb.ext}",
                 "content_type": thumb.content_type,
                 "size": thumb_res.get("size", len(thumb.data)),
                 "original_size": opt.original_size,
@@ -9507,10 +9513,10 @@ async def _store_product_image_bytes(
                 "is_deleted": False,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
-            thumbnail_url = f"/api/files/{thumb_res['path']}"
+            if edge == 200:
+                thumbnail_url = f"/api/files/{thumb_res['path']}"
         except Exception as e:
-            logger.warning("Product thumbnail upload failed product=%s: %s", product_id, e)
-            thumbnail_url = None
+            logger.warning("Product thumbnail upload failed product=%s edge=%s: %s", product_id, edge, e)
     if variant_id:
         vset = {"variants.$.image_url": image_url}
         if thumbnail_url:
@@ -9621,7 +9627,31 @@ def _file_thumb_fmt(fmt: Optional[str]) -> str:
     return "webp"
 
 
-@api_router.get("/files/{path:path}")
+def _file_is_head(request) -> bool:
+    return str(getattr(request, "method", "GET") or "GET").upper() == "HEAD"
+
+
+def _file_response(body: bytes, media: str, headers: dict, *, head: bool, status: int = 200, content_length: Optional[int] = None):
+    hdrs = dict(headers or {})
+    if status == 304:
+        return Response(status_code=304, content=b"", headers=hdrs)
+    if head:
+        length = content_length if content_length is not None else len(body or b"")
+        hdrs["Content-Length"] = str(length)
+        return Response(status_code=200, content=b"", media_type=media, headers=hdrs)
+    return Response(content=body, media_type=media, headers=hdrs, status_code=status)
+
+
+def _cached_file_headers(base: dict, *, public: bool, etag: str, mtime: Optional[float] = None) -> dict:
+    return file_cache.apply_validators(base, public=public, etag=etag, mtime=mtime)
+
+
+async def _file_record(path: str):
+    # tenant-ok: depolama yolu oturumsuz dosya anahtarıdır; oturum yokken şirket bilinmez, hassas alanda yetki kayıt company_id ile doğrulanır
+    return await db.files.find_one({"storage_path": path, "is_deleted": False})
+
+
+@api_router.api_route("/files/{path:path}", methods=["GET", "HEAD"])
 async def serve_file(
     path: str,
     request: Request,
@@ -9629,7 +9659,7 @@ async def serve_file(
     fmt: Optional[str] = Query(None),
     t: Optional[str] = Query(None),
 ):
-    """Dosya sunumu. w=64|128|320 küçültür. fmt=jpg|png|webp (e-posta JPEG/PNG).
+    """Dosya sunumu. w=64|128|200|600 küçültür. fmt=jpg|png|webp (e-posta JPEG/PNG).
 
     Herkese açık alanlar (ürün görseli, logo, teklif/proje görseli, …) eskisi gibi
     tokensız sunulur. Hassas alanlar (alış/satış faturası, e-belge, gider, destek)
@@ -9637,13 +9667,19 @@ async def serve_file(
     Yol, depolama anahtarıyla aynı şekilde normalize edilir (`./`, `..`, `%2E`, ters eğik çizgi).
     SVG image/svg+xml kalır ki <img> çizebilsin; CSP sandbox betiği kapatır, nosniff türü kilitler.
     İmzalı ?t= indirmesi ek olarak iner. Dosya gövdesi ve t sorgu değeri loglanmaz.
+    Değişmeyen gövde uzun Cache-Control + ETag / Last-Modified ile 304 döner.
+    Yetkili dosyada Cache-Control private'dır. HEAD gövde okumadan başlık verir.
+    Okuma ve küçültme event loop dışında çalışır. Orijinal nesnenin üzerine yazılmaz.
     """
     path = rbac.normalized_file_storage_path(path)
     if not path:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    head = _file_is_head(request)
+    public = rbac.file_public_area(path)
     # tenant-ok: depolama yolu oturumsuz dosya anahtarıdır; oturum yokken şirket bilinmez, hassas alanda yetki kayıt company_id ile doğrulanır
-    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
-    if not rbac.file_public_area(path):
+    record = None
+    if not public:
+        record = await _file_record(path)
         if record is None:
             raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
         import signed_links
@@ -9654,86 +9690,176 @@ async def serve_file(
                 user = None
             if not tenant_access.user_may_access_company(user, record.get("company_id")):
                 raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
-    # Önce cache: hit olursa orijinali storage'dan hiç okuma
     thumb_fmt = _file_thumb_fmt(fmt) if (w or (fmt or "").strip()) else "webp"
     edge = int(w) if w else (1280 if (fmt or "").strip() else 0)
-    if w or (fmt or "").strip():
+    resizing = bool(w or (fmt or "").strip())
+
+    if resizing:
         cache_key = image_opt.resize_cache_path(path, edge or int(w or 128), thumb_fmt)
         if cache_key != path:
-            try:
-                cached, cached_ct = get_object(cache_key)
-                if cached and len(cached) > 32:
-                    fallback_ct = {"jpg": "image/jpeg", "png": "image/png"}.get(thumb_fmt, "image/webp")
-                    out_ct = cached_ct or fallback_ct
-                    headers = {
-                        "Cache-Control": "public, max-age=604800, immutable",
-                        "Vary": "Accept",
-                        "X-Image-Resize": str(edge or w or ""),
-                        "X-Image-Cache": "hit",
-                    }
-                    if shopfloor_drawing.is_active_svg(out_ct, cache_key, cached):
-                        if shopfloor_drawing.serves_as_svg_image(out_ct, path):
-                            out_ct = "image/svg+xml"
-                            headers.update(shopfloor_drawing.display_svg_response_headers())
-                        else:
-                            headers.update(shopfloor_drawing.sniffed_svg_response_headers())
-                    return Response(content=cached, media_type=out_ct, headers=headers)
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                logger.debug("thumb cache read miss path=%s: %s", cache_key, e)
+            cached_resp = await _serve_cached_thumb(
+                cache_key, path, request, public=public, head=head, edge=edge, w=w, thumb_fmt=thumb_fmt,
+            )
+            if cached_resp is not None:
+                return cached_resp
+
+    meta = None
+    if not resizing:
+        meta = await asyncio.to_thread(stat_object, path)
+        remembered = file_cache.recall(path)
+        if meta is not None:
+            etag = file_cache.etag_for(path, meta.size, meta.mtime)
+            mtime = meta.mtime
+        elif remembered.get("etag"):
+            etag = remembered["etag"]
+            mtime = remembered.get("mtime")
+        else:
+            etag, mtime = "", None
+        if etag and file_cache.not_modified(request, etag, mtime):
+            return _file_response(
+                b"", "application/octet-stream",
+                _cached_file_headers({}, public=public, etag=etag, mtime=mtime),
+                head=head, status=304,
+            )
+        if head and meta is not None:
+            if public and (not meta.content_type or meta.content_type == "application/octet-stream"):
+                record = await _file_record(path)
+            media = (record or {}).get("content_type") or meta.content_type or "application/octet-stream"
+            headers = _cached_file_headers({}, public=public, etag=etag, mtime=mtime)
+            if shopfloor_drawing.serves_as_svg_image(media, path):
+                media = "image/svg+xml"
+                headers.update(shopfloor_drawing.display_svg_response_headers())
+                headers = _cached_file_headers(headers, public=public, etag=etag, mtime=mtime)
+            return _file_response(b"", media, headers, head=True, content_length=meta.size)
+
+    if public and record is None:
+        record = await _file_record(path)
     try:
-        data, content_type = get_object(path)
+        data, content_type = await asyncio.to_thread(get_object, path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     except Exception as e:
-        logger.error(f"File fetch failed: {e}")
+        logger.error("File fetch failed: %s", e)
         raise HTTPException(status_code=502, detail="Dosya alınamadı.")
     media = (record or {}).get("content_type") or content_type or "application/octet-stream"
-    head = data[:240].lstrip().lower()
-    if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
+    sniffed = data[:240].lstrip().lower()
+    if sniffed.startswith(b"<!doctype") or sniffed.startswith(b"<html") or b"413 request entity too large" in sniffed:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
-    if (w or (fmt or "").strip()) and media.startswith("image/") and media != "image/svg+xml":
+    if resizing and str(media).startswith("image/") and media != "image/svg+xml":
         cache_key = image_opt.resize_cache_path(path, edge or int(w or 128), thumb_fmt)
-        thumb = image_opt.make_thumbnail(
+        thumb = await asyncio.to_thread(
+            image_opt.make_thumbnail,
             data, media, path, max_edge=edge or int(w or 128), quality=70, out_fmt=thumb_fmt,
         )
         force_fmt = bool((fmt or "").strip()) and thumb_fmt in ("jpg", "png")
         if thumb and thumb.data and (force_fmt or len(thumb.data) < len(data)):
+            stored_mtime = None
+            stored_size = len(thumb.data)
             if cache_key != path:
                 try:
-                    put_object(cache_key, thumb.data, thumb.content_type)
+                    file_cache.forget(cache_key)
+
+                    def _store_thumb():
+                        put_object(cache_key, thumb.data, thumb.content_type)
+                        return stat_object(cache_key)
+
+                    meta_after = await asyncio.to_thread(_store_thumb)
+                    if meta_after is not None:
+                        stored_mtime = meta_after.mtime
+                        stored_size = meta_after.size or stored_size
                 except Exception as e:
                     logger.debug("thumb cache write failed path=%s: %s", cache_key, e)
-            return Response(
-                content=thumb.data,
-                media_type=thumb.content_type,
-                headers={
-                    "Cache-Control": "public, max-age=604800, immutable",
-                    "Vary": "Accept",
-                    "X-Image-Resize": str(edge or w or ""),
-                    "X-Image-Cache": "miss",
-                },
-            )
+            etag = file_cache.etag_for(cache_key, stored_size, stored_mtime)
+            file_cache.remember(cache_key, etag, stored_mtime, stored_size)
+            headers = _cached_file_headers({
+                "Vary": "Accept",
+                "X-Image-Resize": str(edge or w or ""),
+                "X-Image-Cache": "miss",
+            }, public=public, etag=etag, mtime=stored_mtime)
+            return _file_response(thumb.data, thumb.content_type, headers, head=head)
+    if meta is not None:
+        etag = file_cache.etag_for(path, meta.size, meta.mtime)
+        mtime = meta.mtime
+    else:
+        etag = file_cache.etag_for(path, len(data), None)
+        mtime = None
+        file_cache.remember(path, etag, None, len(data))
     if shopfloor_drawing.is_active_svg(media, path, data):
         if t:
-            return Response(
-                content=data,
-                media_type="application/octet-stream",
-                headers=shopfloor_drawing.signed_svg_response_headers(),
+            return _file_response(
+                data, "application/octet-stream",
+                shopfloor_drawing.signed_svg_response_headers(),
+                head=head,
             )
         if shopfloor_drawing.serves_as_svg_image(media, path):
-            return Response(
-                content=data,
-                media_type="image/svg+xml",
-                headers=shopfloor_drawing.display_svg_response_headers(),
+            headers = _cached_file_headers(
+                shopfloor_drawing.display_svg_response_headers(),
+                public=public, etag=etag, mtime=mtime,
             )
-        return Response(
-            content=data,
-            media_type=media,
-            headers=shopfloor_drawing.sniffed_svg_response_headers(),
+            return _file_response(data, "image/svg+xml", headers, head=head)
+        headers = _cached_file_headers(
+            shopfloor_drawing.sniffed_svg_response_headers(),
+            public=public, etag=etag, mtime=mtime,
         )
-    return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
+        return _file_response(data, media, headers, head=head)
+    headers = _cached_file_headers({}, public=public, etag=etag, mtime=mtime)
+    return _file_response(data, media, headers, head=head)
+
+
+async def _serve_cached_thumb(cache_key, path, request, *, public, head, edge, w, thumb_fmt):
+    """Küçük resim dosyası varsa orijinali okumadan döner. Yoksa None."""
+    resize_headers = {
+        "Vary": "Accept",
+        "X-Image-Resize": str(edge or w or ""),
+        "X-Image-Cache": "hit",
+    }
+    meta = await asyncio.to_thread(stat_object, cache_key)
+    remembered = file_cache.recall(cache_key)
+    if meta is not None and meta.size > 32:
+        etag = file_cache.etag_for(cache_key, meta.size, meta.mtime)
+        mtime = meta.mtime
+    elif remembered.get("etag"):
+        etag = remembered["etag"]
+        mtime = remembered.get("mtime")
+    else:
+        etag, mtime = "", None
+    if etag and file_cache.not_modified(request, etag, mtime):
+        media = (meta.content_type if meta is not None else None) or "image/webp"
+        headers = _cached_file_headers(resize_headers, public=public, etag=etag, mtime=mtime)
+        return _file_response(b"", media, headers, head=head, status=304)
+    if head and meta is not None and meta.size > 32:
+        media = meta.content_type or "image/webp"
+        headers = _cached_file_headers(resize_headers, public=public, etag=etag, mtime=mtime)
+        if shopfloor_drawing.serves_as_svg_image(media, path):
+            media = "image/svg+xml"
+            headers.update(shopfloor_drawing.display_svg_response_headers())
+            headers = _cached_file_headers(headers, public=public, etag=etag, mtime=mtime)
+        return _file_response(b"", media, headers, head=True, content_length=meta.size)
+    try:
+        cached, cached_ct = await asyncio.to_thread(get_object, cache_key)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.debug("thumb cache read miss path=%s: %s", cache_key, e)
+        return None
+    if not cached or len(cached) <= 32:
+        return None
+    fallback_ct = {"jpg": "image/jpeg", "png": "image/png"}.get(thumb_fmt, "image/webp")
+    out_ct = cached_ct or fallback_ct
+    headers = dict(resize_headers)
+    if shopfloor_drawing.is_active_svg(out_ct, cache_key, cached):
+        if shopfloor_drawing.serves_as_svg_image(out_ct, path):
+            out_ct = "image/svg+xml"
+            headers.update(shopfloor_drawing.display_svg_response_headers())
+        else:
+            headers.update(shopfloor_drawing.sniffed_svg_response_headers())
+    size = meta.size if meta is not None else len(cached)
+    mtime = meta.mtime if meta is not None else None
+    etag = file_cache.etag_for(cache_key, size, mtime)
+    if mtime is None:
+        file_cache.remember(cache_key, etag, None, size)
+    headers = _cached_file_headers(headers, public=public, etag=etag, mtime=mtime)
+    return _file_response(cached, out_ct, headers, head=head)
 
 class VariantsUpdateRequest(BaseModel):
     variant_options: List[Dict[str, Any]] = []
@@ -13201,7 +13327,9 @@ async def upload_bank_account_logo(
     content_type = _bank_logo_media_type(data)
     if content_type not in _BANK_LOGO_MIME:
         raise HTTPException(status_code=400, detail="Yalnız PNG, JPEG veya WEBP yükleyebilirsiniz.")
-    thumb = image_opt.make_thumbnail(data, content_type, file.filename or "", max_edge=128)
+    thumb = await asyncio.to_thread(
+        image_opt.make_thumbnail, data, content_type, file.filename or "", max_edge=128,
+    )
     if thumb is None:
         raise HTTPException(status_code=400, detail="Logo işlenemedi. PNG, JPEG veya WEBP yükleyin.")
     url = await _store_company_image(
@@ -22338,7 +22466,7 @@ async def get_order_cargo_label_file(order_id: str, user: dict = Depends(get_cur
     url = resolved.label_url
     if url.startswith("/api/files/"):
         try:
-            data, content_type = get_object(url[len("/api/files/"):])
+            data, content_type = await asyncio.to_thread(get_object, url[len("/api/files/"):])
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Etiket dosyası bulunamadı.")
         return Response(content=data, media_type=content_type or "application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
