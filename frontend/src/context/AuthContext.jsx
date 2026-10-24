@@ -9,6 +9,8 @@ import { authPermPath, canAccessPath, isAddonEnabled, isFeatureEnabled, isModule
 import { setPriceDecimals } from "../utils/money";
 import { getHostKind, hostUrl } from "../utils/hosts";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { logoutEverywhere, subscribeLogout } from "../auth/sessionLogout";
+import { readB2BSession } from "../utils/b2bSession";
 
 const AuthContext = createContext(null);
 
@@ -191,6 +193,24 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
+  const resetClientSession = useCallback(() => {
+    setUser(null);
+    setAuthenticated(false);
+    setLicense(null);
+    setCompanies([]);
+    setActiveCompany(null);
+    setPriceDecimals(2);
+  }, []);
+
+  useEffect(() => subscribeLogout((payload) => {
+    logoutEverywhere({
+      remote: true,
+      dropQueue: payload?.dropQueue !== false,
+      to: payload?.to || "/login",
+      onCleared: resetClientSession,
+    });
+  }), [resetClientSession]);
+
   const applySession = useCallback((data) => {
     if (!data?.user) return;
     setUser(data.user);
@@ -205,7 +225,7 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const login = useCallback(async (email, password, remember = true) => {
+  const login = useCallback(async (email, password, remember = false) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password, remember: !!remember }, { withCredentials: true });
       // Süper admin 2FA ikinci adımı — oturum açılmış sayma; ynt /sistem/giris
@@ -246,19 +266,20 @@ export const AuthProvider = ({ children }) => {
     }
   }, [companies]);
 
-  const logout = useCallback(async (to = "/login") => {
-    try {
-      await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true });
-    } catch (e) {}
-    setUser(null);
-    setAuthenticated(false);
-    setLicense(null);
-    setCompanies([]);
-    setActiveCompany(null);
-    setPriceDecimals(2);
-    toast.info("Oturum kapatıldı.");
-    window.location.href = typeof to === "string" ? to : "/login";
-  }, []);
+  const logout = useCallback(async (to = "/login", options = {}) => {
+    const dest = typeof to === "string" ? to : "/login";
+    const result = await logoutEverywhere({
+      apiUrl: API_URL,
+      to: dest,
+      readB2BSession,
+      onCleared: resetClientSession,
+      force: !!options.force,
+      dropQueue: options.dropQueue,
+      request: (url, body, extra) => axios.post(url, body || {}, { withCredentials: true, ...(extra || {}) }),
+    });
+    if (result?.ok && dest) toast.info("Oturum kapatıldı.");
+    return result;
+  }, [resetClientSession]);
 
   const refreshLicense = useCallback(async (cid) => {
     try {

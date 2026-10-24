@@ -104,6 +104,8 @@ from auth_utils import (
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
     require_secure_jwt_secret, session_token,
     auth_cookie_kwargs, access_cookie_max_age, refresh_cookie_max_age,
+    clear_auth_cookies, client_token_version, request_client_kind, new_session_id,
+    revoke_login_sessions,
 )
 import superadmin_2fa
 import google_auth
@@ -756,7 +758,7 @@ async def _maintenance_write_locked(_request: Request, exc):
 class LoginRequest(BaseModel):
     email: str
     password: str
-    remember: bool = True
+    remember: bool = False
 
 class RegisterRequest(BaseModel):
     name: str
@@ -916,12 +918,16 @@ async def _issue_session_for_user(
     else:
         aud = _ha.audience_for_request(request) or _ha.AUD_APP
 
-    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
+    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi).
+    # Web çıkışı mobile kuşağını, mobil çıkış web kuşağını düşürmez.
+    cli = request_client_kind(request)
+    tv = client_token_version(user, cli)
+    sid = new_session_id()
     token = create_access_token(
         user_id, email, user.get("role", "admin"),
-        is_super_admin=is_sa, mfa=is_sa, aud=aud,
+        is_super_admin=is_sa, mfa=is_sa, aud=aud, token_version=tv, client=cli, sid=sid,
     )
-    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa)
+    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa, token_version=tv, client=cli, sid=sid)
     access_age = access_cookie_max_age(is_super_admin=is_sa, remember=remember)
     refresh_age = refresh_cookie_max_age(is_super_admin=is_sa, remember=remember)
     response.set_cookie(key="access_token", value=token, **auth_cookie_kwargs(request, max_age=access_age))
@@ -4023,7 +4029,7 @@ async def _google_create_company_user(
         email=email, user_email=email, user_id=uid, company_id=cid,
     )
     if kind == _ha.KIND_APP:
-        session = await _issue_session_for_user(user, request, response, remember=bool(req.get("remember", True)))
+        session = await _issue_session_for_user(user, request, response, remember=bool(req.get("remember", False)))
         session["status"] = "success"
         session["company_id"] = cid
         session["message"] = msg
@@ -4058,7 +4064,7 @@ async def auth_google(req: Dict[str, Any], request: Request, response: Response)
     client_ip = request_ip(request)
     await google_auth.enforce_google_ip_rate(db, client_ip)
 
-    remember = bool(req.get("remember", True))
+    remember = bool(req.get("remember", False))
     company_name = (req.get("company_name") or "").strip()
     phone = (req.get("phone") or "").strip()
     pending = (req.get("pending_token") or "").strip()
@@ -4202,15 +4208,19 @@ async def logout(request: Request, response: Response):
     email = None
     uid = None
     try:
-        token = request.cookies.get("access_token") or (
-            request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None
-        )
+        token = session_token(request)
         if token:
             u = await get_user_from_token(token, db)
             email = u.get("email")
             uid = u.get("id") or u.get("_id")
+    except HTTPException:
+        email = None
     except Exception:
-        logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
+        logging.getLogger(__name__).exception("Çıkışta oturum okunamadı")
+    try:
+        await revoke_login_sessions(db, request)
+    except Exception:
+        logging.getLogger(__name__).exception("Çıkışta oturum iptal edilemedi")
     applog.log_auth("logout", f"{email or 'session'} signed out", email=email, user_email=email, user_id=str(uid) if uid else None, ip=applog.client_ip(request))
     if uid:
         try:
@@ -4218,8 +4228,7 @@ async def logout(request: Request, response: Response):
             await company_audit.record_auth(db, u, request, "logout", "Çıkış yapıldı")
         except Exception:
             logging.getLogger(__name__).exception("İşlem geçmişine çıkış yazılamadı")
-    response.delete_cookie("access_token")
-    response.delete_cookie("refresh_token")
+    clear_auth_cookies(response, request)
     return {"status": "success", "message": "Çıkış yapıldı."}
 
 class ChangePasswordRequest(BaseModel):

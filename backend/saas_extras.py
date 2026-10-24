@@ -19,7 +19,7 @@ import saas_billing
 import tenant_access
 from auth_utils import (
     get_jwt_secret, JWT_ALGORITHM, get_user_from_token, session_token,
-    auth_cookie_kwargs, SUPERADMIN_ACCESS_SECONDS,
+    auth_cookie_kwargs, SUPERADMIN_ACCESS_SECONDS, session_claims, client_token_version,
 )
 from client_ip import request_ip
 
@@ -129,6 +129,7 @@ async def start_impersonation(
         "imp_company": company_id,
         "imp_started": session["started_at"],
         "exp": now + timedelta(minutes=minutes),
+        **session_claims(client_token_version(target, "web"), client="web"),
     }
     # aud=app so the handoff cookie is valid on app.tamkobi.com
     payload["aud"] = "app"

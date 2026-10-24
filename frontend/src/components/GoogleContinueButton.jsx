@@ -37,7 +37,7 @@ function loadGisScript() {
 export function GoogleContinueButton({
   onSuccess,
   onNeedsProfile,
-  remember = true,
+  remember = false,
   mode = "login",
   className = "",
   testId = "google-continue",
