@@ -12691,26 +12691,48 @@ async def unpay_installment(inst_id: str, user: dict = Depends(get_current_user)
     inst = await tenant_access.get_tenant_doc(db, "installments", inst_id, user, not_found="Taksit bulunamadı.")
     if float(inst.get("paid_amount") or 0) <= 0 and inst.get("status") not in ("paid", "partial"):
         raise HTTPException(status_code=400, detail="Bu taksit henüz ödenmemiş.")
-    company_id = inst.get("company_id") or user.get("company_id") or ""
+    doc_cid = str(inst.get("company_id") or "").strip()
+    scope_cid = doc_cid or str(user.get("company_id") or "").strip()
     rev = await linked_moves.reverse_linked(
         db, "installment", inst_id, mode="delete", actor=user, reason="installment_unpay",
-        company_id=company_id,
+        company_id=doc_cid or scope_cid,
     )
-    unpaid = await db.installments.update_one(
-        {"_id": inst_id, "company_id": company_id},
-        {"$set": {"paid_amount": 0, "status": "pending", "paid_at": None, "account_id": None}},
-    )
-    await tenant_access.raise_if_unmatched(db, unpaid, company_id, detail="Taksit güncellenemedi.")
-    if inst.get("invoice_id"):
-        paid_count = await db.installments.count_documents({
-            "invoice_id": inst["invoice_id"],
-            "status": "paid",
-            "company_id": company_id,
-        })
-        await db.invoices.update_one(
-            {"_id": inst["invoice_id"], "company_id": company_id},
-            {"$set": {"installment_plan.paid_count": paid_count}},
+    patch = {"$set": {"paid_amount": 0, "status": "pending", "paid_at": None, "account_id": None}}
+    unpaid = None
+    if doc_cid:
+        unpaid = await db.installments.update_one({"_id": inst_id, "company_id": doc_cid}, patch)
+    matched = tenant_access._write_count(unpaid, "matched_count") if unpaid is not None else 0
+    if (unpaid is None or matched == 0) and await tenant_access.legacy_unscoped_ok(db, doc_cid or scope_cid):
+        # tenant-ok: legacy kip, company_id'siz eski taksit
+        unpaid = await db.installments.update_one(  # id-ok: legacy kip, company_id yazılmaz
+            {"_id": inst_id},
+            patch,
         )
+    if unpaid is None:
+        raise HTTPException(status_code=404, detail="Taksit güncellenemedi.")
+    await tenant_access.raise_if_unmatched(db, unpaid, doc_cid or scope_cid, detail="Taksit güncellenemedi.")
+    if inst.get("invoice_id"):
+        if doc_cid:
+            paid_count = await db.installments.count_documents({
+                "invoice_id": inst["invoice_id"],
+                "status": "paid",
+                "company_id": doc_cid,
+            })
+            await db.invoices.update_one(
+                {"_id": inst["invoice_id"], "company_id": doc_cid},
+                {"$set": {"installment_plan.paid_count": paid_count}},
+            )
+        elif await tenant_access.legacy_unscoped_ok(db, scope_cid):
+            # tenant-ok: legacy kip, company_id'siz eski taksit faturası
+            paid_count = await db.installments.count_documents({
+                "invoice_id": inst["invoice_id"],
+                "status": "paid",
+            })
+            # tenant-ok: legacy kip, company_id'siz eski fatura
+            await db.invoices.update_one(  # id-ok: legacy kip, company_id yazılmaz
+                {"_id": inst["invoice_id"]},
+                {"$set": {"installment_plan.paid_count": paid_count}},
+            )
     return {
         "status": "success",
         "message": "Taksit ödemesi geri alındı; bağlı hareketler temizlendi.",
@@ -14058,10 +14080,10 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any], user: dict = 
     new_acc = allowed.get("account_id", tx.get("account_id"))
     if new_type == "inflow" and new_acc and tx.get("source") != "ledger":
         await bank_guard.assert_collection_allowed(db, new_acc)
-    snap = await _snapshot_tx_balances([tx])
+    new_tx = {**tx, **allowed}
+    snap = await _snapshot_tx_balances([tx, new_tx])
     try:
         await _reverse_tx_effects(tx, -1)
-        new_tx = {**tx, **allowed}
         await _reverse_tx_effects(new_tx, +1)
         await db.bank_transactions.update_one({"_id": tx_id, "company_id": tx["company_id"]}, {"$set": allowed})
     except Exception:

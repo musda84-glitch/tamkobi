@@ -17,7 +17,7 @@ bu PR o yolda 0 satırı hata saymaz.
 | --- | --- | --- | --- |
 | Çöp ve hareket silme | backend/trash.py, delete_bank_transaction, delete_partner_transaction | — | #1564 davranışı durur (409, anlık görüntü, geri sarma). |
 | Cari ödeme bakiyesi dedicated depoda | backend/server.py create_bank_transaction ve #1564 silme ucu | P0 yazma | Oluşturma company_id ile gider. Silme #1564 sırasını kullanır: önce çöp, sonra bakiye. |
-| Fatura ve taksit ödemesi telafi silmesi `_id` | backend/server.py _record_invoice_payment_core, pay_installment, unpay_installment | P0 yazma | Sorgu ve telafi `company_id` taşır. unpay aynı şirketin taksitini ve fatura sayacını günceller. 0 eşleşme dedicated'de 404. |
+| Fatura ve taksit ödemesi telafi silmesi `_id` | backend/server.py _record_invoice_payment_core, pay_installment, unpay_installment | P0 yazma | Sorgu ve telafi `company_id` taşır. unpay aynı şirketin taksitini ve fatura sayacını günceller. Legacy/router kapalıyken company_id'siz eski taksit `_id` ile güncellenir. Dedicated'de 0 eşleşme 404. |
 | Cari ortak ödemesi ve virman carisi | backend/server.py _execute_contact_partner_payment, _virman_load_contact | P0 | Aktif company_id ile okunur. Legacy/router kapalıyken company_id'siz eski cari `_id` yedeği durur. |
 | Bağlı masraf başka şirketten silinebiliyordu | backend/server.py _linked_expense_related | P0 okuma | company_id varsa masraf onunla okunur. Legacy/router kapalıyken eski `_id` yedeği durur. |
 | POS kasa bakiyesi katalogda kalıyordu | backend/server.py _pos_checkout_core | P0 yazma | Ürün, lot ve kasa güncellemesi company_id ile. Legacy üründe `_id` yedeği durur. recalc company_id alır. |
@@ -38,12 +38,12 @@ Veri taşınmadı. `current_balance` diske yazılmadı (POS örtüsü `persist=F
 - Ortak hareketi silinirken (#1564) kayıt önce çöpe alınır, sonra kasa etkisi geri sarılır. Etki yarıda kalırsa `_abort_failed_effect` anlık görüntüye döner.
 - `tenant_access.delete_many_company` kısmi silmede (bazı id'ler silindi) hata vermez. Çöp yolu bunu kullanmaz; #1564 bağlı kaydı şirket şirket siler ve 0 satırı loglar.
 - Entegre banka ve entegre POS/ÖKC bakiyesi bankanın bildirdiği tutardır; örtü onlara yazılmaz. Örtü yalnız manuel POS/ÖKC cevabını değiştirir. `pos_settlement.apply` brüt eşiği kayıtlı `current_balance` üzerindedir.
-- `_reverse_tx_effects` yetim cari/hesapta susar ve loglar. `matched_count==0` iken belge hâlâ duruyorsa yazılan bakiyeyi geri alır ve 404 verir. Hareket güncelleme ve çöp geri yükleme bu hatada anlık görüntüye döner.
+- `_reverse_tx_effects` yetim cari/hesapta susar ve loglar. `matched_count==0` iken belge hâlâ duruyorsa yazılan bakiyeyi geri alır ve 404 verir. Hareket güncelleme anlık görüntüsü eski ve yeni belgeyi (`[tx, {**tx, **allowed}]`) birlikte alır; hesap değişip kayıt yazılamazsa eski ve yeni hesap eski bakiyeye döner. Çöp geri yükleme de bu hatada anlık görüntüye döner.
 - Kalan `_id` sorguları aşağıdaki listede ve `dedicated_id_allowlist.py` içindedir. Yeni `_id`-only çağrı CI'da kırmızıya düşer.
 
 ## Kalan yalnız-`_id` çağrıları
 
-Toplam 212 çağrı, rbac/addons hariç (onlar dondurulmuş listededir).
+Toplam 210 çağrı, rbac/addons hariç (onlar dondurulmuş listededir). `unpay_installment` company_id ile gider; legacy yedek `# id-ok` olduğu için bu listede değildir.
 
 | Öncelik | Koleksiyon | Yer | Okuma/yazma | Risk | Düzeltme |
 | --- | --- | --- | --- | --- | --- |
@@ -70,8 +70,6 @@ Toplam 212 çağrı, rbac/addons hariç (onlar dondurulmuş listededir).
 | P0 | contacts | backend/server.py:9172 _pos_return_core update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
 | P0 | bank_accounts | backend/server.py:9183 _pos_return_core update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
 | P0 | bank_accounts | backend/server.py:9299 _pos_do_cancel_sale update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
-| P0 | installments | backend/server.py:12689 unpay_installment update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
-| P0 | invoices | backend/server.py:12695 unpay_installment update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
 | P0 | cash_approval_requests | backend/server.py:15115 approve_cash_request update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
 | P0 | bank_accounts | backend/server.py:20707 _post_marketplace_settlement update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
 | P0 | contacts | backend/server.py:20710 _post_marketplace_settlement update_one | yazma | yüksek — bakiye veya kayıt kaçar | Sorguya company_id ekle. Dedicated/shared_v2'de 0 eşleşme hata. Legacy `_id` kalsın. |
@@ -319,7 +317,6 @@ Tam taban `backend/tenant_scope_allowlist.py`. Aşağısı finans ve stok yüzey
 | unclear | partner_transactions | backend/server.py:12259 _body insert_one | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |
 | unclear | partner_transactions | backend/server.py:12584 _body insert_one | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |
 | unclear | bank_transactions | backend/server.py:12597 _body insert_one | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |
-| missing | installments | backend/server.py:12694 unpay_installment count_documents | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |
 | unclear | invoices | backend/server.py:12724 get_report find | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |
 | unclear | bank_transactions | backend/server.py:13303 _save_signed_opening_balance insert_one | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |
 | unclear | bank_transactions | backend/server.py:13414 save_opening_from_difference insert_one | okuma | orta | company_id anahtarını sorgu veya belgeye koy. |

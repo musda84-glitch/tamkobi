@@ -288,6 +288,51 @@ def test_settlement_gate_uses_stored_balance_not_overlay(monkeypatch, tmp_path):
         _restore(monkeypatch, previous_key, comm)
 
 
+def test_account_change_failure_restores_old_and_new_balances(monkeypatch, tmp_path):
+    previous_key, comm, db, paths = _open(monkeypatch, tmp_path)
+
+    async def seed():
+        await _put(db, MATEK, "bank_accounts", {
+            "_id": "acc_old", "company_id": MATEK, "type": "bank",
+            "account_name": "Eski", "current_balance": 200.0,
+        })
+        await _put(db, MATEK, "bank_accounts", {
+            "_id": "acc_new", "company_id": MATEK, "type": "bank",
+            "account_name": "Yeni", "current_balance": 500.0,
+        })
+        await _put(db, MATEK, "bank_transactions", {
+            "_id": "tx", "company_id": MATEK, "account_id": "acc_old",
+            "account_name": "Eski", "type": "outflow", "amount": 40.0, "source": "manual",
+        })
+
+    asyncio.run(seed())
+    bound = _bind(db)
+    try:
+        async def run():
+            called = {"n": 0}
+            txs = db.bank_transactions
+
+            async def boom(query, update, upsert=False):
+                called["n"] += 1
+                raise HTTPException(status_code=500, detail="Hareket yazılamadı.")
+
+            txs.update_one = boom
+            with pytest.raises(HTTPException) as raised:
+                await server.update_bank_transaction("tx", {"account_id": "acc_new"}, _user(MATEK))
+            assert raised.value.status_code == 500
+            assert called["n"] == 1
+            assert _by_id(_load_docs(paths[MATEK], "bank_accounts"), "acc_old")["current_balance"] == 200.0
+            assert _by_id(_load_docs(paths[MATEK], "bank_accounts"), "acc_new")["current_balance"] == 500.0
+            saved = _by_id(_load_docs(paths[MATEK], "bank_transactions"), "tx")
+            assert saved["account_id"] == "acc_old"
+            assert saved["amount"] == 40.0
+
+        asyncio.run(run())
+    finally:
+        _unuse(bound)
+        _restore(monkeypatch, previous_key, comm)
+
+
 def test_unpay_installment_scopes_company(monkeypatch):
     db = MemDB()
     db.installments.docs.extend([
@@ -318,6 +363,58 @@ def test_unpay_installment_scopes_company(monkeypatch):
     assert db.installments.docs[1]["status"] == "paid"
     assert db.invoices.docs[0]["installment_plan"]["paid_count"] == 0
     assert db.invoices.docs[1]["installment_plan"]["paid_count"] == 1
+
+
+def test_unpay_legacy_installment_without_company_id(monkeypatch):
+    monkeypatch.delenv("STORAGE_ROUTER_ENABLED", raising=False)
+    db = MemDB()
+    db.installments.docs.extend([
+        {"_id": "old", "paid_amount": 10, "status": "paid", "amount": 10, "invoice_id": "inv_old"},
+        {"_id": "kept", "company_id": "B", "paid_amount": 10, "status": "paid", "amount": 10, "invoice_id": "inv_b"},
+    ])
+    db.invoices.docs.extend([
+        {"_id": "inv_old", "installment_plan": {"paid_count": 1}},
+        {"_id": "inv_b", "company_id": "B", "installment_plan": {"paid_count": 1}},
+    ])
+
+    async def _doc(*_args, **_kwargs):
+        return db.installments.docs[0]
+
+    async def _rev(*_args, **_kwargs):
+        return {"ok": True}
+
+    monkeypatch.setattr(server.tenant_access, "get_tenant_doc", _doc)
+    monkeypatch.setattr(server.linked_moves, "reverse_linked", _rev)
+    previous = server.db
+    server.db = db
+    try:
+        asyncio.run(server.unpay_installment("old", {
+            "company_id": "A", "active_company_id": "A", "company_ids": ["A"],
+        }))
+    finally:
+        server.db = previous
+    assert db.installments.docs[0]["status"] == "pending"
+    assert db.installments.docs[0]["paid_amount"] == 0
+    assert db.installments.docs[1]["status"] == "paid"
+    assert db.invoices.docs[0]["installment_plan"]["paid_count"] == 0
+    assert db.invoices.docs[1]["installment_plan"]["paid_count"] == 1
+
+    async def dedicated(_db, _company_id):
+        return False
+
+    monkeypatch.setattr(tenant_access, "legacy_unscoped_ok", dedicated)
+    db.installments.docs[0]["status"] = "paid"
+    db.installments.docs[0]["paid_amount"] = 10
+    server.db = db
+    try:
+        with pytest.raises(HTTPException) as raised:
+            asyncio.run(server.unpay_installment("old", {
+                "company_id": "A", "active_company_id": "A", "company_ids": ["A"],
+            }))
+        assert raised.value.status_code == 404
+    finally:
+        server.db = previous
+    assert db.installments.docs[0]["status"] == "paid"
 
 
 class _Rows:
