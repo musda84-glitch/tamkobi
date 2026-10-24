@@ -253,6 +253,42 @@ def _dedupe_txs(rows: Iterable[dict], merged: Dict[str, dict], order: List[str],
         order.append(key)
 
 
+async def _fetch_account_txs(db, company_id: str, account_ids: Iterable[str]):
+    """Hesaplara değen hareketler ve tavanın dolup dolmadığı.
+
+    İkinci değer True ise en az bir sorgu COMPANY_TX_LIMIT satır döndü;
+    devamı okunmamış olabilir.
+    """
+    ids = []
+    seen = set()
+    for raw in account_ids or []:
+        sid = str(raw or "")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        ids.append(sid)
+    cid = str(company_id or "")
+    if not cid or not ids:
+        return [], False
+    merged: Dict[str, dict] = {}
+    order: List[str] = []
+    anon = [0]
+    truncated = False
+    for field in ("account_id", "target_account_id"):
+        cursor = db.bank_transactions.find(
+            {"company_id": cid, field: {"$in": ids}},
+            BANK_TX_BALANCE_PROJECTION,
+        )
+        rows = await cursor.to_list(COMPANY_TX_LIMIT)
+        if len(rows) >= COMPANY_TX_LIMIT:
+            truncated = True
+        _dedupe_txs(rows, merged, order, anon)
+    listed = [merged[key] for key in order]
+    if len(listed) >= COMPANY_TX_LIMIT:
+        truncated = True
+    return listed, truncated
+
+
 async def fetch_cash_box_txs(db, company_id: str, cash_ids: Iterable[str]) -> List[dict]:
     """Kasa bakiyesi: yalnız kasa hesaplarına değen hareketler.
 
@@ -261,28 +297,8 @@ async def fetch_cash_box_txs(db, company_id: str, cash_ids: Iterable[str]) -> Li
     Sonuç _id ile tekilleştirilir. skips_account_balance burada uygulanmaz;
     movement_balance aynı kurallarla işaretler (iptal, havuz, ekstre, ledger).
     """
-    ids = []
-    seen = set()
-    for raw in cash_ids or []:
-        sid = str(raw or "")
-        if not sid or sid in seen:
-            continue
-        seen.add(sid)
-        ids.append(sid)
-    cid = str(company_id or "")
-    if not cid or not ids:
-        return []
-    merged: Dict[str, dict] = {}
-    order: List[str] = []
-    anon = [0]
-    for field in ("account_id", "target_account_id"):
-        cursor = db.bank_transactions.find(
-            {"company_id": cid, field: {"$in": ids}},
-            BANK_TX_BALANCE_PROJECTION,
-        )
-        rows = await cursor.to_list(COMPANY_TX_LIMIT)
-        _dedupe_txs(rows, merged, order, anon)
-    return [merged[key] for key in order]
+    rows, _truncated = await _fetch_account_txs(db, company_id, cash_ids)
+    return rows
 
 
 async def _lookup_company_id(db, account_id: str) -> str:
@@ -351,6 +367,41 @@ def apply_drift_fields(accounts: List[dict], grouped: Dict[str, List[dict]]) -> 
             acc["bank_balance_drift"] = False
         else:
             acc["bank_balance_drift"] = abs(round(_num(reported), 2) - moved) >= 0.01
+    return accounts
+
+
+POS_DISPLAY_TYPES = frozenset({"pos", "okc_pos"})
+
+
+def overlay_pos_movement_balances(
+    accounts: List[dict],
+    txs: Iterable[dict],
+    *,
+    truncated: bool = False,
+) -> List[dict]:
+    """POS ve ÖKC cevap bakiyesi = hareket toplamı. Yalnız gösterim.
+
+    bank_accounts.current_balance diske yazılmaz. pos_settlement.apply brüt
+    eşiğini kayıtlı current_balance üzerinden kurar; bu örtü o $inc koşulunu
+    değiştirmez. Görünen tutar ile kayıtlı tutar bu yüzden ayrışabilir.
+    Entegre (banka bağlantılı, is_integrated) POS/ÖKC hesaplarına dokunulmaz.
+    Hareket listesi COMPANY_TX_LIMIT ile kesildiyse örtü uygulanmaz; eksik
+    toplam kayıtlı bakiyenin üstüne yazılmaz. Açılış hareketi movement_balance
+    içinde bir kez sayılır.
+    """
+    rows = list(txs or [])
+    if truncated or len(rows) >= COMPANY_TX_LIMIT:
+        return accounts
+    grouped = group_txs_by_account(rows)
+    for acc in accounts or []:
+        if str((acc or {}).get("type") or "") not in POS_DISPLAY_TYPES:
+            continue
+        if acc.get("is_integrated"):
+            continue
+        aid = str(acc.get("_id") or acc.get("id") or "")
+        if not aid:
+            continue
+        acc["current_balance"] = movement_balance(grouped.get(aid, []), aid, acc)
     return accounts
 
 
@@ -539,6 +590,11 @@ async def fetch_balance_txs(db, company_id: str, account_ids: Iterable[str]) -> 
     Sorgu fetch_cash_box_txs ile aynıdır (company_id + account_id/target IN, tekilleştirme).
     """
     return await fetch_cash_box_txs(db, company_id, account_ids)
+
+
+async def fetch_balance_txs_capped(db, company_id: str, account_ids: Iterable[str]):
+    """fetch_balance_txs ve tavan bilgisi. İkinci değer True ise liste eksik olabilir."""
+    return await _fetch_account_txs(db, company_id, account_ids)
 
 
 def recalc_balance_row(account: dict, txs: Iterable[dict], *, integrated: bool = False) -> dict:

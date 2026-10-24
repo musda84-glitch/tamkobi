@@ -210,6 +210,152 @@ def is_company_admin(user: Optional[dict], company_id: str) -> bool:
     return role in ("admin", "owner")
 
 
+def id_query(doc_id, company_id=None) -> dict:
+    """`_id` süzgeci. company_id doluysa router dedicated/shared_v2 deposuna gider.
+
+    Boş company_id legacy sorgudur: yalnız `_id`.
+    """
+    query = {"_id": doc_id}
+    cid = str(company_id or "").strip()
+    if cid:
+        query["company_id"] = cid
+    return query
+
+
+async def _routed_mode(db, company_id: str):
+    """Router kapalıysa None. Açıksa kip (legacy / shared_v2 / dedicated)."""
+    import storage_router
+
+    if not storage_router.enabled():
+        return None
+    cid = storage_router.canonical_company_id(str(company_id or ""))
+    if not cid:
+        return None
+    mode, _epoch, _locked = await storage_router.storage_decision(db, cid)
+    return mode
+
+
+async def legacy_unscoped_ok(db, company_id) -> bool:
+    """Router kapalı veya legacy: company_id'siz eski `_id` yedeği durur.
+
+    Dedicated ve shared_v2 bu yedeğe düşmez. company_id boşsa kip bilinmez;
+    o kayıt eski katalog yoludur.
+    """
+    mode = await _routed_mode(db, company_id)
+    if mode is None:
+        return True
+    import storage_router
+
+    return mode == storage_router.LEGACY
+
+
+def _write_count(result, field: str):
+    value = getattr(result, field, None)
+    if value is None:
+        return None
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return None
+
+
+async def raise_if_unmatched(db, result, company_id, *, detail: str = "Kayıt güncellenemedi.") -> None:
+    """Dedicated/shared_v2 yazması 0 satıra denk geldiyse hata.
+
+    Router kapalı ve legacy kip eski gibi susar. Sonuçta sayaç yoksa (eski
+    test çiftleri) kontrol edilmez.
+    """
+    matched = _write_count(result, "matched_count")
+    if matched is None:
+        matched = _write_count(result, "deleted_count")
+    if matched is None or matched >= 1:
+        return
+    mode = await _routed_mode(db, company_id)
+    if mode is None:
+        return
+    import storage_router
+
+    if mode == storage_router.LEGACY:
+        return
+    raise HTTPException(status_code=404, detail=detail)
+
+
+async def unmatched_is_real_miss(db, result, company_id, collection, doc_id) -> bool:
+    """Dedicated/shared_v2'de sayaç 0 ve belge hâlâ duruyorsa gerçek yazma kaçağı.
+
+    Sayaç yoksa, 1 ve üstüyse, legacy/router kapalıysa veya belge yoksa
+    (yetim) False. storage_dedicated.update_one eşleşmede matched_count=1,
+    yoksa 0 döner; modified_count 0 olsa da eşleşme 1 kalır.
+    """
+    matched = _write_count(result, "matched_count")
+    if matched is None or matched >= 1 or doc_id is None:
+        return False
+    mode = await _routed_mode(db, company_id)
+    if mode is None:
+        return False
+    import storage_router
+
+    if mode == storage_router.LEGACY:
+        return False
+    cid = str(company_id or "").strip()
+    coll = db[collection]
+    try:
+        existing = await coll.find_one({"_id": doc_id, "company_id": cid}, {"_id": 1})
+    except TypeError:
+        existing = await coll.find_one({"_id": doc_id, "company_id": cid})
+    return isinstance(existing, dict)
+
+
+async def delete_one_company(db, collection: str, doc_id, company_id, *, missing: str = "Kayıt silinemedi."):
+    """Tek satırı çağıranın şirket deposundan sil.
+
+    Router kapalı veya legacy: yalnız `_id` (eski davranış, sayaç susar).
+    Dedicated ve shared_v2: `_id` + company_id. Silinen 0 ise 404.
+    """
+    cid = str(company_id or "").strip()
+    coll = db[collection]
+    mode = await _routed_mode(db, cid)
+    import storage_router
+
+    if mode is None or mode == storage_router.LEGACY:
+        return await coll.delete_one({"_id": doc_id})  # id-ok: legacy kip, company_id yazılmaz
+    result = await coll.delete_one({"_id": doc_id, "company_id": cid})
+    if _write_count(result, "deleted_count") == 0:
+        raise HTTPException(status_code=404, detail=missing)
+    return result
+
+
+async def delete_many_company(db, collection: str, ids, company_id, *, missing: str = "Bağlı kayıt silinemedi."):
+    """Birden çok satır. Legacy yalnız `_id`. Arşiv deposu company_id ister."""
+    clean = [item for item in (ids or []) if item is not None]
+    if not clean:
+        return None
+    cid = str(company_id or "").strip()
+    coll = db[collection]
+    mode = await _routed_mode(db, cid)
+    import storage_router
+
+    if mode is None or mode == storage_router.LEGACY:
+        return await coll.delete_many({"_id": {"$in": clean}})  # id-ok: legacy kip, company_id yazılmaz
+    result = await coll.delete_many({"_id": {"$in": clean}, "company_id": cid})
+    deleted = _write_count(result, "deleted_count")
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail=missing)
+    return result
+
+
+async def find_live_doc(db, collection: str, doc_id, company_id):
+    """Arşiv şirketinde katalogdaki `_id` kopyasına düşülmez."""
+    cid = str(company_id or "").strip()
+    coll = db[collection]
+    mode = await _routed_mode(db, cid)
+    import storage_router
+
+    if mode is not None and mode != storage_router.LEGACY:
+        return await coll.find_one({"_id": doc_id, "company_id": cid})
+    return await coll.find_one({"_id": doc_id})  # id-ok: legacy veya router kapalı
+
+
 async def require_company_admin(user: dict, company_id: str) -> None:
     """Demo yükleme/silme gibi işlemler için şirket yöneticisi zorunlu."""
     if not user:

@@ -155,6 +155,7 @@ async def apply(
     if account.get("type") not in _POS_TYPES:
         raise HTTPException(status_code=400, detail="POS bloke çözümü yalnızca POS hesabına uygulanabilir.")
     pos_name = account.get("account_name") or "POS"
+    # Eşik kayıtlı current_balance'dır. Liste örtüsü yalnız gösterimdir.
     updated = await db.bank_accounts.update_one(
         {"_id": pos_id, "company_id": cid, "type": {"$in": ["pos", "okc_pos"]}, "current_balance": {"$gte": gross_v}},
         {"$inc": {"current_balance": -gross_v}},

@@ -80,20 +80,26 @@ async def get_connection_for_account(db, account_id, *, company_id):
     return await db.bank_connections.find_one({"company_id": company_id, "linked_account_id": account_id})
 
 
-async def assert_manual_allowed(db, account_id):
-    from account_balance import _lookup_company_id
-    cid = await _lookup_company_id(db, account_id)
+async def assert_manual_allowed(db, account_id, company_id=None):
+    cid = str(company_id or "").strip()
+    if not cid:
+        from account_balance import _lookup_company_id
+        cid = await _lookup_company_id(db, account_id)
     conn = await get_connection_for_account(db, account_id, company_id=cid)
     if conn:
         name = conn.get("linked_account_name") or "Bu hesap"
         raise HTTPException(status_code=400, detail=f"{name} banka entegrasyonuna ({conn.get('provider_name') or 'API'}) bağlı; manuel işlem yapılamaz. Hareketler bankadan otomatik çekilir ve Banka Entegrasyonu → Eşleştirme ekranından işlenir.")
 
 
-async def assert_collection_allowed(db, account_id):
+async def assert_collection_allowed(db, account_id, company_id=None):
     """Company credit cards are spend accounts, not cash-in (tahsilat) targets."""
     if not account_id:
         return None
-    acc = await db.bank_accounts.find_one({"_id": account_id})
+    cid = str(company_id or "").strip()
+    if cid:
+        acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": cid})
+    else:
+        acc = await db.bank_accounts.find_one({"_id": account_id})
     if acc and acc.get("type") == "credit_card":
         raise HTTPException(status_code=400, detail=NO_COLLECT_MSG)
     return acc
