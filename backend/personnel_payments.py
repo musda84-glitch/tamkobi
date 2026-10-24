@@ -1690,6 +1690,7 @@ async def delete_bonus_record(db, bonus: dict) -> bool:
         return False
     bonus_id = bonus["_id"]
     cid = str(bonus.get("company_id") or "")
+    await trash.refuse_repeat("bonus_payments", bonus)
     await reverse_linked_personnel_payments(db, bonus, collection="bonus_payments")
     fresh = await db.bonus_payments.find_one({"_id": bonus_id, "company_id": cid})
     if not fresh:

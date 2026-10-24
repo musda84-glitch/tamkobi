@@ -128,31 +128,63 @@ def _ids_by_company(docs: List[dict], fallback: Optional[str] = None) -> Dict[Op
     return grouped
 
 
+class AlreadyTrashed(HTTPException):
+    """Aynı özgün _id çöpte duruyor. Bu istek yeni silme değildir; bakiye iadesi yazılmaz."""
+
+    def __init__(self):
+        super().__init__(
+            status_code=409,
+            detail="Kayıt zaten çöp kutusunda. Bakiye yeniden işlenmedi.",
+        )
+
+
+async def original_in_trash(collection: str, doc: Optional[dict]) -> bool:
+    """Aynı özgün _id için duran çöp kaydı var mı."""
+    if _db is None or not isinstance(doc, dict) or doc.get("_id") is None:
+        return False
+    try:
+        found = await _find_trash_for_original(collection, doc)
+    except Exception:
+        logging.getLogger(__name__).exception("Çöp kaydı okunamadı")
+        return False
+    return bool(isinstance(found, dict) and found.get("_id"))
+
+
+async def refuse_repeat(collection: str, doc: dict) -> None:
+    """Çöpte kayıt varsa canlı satırı temizler ve 409 verir. Yoksa bir şey yapmaz.
+
+    Bakiye iadesi ancak bu fonksiyon döndükten ve soft_delete bu istekte satırı
+    sildikten sonra yazılır. Tekrar silme iade yazmaz.
+    """
+    if not isinstance(doc, dict) or doc.get("_id") is None or not await original_in_trash(collection, doc):
+        return
+    try:
+        await _delete_ids(collection, [doc.get("_id")], _company_id_of(doc))
+    except Exception:
+        logging.getLogger(__name__).exception("Tekrar silmede canlı satır kalkmadı")
+        raise
+    raise AlreadyTrashed()
+
+
 async def soft_delete(collection: str, doc: dict, entity_type: str, label: str, related: Optional[List[dict]] = None, note: str = "", restore_group: Optional[str] = None) -> str:
     """Belgeyi çöp kutusuna taşır ve koleksiyondan siler. related: [{"collection", "docs"}].
 
     company_id varsa silme sorgusuna yazılır; dedicated depo ancak öyle seçilir.
     Silinen satır 0 ise yeni çöp kopyası bırakılmaz ve 409 döner.
+    Aynı özgün _id çöpte varsa satır yeniden silinmiş sayılmaz (409); iade yazılmaz.
     """
     if not isinstance(doc, dict) or doc.get("_id") is None:
         raise HTTPException(status_code=409, detail="Kayıt silinemedi; belge kimliği yok.")
+    await refuse_repeat(collection, doc)
     cid = _company_id_of(doc)
-    existing = await _find_trash_for_original(collection, doc)
-    created = False
-    if existing and existing.get("_id"):
-        tid = existing["_id"]
-    else:
-        tid = await stash(collection, doc, entity_type, label, related, note, restore_group=restore_group)
-        created = True
+    tid = await stash(collection, doc, entity_type, label, related, note, restore_group=restore_group)
     try:
         result = await _delete_ids(collection, [doc["_id"]], cid)
     except Exception:
-        if created:
-            await _rollback_new_trash(tid, cid)
+        await _rollback_new_trash(tid, cid)
         raise
     if _deleted_count(result) == 0:
-        if created:
-            await _rollback_new_trash(tid, cid)
+        await _rollback_new_trash(tid, cid)
         raise HTTPException(status_code=409, detail="Kayıt silinemedi. Çöp kutusuna taşınmadı.")
     for block in related or []:
         grouped = _ids_by_company(block.get("docs") or [], cid)

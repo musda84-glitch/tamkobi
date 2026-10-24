@@ -11969,6 +11969,7 @@ async def _soft_delete_invoice_doc(
         raise HTTPException(status_code=409, detail="Fatura başka bir işlemde siliniyor")
     prev_status = inv.get("status")
     try:
+        await trash.refuse_repeat("invoices", inv)
         applied = bool(inv.get("effects_applied")) or (not is_draft and prev_status in ("approved", "sent_to_gib", "paid"))
         if applied:
             await _reverse_invoice_effects(inv)
@@ -11992,6 +11993,8 @@ async def _soft_delete_invoice_doc(
             note=kind,
             restore_group=restore_group,
         )
+    except trash.AlreadyTrashed:
+        raise
     except Exception:
         logging.getLogger(__name__).exception("Fatura silme hatası, önceki duruma dönülüyor: %s", invoice_id)
         await db.invoices.update_one(
@@ -14465,6 +14468,10 @@ async def delete_simulated_bank_transactions(company_id: Optional[str] = Query(N
     txs = await db.bank_transactions.find(q).to_list(5000)
     removed = 0
     for tx in txs:
+        try:
+            await trash.refuse_repeat("bank_transactions", tx)
+        except trash.AlreadyTrashed:
+            continue
         tid = await trash.soft_delete(
             "bank_transactions",
             tx,
@@ -14627,6 +14634,9 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
                 note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
             )
+        except trash.AlreadyTrashed:
+            pair = None
+            pair_tid = None
         except Exception:
             rows = [("bank_transactions", tx, tid)]
             for block in related or []:
@@ -14638,12 +14648,17 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
             except Exception:
                 logger.exception("Eşleşme geri alınamadı")
             raise
-    snap = await _snapshot_tx_balances([tx, pair, *counters])
+    fresh_counters = []
+    for counter in counters:
+        if await trash.original_in_trash("bank_transactions", counter):
+            continue
+        fresh_counters.append(counter)
+    snap = await _snapshot_tx_balances([tx, pair, *fresh_counters])
     try:
         await _reverse_tx_effects(tx, -1)
         if pair:
             await _reverse_tx_effects(pair, -1)
-        for counter in counters:
+        for counter in fresh_counters:
             await _reverse_tx_effects(counter, -1)
         # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
         cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
@@ -21521,6 +21536,10 @@ async def _reverse_marketplace_settlement(order: dict) -> Optional[dict]:
     removed_txs = 0
     reversed_net = 0.0
     for tx in txs:
+        try:
+            await trash.refuse_repeat("bank_transactions", tx)
+        except trash.AlreadyTrashed:
+            continue
         amt = float(tx.get("amount") or 0)
         # Kasa/banka: ledger ve bakiyeye yazılmamış beklenen hakediş geri alınırken $inc yok.
         posted_to_balance = (
@@ -21550,6 +21569,10 @@ async def _reverse_marketplace_settlement(order: dict) -> Optional[dict]:
     for eid in expense_ids:
         exp = await db.expenses.find_one({"_id": eid})
         if not exp:
+            continue
+        try:
+            await trash.refuse_repeat("expenses", exp)
+        except trash.AlreadyTrashed:
             continue
         # netted_in_settlement: ayrı kasa çıkışı yok; yalnızca masraf kaydını kaldır.
         await trash.soft_delete(
@@ -28216,6 +28239,7 @@ async def pay_payroll(
 @api_router.delete("/personnel/payrolls/{payroll_id}")
 async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)):
     payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
+    await trash.refuse_repeat("payrolls", payroll)
     await _reverse_personnel_payment_links(payroll, "payrolls")
     fresh = await db.payrolls.find_one({"_id": payroll_id, "company_id": payroll["company_id"]})
     if not fresh:

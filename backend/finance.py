@@ -427,6 +427,7 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict
 async def delete_loan(loan_id: str, user: dict = Depends(_user_dep)):
     loan = await tenant_access.get_tenant_doc(_db, "loans", loan_id, user, not_found="Kredi bulunamadı.")
     import trash
+    await trash.refuse_repeat("loans", loan)
     related = await linked_moves.prepare_source_trash(
         _db, "loan", loan_id, company_id=loan.get("company_id"),
     )
