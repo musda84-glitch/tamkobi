@@ -23,6 +23,7 @@ import { isMoreLinkVisible } from "../utils/permissions";
 import { visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
 
 const LINKS = [
+  { title: "Web'e QR ile giriş", path: "/qr-web-login", screen: "QrWebLogin", icon: "qr-code" as const },
   { title: "Benim Sayfam", path: "/personelim", screen: "Personelim", icon: "person" as const },
   { title: "Personel & Bordro", path: "/personnel", screen: "Personnel", icon: "people-circle" as const },
   { title: "Cariler", path: "/contacts", screen: "Contacts", icon: "people" as const },

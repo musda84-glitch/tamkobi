@@ -107,6 +107,7 @@ from auth_utils import (
 )
 import superadmin_2fa
 import google_auth
+import qr_login
 import tenant_access
 import shopfloor_accounts
 import shopfloor_pin
@@ -769,6 +770,19 @@ class SsoExchangeRequest(BaseModel):
     code: str
 
 
+class QrLoginStartRequest(BaseModel):
+    remember: bool = True
+
+
+class QrLoginStatusRequest(BaseModel):
+    code: str = ""
+    poll_secret: str = ""
+
+
+class QrLoginCodeRequest(BaseModel):
+    code: str = ""
+
+
 @api_router.post("/auth/sso-exchange")
 async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response: Response):
     """One-time handoff code → host-only access_token (+ optional sa_return)."""
@@ -782,6 +796,39 @@ async def auth_sso_exchange(req: SsoExchangeRequest, request: Request, response:
         "redirect": done["redirect"],
         "user": {"id": user.get("id"), "email": user.get("email"), "is_super_admin": user.get("is_super_admin")},
     }
+
+
+@api_router.post("/auth/qr-login/start")
+async def auth_qr_login_start(req: QrLoginStartRequest, request: Request):
+    """Herkese açık, IP başına hız sınırlı tek kullanımlık QR oturumu."""
+    return await qr_login.start_session(db, request, remember=req.remember)
+
+
+@api_router.post("/auth/qr-login/status")
+async def auth_qr_login_status(req: QrLoginStatusRequest, request: Request, response: Response):
+    """Üreten tarayıcı yoklar. Onaylı oturum çerez ve gövde olarak bir kez verilir."""
+
+    async def _issue(user, request, response, remember=False):
+        return await _issue_session_for_user(user, request, response, remember=remember)
+
+    return await qr_login.poll_status(
+        db, request, response, req.code, req.poll_secret, issue_session=_issue,
+    )
+
+
+@api_router.post("/auth/qr-login/preview")
+async def auth_qr_login_preview(req: QrLoginCodeRequest, request: Request, user: dict = Depends(get_current_user)):
+    return await qr_login.preview(db, request, user, req.code)
+
+
+@api_router.post("/auth/qr-login/approve")
+async def auth_qr_login_approve(req: QrLoginCodeRequest, request: Request, user: dict = Depends(get_current_user)):
+    return await qr_login.approve(db, request, user, req.code)
+
+
+@api_router.post("/auth/qr-login/reject")
+async def auth_qr_login_reject(req: QrLoginCodeRequest, request: Request, user: dict = Depends(get_current_user)):
+    return await qr_login.reject(db, request, user, req.code)
 
 
 @api_router.post("/auth/login")

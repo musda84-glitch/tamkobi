@@ -93,6 +93,12 @@ COLLECTIONS = {
         "keys": ("_id", "identifier", "count", "last_attempt"),
         "refs": (),
     },
+    "web_login_qr": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Web QR girişi. Ham kod saklanmaz; _id JWT_SECRET ile HMAC. Tek kullanımlık ve kısa ömürlü. Şirket filtresi yoktur.",
+        "keys": ("_id", "status", "expires_at", "ip", "user_id", "delivered_at"),
+        "refs": ("users._id",),
+    },
     "activity_logs": {
         "scope": SCOPE_TENANT,
         "description": "Kullanıcı işlem günlüğü.",

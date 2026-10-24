@@ -963,6 +963,8 @@ PUBLIC_API_ALLOWLIST = (
     "/api/auth/2fa/verify",
     "/api/auth/impersonate/exit",
     "/api/auth/sso-exchange",
+    "/api/auth/qr-login/start",
+    "/api/auth/qr-login/status",
     "/api/public/",
     "/api/setup/",
     "/api/version",
@@ -1082,12 +1084,14 @@ def is_public_api_path(path: str, method: str = "GET", query_t: Optional[str] = 
     # impersonate/exit yalnızca POST
     if p == "/api/auth/impersonate/exit":
         return method_u == "POST"
+    if p in ("/api/auth/qr-login/start", "/api/auth/qr-login/status"):
+        return method_u == "POST"
     if p == "/api/shopfloor/devices/pair":
         return method_u == "POST"
     if p == "/api/platform/notices" or p == "/api/auth/me":
         return method_u in ("GET", "HEAD")
     for rule in PUBLIC_API_ALLOWLIST:
-        if rule in ("/api/auth/impersonate/exit", "/api/platform/notices", "/api/auth/me", "/api/shopfloor/devices/pair"):
+        if rule in ("/api/auth/impersonate/exit", "/api/platform/notices", "/api/auth/me", "/api/shopfloor/devices/pair", "/api/auth/qr-login/start", "/api/auth/qr-login/status"):
             continue  # method-specific above
         if rule.endswith("/"):
             if p == rule.rstrip("/") or p.startswith(rule):
