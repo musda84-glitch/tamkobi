@@ -126,7 +126,7 @@ from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
-from ai_service import advice_response_fields, get_financial_ai_advice_result, get_production_ai_advice_result, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
+from ai_service import advice_response_fields, get_financial_ai_advice_result, get_production_ai_advice_result, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test, redact_vendor_text
 from invoice_status import is_cancelled_invoice
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
 from expense_extract import extract_expense_file, public_expense_match
@@ -6276,7 +6276,7 @@ async def _ai_cart_parse_upload(company_id: str, file: UploadFile, data: bytes) 
             if not parsed_items:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})",
+                    detail=redact_vendor_text(f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})"),
                 )
     parsed_items = _b2b_sanitize_cart_lines(parsed_items)
     items, unmatched = await _b2b_match_cart_items(company_id, parsed_items)
@@ -28312,7 +28312,7 @@ async def ai_order_extract(
         parsed = await ai_service_extract_orders(text)
     except Exception as e:
         logger.error(f"AI order extract failed: {e}")
-        raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+        raise HTTPException(status_code=502, detail=redact_vendor_text(f"AI çıkarımı başarısız: {str(e)[:140]}"))
     products = await db.products.find({"company_id": company_id}, {"name": 1, "sku": 1, "barcode": 1, "sale_price": 1}).to_list(5000)
     pidx = {str(k).lower(): p for p in products for k in (p.get("sku"), p.get("barcode")) if k}
     for o in parsed["orders"]:
@@ -28447,7 +28447,7 @@ async def ai_product_extract(
             parsed = await ai_service_extract_products(text)
         except Exception as e:
             logger.error(f"AI product extract failed: {e}")
-            raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {str(e)[:140]}")
+            raise HTTPException(status_code=502, detail=redact_vendor_text(f"AI çıkarımı başarısız: {str(e)[:140]}"))
         items = parsed.get("products") or []
     products = await _annotate_extracted_products(company_id, items)
     if not products:
@@ -28584,7 +28584,7 @@ async def ai_invoice_extract(
             low = err.lower()
             if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
                 hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-            raise HTTPException(status_code=502, detail=f"AI çıkarımı başarısız: {err[:160]}.{hint}")
+            raise HTTPException(status_code=502, detail=redact_vendor_text(f"AI çıkarımı başarısız: {err[:160]}.{hint}"))
 
     party = (parsed.get("customer") if inv_type == "sales" else parsed.get("supplier")) or {}
     match = None
@@ -28663,7 +28663,7 @@ async def ai_receipt_extract(
         low = err.lower()
         if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
             hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-        raise HTTPException(status_code=502, detail=f"Makbuz okunamadı: {err[:160]}.{hint}") from e
+        raise HTTPException(status_code=502, detail=redact_vendor_text(f"Makbuz okunamadı: {err[:160]}.{hint}")) from e
 
     draft = out.get("draft") or {}
     match = None
@@ -28720,7 +28720,7 @@ async def ai_cheque_extract(
         low = err.lower()
         if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
             hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-        raise HTTPException(status_code=400, detail=f"Çek okunamadı: {err[:160]}.{hint}") from e
+        raise HTTPException(status_code=400, detail=redact_vendor_text(f"Çek okunamadı: {err[:160]}.{hint}")) from e
 
     draft = out.get("draft") or {}
     match = None
@@ -28771,7 +28771,7 @@ async def ai_expense_extract(
         low = err.lower()
         if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
             hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-        raise HTTPException(status_code=400, detail=f"Fiş okunamadı: {err[:160]}.{hint}") from e
+        raise HTTPException(status_code=400, detail=redact_vendor_text(f"Fiş okunamadı: {err[:160]}.{hint}")) from e
 
     draft = out.get("draft") or {}
     match = None

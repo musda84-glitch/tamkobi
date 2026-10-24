@@ -16,7 +16,7 @@ const errText = (e, fallback) => {
 const maskedKeyLabel = (d) => {
   if (d?.key_hint) return `••••••••${d.key_hint}`;
   if (d?.has_key) return "••••••••••••";
-  if (d?.has_env_key) return d.env_var || "ortam değişkeni";
+  if (d?.has_env_key) return "ortam değişkeni";
   return "";
 };
 
@@ -32,8 +32,7 @@ export const AiProviderPanel = () => {
   }).catch(() => toast.error("AI ayarları alınamadı."));
   useEffect(() => { load(); }, []);
   const catalog = d?.catalog || [];
-  const current = useMemo(() => catalog.find((c) => c.id === d?.provider) || catalog[0], [catalog, d]);
-  const models = current?.models || [];
+  const current = useMemo(() => catalog.find((c) => c.id === d?.provider) || null, [catalog, d]);
   const custom = !!current?.custom;
   const pendingKey = (f.api_key || "").trim();
   const showKeyInput = editKey || !(d?.has_key || d?.has_env_key);
@@ -47,31 +46,29 @@ export const AiProviderPanel = () => {
     }
     setBusy(true);
     try {
-      const r = await axios.put(`${API_URL}/system/ai`, {
+      // Sağlayıcı ve model kayıtlı kalsın; form bu alanları değiştirmez.
+      const payload = {
         enabled: d.enabled,
-        provider: d.provider,
-        advisor_model: d.advisor_model,
-        extract_model: d.extract_model,
-        base_url: custom ? (d.base_url || "") : "",
         api_key: pendingKey || undefined,
-      });
+      };
+      if (custom) payload.base_url = d.base_url || "";
+      const r = await axios.put(`${API_URL}/system/ai`, payload);
       setD(r.data);
       setF({ api_key: "" });
       setEditKey(false);
       toast.success(r.data.has_key
         ? `AI ayarları kaydedildi. Anahtar saklandı (${maskedKeyLabel(r.data)}).`
         : "AI entegrasyonu kaydedildi.");
-      // Kayıttan sonra otomatik bağlantı testi — "yapılandırıldı ama çalışmıyor" durumunu yakala.
       try {
         const t = await axios.post(`${API_URL}/system/ai/test`, {
           provider: r.data.provider,
           advisor_model: r.data.advisor_model,
           extract_model: r.data.extract_model,
-          base_url: custom ? (r.data.base_url || "") : "",
+          base_url: r.data.base_url || "",
         });
         setD((prev) => ({
           ...prev,
-          last_test: { ok: t.data.ok, reason: t.data.reason, model: t.data.model, provider: t.data.provider },
+          last_test: { ok: t.data.ok, reason: t.data.reason },
           ready: t.data.ok,
         }));
         (t.data.ok ? toast.success : toast.error)(t.data.message);
@@ -95,39 +92,13 @@ export const AiProviderPanel = () => {
         provider: d.provider,
         advisor_model: d.advisor_model,
         extract_model: d.extract_model,
-        base_url: custom ? (d.base_url || "") : "",
+        base_url: d.base_url || "",
       });
-      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason, model: r.data.model } }));
+      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason } }));
       (r.data.ok ? toast.success : toast.error)(r.data.message);
     } catch (e) {
       toast.error(errText(e, "Test yapılamadı."));
     } finally { setBusy(false); }
-  };
-
-  const pickProvider = (id) => {
-    const meta = catalog.find((c) => c.id === id);
-    if (meta?.custom) {
-      setD({ ...d, provider: id, advisor_model: "", extract_model: "", last_test: null });
-      setEditKey(true);
-      setF({ api_key: "" });
-      return;
-    }
-    const ids = (meta?.models || []).map((m) => m.id);
-    const providerChanged = id !== d.provider;
-    setD({
-      ...d,
-      provider: id,
-      advisor_model: ids.includes(d.advisor_model) ? d.advisor_model : (ids[0] || d.advisor_model),
-      extract_model: ids.includes(d.extract_model) ? d.extract_model : (ids[Math.min(1, ids.length - 1)] || ids[0] || d.extract_model),
-      last_test: null,
-      // Sağlayıcı değişince eski anahtar taşınmaz; kullanıcıya yeni anahtar sor.
-      has_key: providerChanged ? false : d.has_key,
-      key_hint: providerChanged ? "" : d.key_hint,
-    });
-    if (providerChanged) {
-      setEditKey(true);
-      setF({ api_key: "" });
-    }
   };
 
   return (
@@ -135,47 +106,21 @@ export const AiProviderPanel = () => {
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Sistem AI sağlayıcısı</h3>
-            <p className="text-[11px] text-slate-500 mt-1">Faturalar, stok aktarımı, sipariş ayrıştırma, kredi ekstresi, B2B AI sepet ve finansal danışman aynı entegrasyonu kullanır. Şirket bazında ayrı anahtar yoktur.</p>
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Yapay zekâ</h3>
+            <p className="text-[11px] text-slate-500 mt-1">Faturalar, stok aktarımı, sipariş ayrıştırma, kredi ekstresi, B2B sepet ve finansal danışman aynı entegrasyonu kullanır. Şirket bazında ayrı anahtar yoktur.</p>
           </div>
           <label className="flex items-center gap-2"><Toggle on={!!d.enabled} onChange={(v) => setD({ ...d, enabled: v })} testId="ai-enabled" /> <span>Aktif</span></label>
         </div>
-        <div className="flex flex-wrap gap-2" data-testid="ai-provider-picks">
-          {catalog.map((p) => (
-            <button key={p.id} type="button" onClick={() => pickProvider(p.id)} className={`px-3 py-2 rounded-xl border font-bold ${d.provider === p.id ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:border-slate-400"}`} data-testid={`ai-provider-${p.id}`}>{p.label}</button>
-          ))}
-        </div>
-        {current?.hint && <p className="text-[11px] text-slate-500 bg-slate-50 rounded-xl px-3 py-2">{current.hint}</p>}
-        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test{d.last_test.model ? ` (${d.last_test.model})` : ""}: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
+        <div className="grid grid-cols-1 gap-3">
           {custom && (
-            <div className="sm:col-span-2">
+            <div>
               <label className="block font-semibold text-slate-700 mb-1">Uç nokta adresi</label>
-              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value, last_test: null })} placeholder="https://openrouter.ai/api/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
-              <p className="text-[10px] text-slate-500 mt-1">OpenAI uyumlu sohbet ucu. Sonuna <b>/chat/completions</b> otomatik eklenir.</p>
+              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value, last_test: null })} placeholder="https://ornek.example/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
+              <p className="text-[10px] text-slate-500 mt-1">Sohbet uç noktası. Sonuna <b>/chat/completions</b> otomatik eklenir.</p>
             </div>
           )}
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Danışman modeli</label>
-            {custom ? (
-              <input value={d.advisor_model || ""} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} placeholder="openai/gpt-4o-mini" className={inputCls} data-testid="ai-advisor-model" autoComplete="off" />
-            ) : (
-              <select value={d.advisor_model} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} className={inputCls} data-testid="ai-advisor-model">
-                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            )}
-          </div>
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Belge / ayrıştırma modeli</label>
-            {custom ? (
-              <input value={d.extract_model || ""} onChange={(e) => setD({ ...d, extract_model: e.target.value })} placeholder="Boş bırakılırsa danışman modeli kullanılır" className={inputCls} data-testid="ai-extract-model" autoComplete="off" />
-            ) : (
-              <select value={d.extract_model} onChange={(e) => setD({ ...d, extract_model: e.target.value })} className={inputCls} data-testid="ai-extract-model">
-                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            )}
-          </div>
-          <div className="sm:col-span-2 space-y-2">
+          <div className="space-y-2">
             <label className="block font-semibold text-slate-700 mb-1">API anahtarı</label>
             {!showKeyInput ? (
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5" data-testid="ai-key-saved">
@@ -199,7 +144,7 @@ export const AiProviderPanel = () => {
                       setF({ api_key: e.target.value });
                       if (d.last_test) setD({ ...d, last_test: null });
                     }}
-                    placeholder={`${current?.label || "Sağlayıcı"} API anahtarı`}
+                    placeholder="API anahtarı"
                     className={inputCls}
                     data-testid="ai-api-key"
                     autoComplete="new-password"
@@ -216,7 +161,7 @@ export const AiProviderPanel = () => {
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
-          Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
+          Yapay zekâ {d.enabled === false ? "kapalı" : "etkin"}
           {d.has_key ? <> · anahtar <b data-testid="ai-badge-key">{maskedKeyLabel(d)}</b></> : null}
         </div>
         {d.last_test && d.last_test.ok === false && (
@@ -227,7 +172,7 @@ export const AiProviderPanel = () => {
         )}
         {d.last_test && d.last_test.ok === true && (
           <div className="rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2 text-[11px]" data-testid="ai-last-test-ok">
-            Son bağlantı testi başarılı{d.last_test.model ? ` (${d.last_test.model})` : ""}.
+            Son bağlantı testi başarılı.
           </div>
         )}
         <div className="flex justify-end gap-2">

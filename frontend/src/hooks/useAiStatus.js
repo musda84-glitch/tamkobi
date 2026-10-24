@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 
+/** Arayüzde sağlayıcı veya model adı gösterilmez. */
+export const AI_PUBLIC_LABEL = "Yapay zekâ";
+
 /**
  * Platform AI ayarlarından genel durum (GET /ai/status).
- * Ayrıştırma ekranlarında extract_label, danışmanda badge kullanılır.
+ * Rozet her zaman genel etikettir; yanıtta model adı gelse bile kullanılmaz.
  * ready=false → yapılandırılmış görünse bile son test başarısız / anahtar kullanılamıyor.
  */
 export function useAiStatus() {
@@ -40,9 +43,9 @@ export function useAiStatus() {
     ready,
     lastTest,
     decryptFailed: readyObj ? !!status.decrypt_failed : false,
-    extractLabel: readyObj ? status.extract_label || "" : "",
-    advisorLabel: readyObj ? status.advisor_label || "" : "",
-    badge: readyObj ? status.badge || "" : "",
-    providerLabel: readyObj ? status.provider_label || "" : "",
+    extractLabel: ready ? AI_PUBLIC_LABEL : "",
+    advisorLabel: ready ? AI_PUBLIC_LABEL : "",
+    badge: ready ? AI_PUBLIC_LABEL : "",
+    providerLabel: ready ? AI_PUBLIC_LABEL : "",
   };
 }

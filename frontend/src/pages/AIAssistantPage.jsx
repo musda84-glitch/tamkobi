@@ -25,7 +25,6 @@ import {
   Tooltip,
   ResponsiveContainer
 } from "recharts";
-import { useAiStatus } from "../hooks/useAiStatus";
 import AiMessageText from "../components/AiMessageText";
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
@@ -33,8 +32,6 @@ import NoCompanyNotice from "../components/NoCompanyNotice";
 export default function AIAssistantPage() {
   const { activeCompany } = useAuth();
   const companyId = activeCompanyId(activeCompany);
-  const { badge } = useAiStatus();
-  const aiBadge = badge || "Yapay Zeka";
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -112,7 +109,7 @@ Aşağıdaki hızlı konulardan birini seçebilir veya şirketinize özel finans
         <div>
           <div className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider mb-1">
             <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-            <span data-testid="ai-assistant-model-badge">{aiBadge} Destekli</span>
+            <span data-testid="ai-assistant-model-badge">Yapay zekâ</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">TamKobi AI Finansal Danışman</h1>
           <p className="text-xs sm:text-sm text-slate-500">Mali Müşavir Seviyesinde Nakit Akış Analizi, Vergi ve Büyüme Öngörüleri</p>

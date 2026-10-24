@@ -220,7 +220,8 @@ async def extract_tax_doc(
         hint = ""
         if "401" in err or "403" in err or "anahtar" in err.lower() or "api key" in err.lower():
             hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-        raise HTTPException(status_code=400, detail=f"Belge okunamadı: {err[:160]}.{hint}") from e
+        from ai_service import redact_vendor_text
+        raise HTTPException(status_code=400, detail=redact_vendor_text(f"Belge okunamadı: {err[:160]}.{hint}")) from e
     draft = out.get("draft") or {}
     if not draft.get("obligations"):
         raise HTTPException(status_code=400, detail="Belgeden ödenecek tutar okunamadı. Bordro, mizan veya tahakkuk PDF'i yükleyin.")

@@ -42,7 +42,7 @@ afterEach(() => {
   host.remove();
 });
 
-test("model rozeti extract_label gösterir", async () => {
+test("model rozeti sağlayıcı adı göstermez", async () => {
   axios.get.mockResolvedValue({
     data: {
       enabled: true,
@@ -64,7 +64,8 @@ test("model rozeti extract_label gösterir", async () => {
   });
   const badge = host.querySelector("[data-testid='ai-invoice-model-badge']");
   expect(badge).not.toBeNull();
-  expect(badge.textContent).toBe("Fatura GPT-4.1");
+  expect(badge.textContent).toBe("Yapay zekâ");
+  expect(badge.textContent).not.toContain("GPT");
   expect(badge.textContent).not.toContain("Danışman rozeti kullanılmaz");
 
   const src = fs.readFileSync(path.join(__dirname, "AiInvoiceImportModal.jsx"), "utf8");

@@ -22,7 +22,7 @@ function normalizeDraft(raw) {
 
 export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, invoiceType = "purchase", initialFile = null }) => {
   const isSales = invoiceType === "sales";
-  const { extractLabel, configured, enabled, ready: aiReady, lastTest, decryptFailed, loading: aiLoading } = useAiStatus();
+  const { configured, enabled, ready: aiReady, lastTest, decryptFailed, loading: aiLoading } = useAiStatus();
   const ref = useRef(null);
   const suppressBackdropUntil = useRef(0);
   const autoStarted = useRef(false);
@@ -36,7 +36,7 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
     ? "…"
     : (!aiReady
       ? (lastTest && lastTest.ok === false ? "Anahtar geçersiz" : (configured ? "AI hazır değil" : "AI ayarı yok"))
-      : (extractLabel || "AI"));
+      : "Yapay zekâ");
   const testFailed = !!(lastTest && lastTest.ok === false);
   const party = (isSales ? draft?.customer : draft?.supplier) || {};
   const setParty = (patch) => setDraft((d) => (

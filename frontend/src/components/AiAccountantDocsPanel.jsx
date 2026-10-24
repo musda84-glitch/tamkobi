@@ -29,7 +29,7 @@ function kindAllowed(id, addonOn) {
 
 export function AiAccountantDocsPanel({ companyId, onImported }) {
   const { addonOn } = useAuth();
-  const { extractLabel, ready: aiReady } = useAiStatus();
+  const { ready: aiReady } = useAiStatus();
   const kinds = ACCOUNTANT_AI_KINDS.filter((k) => kindAllowed(k.id, addonOn));
   const [kind, setKind] = useState(kinds[0]?.id || "purchase");
   const [contacts, setContacts] = useState([]);
@@ -125,7 +125,7 @@ export function AiAccountantDocsPanel({ companyId, onImported }) {
         <div>
           <div className="flex items-center gap-2 font-bold text-violet-800 text-xs">
             <Sparkles className="w-4 h-4" /> AI ile evrak yükle
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-800"}`}>{extractLabel || "AI"}</span>
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-800"}`}>Yapay zekâ</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">Alış/satış faturası, masraf fişi, çek-senet ve banka ekstresini bu ekrandan AI ile içeri alın. Türü seçin veya dosyayı bırakın; sistem türü tahmin eder.</p>
         </div>

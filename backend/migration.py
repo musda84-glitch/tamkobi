@@ -343,16 +343,16 @@ async def migration_ai_map(req: Dict[str, Any], user: dict = Depends(_user_dep))
         not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.",
     )
     tenant_access.assert_same_company(user, upload, not_found="Yükleme bulunamadı; dosyayı tekrar yükleyin.")
-    from ai_service import ai_map_columns
+    from ai_service import ai_map_columns, redact_vendor_text
     ent = ENTITIES[upload["entity"]]
     fields = [{"key": f, "label": d[0], "required": d[1]} for f, d in ent["fields"].items()]
     try:
         res = await ai_map_columns(ent["label"], fields, upload["columns"], upload["rows"][:5])
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI eşleme başarısız: {str(e)[:140]}")
+        raise HTTPException(status_code=502, detail=redact_vendor_text(f"AI eşleme başarısız: {str(e)[:140]}"))
     auto = suggest_mapping(upload["entity"], upload["columns"], upload["source"])
     merged = {f: res["mapping"].get(f) or auto.get(f) for f in ent["fields"]}
-    return {"mapping": merged, "ai_mapping": res["mapping"], "notes": res["notes"], "mapped": sum(1 for v in merged.values() if v)}
+    return {"mapping": merged, "ai_mapping": res["mapping"], "notes": redact_vendor_text(res.get("notes") or ""), "mapped": sum(1 for v in merged.values() if v)}
 
 
 @router.post("/migration/preview")

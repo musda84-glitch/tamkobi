@@ -559,17 +559,19 @@ async def paytr_callback(request: Request):
 
 # ---------------- AI entegrasyonu (sistem geneli) ----------------
 def _ai_public(cfg: dict, include_secrets_meta: bool = True) -> dict:
-    from ai_service import AI_PROVIDERS, public_ai_status
+    from ai_service import client_catalog, public_ai_status
     body = public_ai_status(cfg)
+    # Çalıştırma anahtarları: kayıt ve form bunları geri yazar. Görünen adlar public_ai_status'tadır.
+    body["provider"] = cfg.get("provider") or "emergent"
+    body["advisor_model"] = cfg.get("advisor_model") or ""
+    body["extract_model"] = cfg.get("extract_model") or ""
     if include_secrets_meta:
         body.update({
             "has_key": bool(cfg.get("has_key")),
             "has_env_key": bool(cfg.get("has_env_key")),
-            "env_var": cfg.get("env_var") or "",
             "key_hint": cfg.get("key_hint") or "",
             "base_url": cfg.get("base_url") or "",
-            "last_test": cfg.get("last_test"),
-            "catalog": [{"id": k, **v} for k, v in AI_PROVIDERS.items()],
+            "catalog": client_catalog(),
         })
     return body
 
@@ -632,9 +634,9 @@ async def put_system_ai(req: Dict[str, Any], _: dict = Depends(saas.require_supe
     norm = ai_service.normalize_ai(cur)
     if ai_service.is_custom(norm["provider"]):
         if not norm["base_url"]:
-            raise HTTPException(status_code=400, detail="Özel sağlayıcı için OpenAI uyumlu uç nokta adresi gerekli (ör. https://openrouter.ai/api/v1).")
+            raise HTTPException(status_code=400, detail="Özel uç nokta için adres gerekli.")
         if not norm["advisor_model"]:
-            raise HTTPException(status_code=400, detail="Özel sağlayıcı için model adı gerekli (ör. openai/gpt-4o-mini).")
+            raise HTTPException(status_code=400, detail="Özel uç nokta için model adı gerekli.")
     # cur kaynağıdır; boş api_key / maske gönderimi mevcut anahtarı silmez.
     stored = {
         "enabled": bool(norm.get("enabled", True)),
@@ -689,9 +691,8 @@ async def test_system_ai(req: Dict[str, Any] | None = None, _: dict = Depends(sa
     base_url = str(body.get("base_url") or cfg.get("base_url") or "").strip()
     effective_key = override_key or cfg.get("api_key") or ""
     if not effective_key and not ai_service.is_custom(provider):
-        raise HTTPException(status_code=400, detail=f"Önce bir API anahtarı girin veya sunucuda {cfg.get('env_var') or 'EMERGENT_LLM_KEY'} tanımlayın.")
+        raise HTTPException(status_code=400, detail="Önce bir API anahtarı girin veya sunucuda ortam değişkenini tanımlayın.")
     model = advisor_model or cfg.get("advisor_model") or ""
-    used = f"{ai_service.provider_label(provider)} · {model}"
     try:
         chat = await ai_service.make_chat(
             "ai-platform-test",
@@ -711,5 +712,9 @@ async def test_system_ai(req: Dict[str, Any] | None = None, _: dict = Depends(sa
     # Yalnızca kayıtlı yapılandırma test edildiyse sonucu kalıcı yaz (taslak anahtar yanıltmasın).
     if not override_key:
         await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"ai.last_test": last, "updated_at": _now()}}, upsert=True)
-    return {"ok": ok, "reason": reason, "provider": provider, "model": model,
-            "message": f"AI bağlantısı doğrulandı ({used})." if ok else f"AI bağlantısı başarısız ({used}): {reason}"}
+    public_reason = ai_service.redact_vendor_text(reason)
+    return {
+        "ok": ok,
+        "reason": public_reason,
+        "message": "Yapay zekâ bağlantısı doğrulandı." if ok else f"Yapay zekâ bağlantısı başarısız: {public_reason}",
+    }

@@ -19,7 +19,7 @@ def test_gemini_sdk_vendor_is_gemini_not_google():
     assert ai_service.sdk_vendor("anthropic", "claude-sonnet-4-6") == "anthropic"
 
 
-def test_public_ai_status_uses_extract_label_and_env_key():
+def test_public_ai_status_hides_provider_and_model():
     cfg = ai_service.normalize_ai({
         "provider": "openai",
         "advisor_model": "gpt-4o",
@@ -28,14 +28,21 @@ def test_public_ai_status_uses_extract_label_and_env_key():
     })
     cfg["api_key"] = "sk-test"
     cfg["has_env_key"] = True
+    cfg["last_test"] = {"ok": True, "reason": "OpenAI GPT-4o OK", "model": "gpt-4o", "provider": "openai"}
     st = ai_service.public_ai_status(cfg)
-    assert st["provider"] == "openai"
-    assert st["extract_label"] == "GPT-4.1"
-    assert st["advisor_label"] == "GPT-4o"
+    blob = str(st)
+    assert "provider" not in st
+    assert "advisor_model" not in st
+    assert "extract_model" not in st
+    assert st["extract_label"] == "Yapay zekâ"
+    assert st["advisor_label"] == "Yapay zekâ"
+    assert st["badge"] == "Yapay zekâ"
     assert st["configured"] is True
     assert st["ready"] is True
-    assert "GPT-4.1" in st["extract_badge"]
-    assert "Claude" not in st["extract_badge"]
+    assert "OpenAI" not in blob
+    assert "GPT" not in blob
+    assert "gpt-4" not in blob
+    assert "model" not in (st["last_test"] or {})
 
 
 def test_public_ai_status_not_ready_when_last_test_failed():
@@ -114,12 +121,15 @@ class TestPlatformAiSettings:
         assert d["provider"] == "openai"
         assert d["advisor_model"] == "gpt-4o"
         assert d["extract_model"] == "gpt-4.1"
-        assert d["provider_label"] == "OpenAI"
+        assert d["provider_label"] == "Yapay zekâ"
         st = s.get(f"{API}/ai/status", timeout=20)
         assert st.status_code == 200, st.text
         pub = st.json()
-        assert pub["provider"] == "openai"
-        assert "OpenAI" in pub["badge"]
+        assert "provider" not in pub
+        assert "advisor_model" not in pub
+        assert pub["badge"] == "Yapay zekâ"
+        assert "OpenAI" not in st.text
+        assert "gpt" not in st.text.lower()
         assert "api_key" not in pub
         s.put(f"{API}/system/ai", json=prev, timeout=20)
 
