@@ -243,8 +243,12 @@ class TestCustomEndpoint:
 
     def test_endpoint_is_not_exposed_on_the_tenant_status(self):
         pub = ai_service.public_ai_status({"provider": "custom", "advisor_model": "m", "base_url": "https://secret.internal/v1/chat/completions", "api_key": "k"})
-        assert "secret.internal" not in json.dumps(pub)
-        assert pub["provider_label"] == "Özel (OpenAI uyumlu)"
+        blob = json.dumps(pub)
+        assert "secret.internal" not in blob
+        assert "OpenAI" not in blob
+        assert "base_url" not in pub
+        assert "advisor_model" not in pub
+        assert pub["provider_label"] == "Yapay zekâ"
 
     def test_errors_are_labelled_with_the_custom_provider(self, monkeypatch):
         _patch(monkeypatch, FakeResponse(404, {"error": {"message": "model not found"}}))

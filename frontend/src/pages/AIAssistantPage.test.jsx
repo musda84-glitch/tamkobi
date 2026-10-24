@@ -139,11 +139,11 @@ test("gerçek AI yanıtında yedek etiketi yoktur", async () => {
   expect(host.querySelector("[data-testid='ai-chat-msg-2']").textContent).toContain("Tahsilatı hızlandırın.");
 });
 
-test("sayfa rozeti /ai/status badge değerini gösterir", async () => {
+test("sayfa rozeti sağlayıcı adı göstermez", async () => {
   await show();
   const badge = host.querySelector("[data-testid='ai-assistant-model-badge']");
-  expect(badge.textContent).toContain("Emergent GPT-4o");
-  expect(badge.textContent).not.toContain("GPT-5.4");
-  const statusCalls = axios.get.mock.calls.filter((c) => String(c[0]).includes("/ai/status"));
-  expect(statusCalls.length).toBeGreaterThan(0);
+  expect(badge.textContent).toBe("Yapay zekâ");
+  expect(badge.textContent).not.toContain("Emergent");
+  expect(badge.textContent).not.toContain("GPT");
+  expect(badge.textContent).not.toContain("Destekli");
 });

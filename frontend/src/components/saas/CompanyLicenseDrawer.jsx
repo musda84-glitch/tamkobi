@@ -148,7 +148,7 @@ export const CompanyLicenseDrawer = ({
   }, [tab, storageDetail, loadStorage]);
   useEffect(() => {
     if (tab !== "ai" || aiStatus) return;
-    axios.get(`${API_URL}/system/ai`, cred)
+    axios.get(`${API_URL}/ai/status`, cred)
       .then((r) => setAiStatus(r.data))
       .catch(() => setAiStatus({ enabled: false, error: true }));
   }, [tab, aiStatus]);
@@ -658,16 +658,13 @@ export const CompanyLicenseDrawer = ({
           {tab === "ai" ? (
             <div className="space-y-4" data-testid="drawer-ai">
               <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
-                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Bot className="w-4 h-4 text-slate-400" /> Platform AI durumu</h3>
-                <p className="text-[10px] text-slate-500">Sağlayıcı / model platform genelidir (Sistem → AI Entegrasyonu). Burada yalnızca bu şirketin araç açık/kapalı durumu yönetilir.</p>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Bot className="w-4 h-4 text-slate-400" /> Yapay zekâ durumu</h3>
+                <p className="text-[10px] text-slate-500">Yapay zekâ platform genelidir (Sistem → AI Entegrasyonu). Burada yalnızca bu şirketin araç açık/kapalı durumu yönetilir.</p>
                 {aiStatus?.error ? (
-                  <p className="text-[11px] text-rose-700" data-testid="drawer-ai-status-error">AI durumu alınamadı.</p>
+                  <p className="text-[11px] text-rose-700" data-testid="drawer-ai-status-error">Yapay zekâ durumu alınamadı.</p>
                 ) : aiStatus ? (
-                  <div className="text-[11px] text-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="drawer-ai-status">
+                  <div className="text-[11px] text-slate-700" data-testid="drawer-ai-status">
                     <div>Durum: <b>{aiStatus.enabled === false ? "Kapalı" : (aiStatus.ready ? "Hazır" : "Yapılandırıldı")}</b></div>
-                    <div>Sağlayıcı: <b>{aiStatus.provider || "—"}</b></div>
-                    <div>Danışman modeli: <b data-testid="drawer-ai-advisor-model">{aiStatus.advisor_model || "—"}</b></div>
-                    <div>Aktarım modeli: <b>{aiStatus.extract_model || "—"}</b></div>
                   </div>
                 ) : <p className="text-[11px] text-slate-400">Yükleniyor…</p>}
                 <div className="text-[11px] text-slate-600" data-testid="drawer-ai-usage">

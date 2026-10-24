@@ -209,7 +209,7 @@ const ExcelWizard = ({ companyId, meta, onImported, lockedSource }) => {
   const reset = () => { setParsed(null); setPreview(null); setResult(null); setMapping({}); setAiNote(""); };
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-4 text-xs" data-testid="excel-wizard">
-      <div className="flex items-center justify-between"><b className="text-sm text-slate-900 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Excel / CSV ile Veri Aktarımı</b>{addonOn("ai.migration") && <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2 py-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Yapay zekâ destekli: farklı sistemlerin Excel başlıklarını AI eşler</span>}</div>
+      <div className="flex items-center justify-between"><b className="text-sm text-slate-900 flex items-center gap-2"><FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Excel / CSV ile Veri Aktarımı</b>{addonOn("ai.migration") && <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2 py-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Yapay zekâ Excel başlıklarını eşler</span>}</div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
         <div>
           <label className="block font-semibold mb-1">Kaynak sistem</label>

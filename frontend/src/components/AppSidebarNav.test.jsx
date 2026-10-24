@@ -85,8 +85,8 @@ test("AI rozeti /ai/status ile aynıdır ve sabit model adı yoktur", async () =
   expect(ai).not.toBeNull();
   const badge = host.querySelector("[data-testid='nav-ai-badge']");
   expect(badge).not.toBeNull();
-  expect(badge.textContent).toBe(STATUS_BADGE);
-  expect(ai.textContent).toContain(STATUS_BADGE);
+  expect(badge.textContent).toBe("Yapay zekâ");
+  expect(ai.textContent).not.toContain(STATUS_BADGE);
   expect(host.textContent).not.toContain(STALE);
 
   const statusCalls = axios.get.mock.calls.filter((c) => String(c[0]).includes("/ai/status"));

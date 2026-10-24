@@ -155,7 +155,7 @@ beforeEach(() => {
     const u = String(url);
     if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [] });
     if (u.includes("/system/storage/")) return Promise.resolve({ data: storagePayload });
-    if (u.includes("/system/ai")) return Promise.resolve({ data: { enabled: true, ready: true, provider: "openai", advisor_model: "gpt-4o-mini", extract_model: "gpt-4o-mini" } });
+    if (u.includes("/ai/status")) return Promise.resolve({ data: { enabled: true, ready: true, badge: "Yapay zekâ" } });
     if (u.includes("/system/companies/") && u.endsWith("/sms")) {
       return Promise.resolve({ data: { connected: true, operator: "Netgsm", last_sent_at: "2026-10-12T09:00:00Z", error_count: 2, readonly: true } });
     }
@@ -453,8 +453,9 @@ test("Yapay zekâ tab shows status and toggles addon API", async () => {
   await renderDrawer();
   await clickTab("ai");
   expect(host.querySelector('[data-testid="drawer-ai"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="drawer-ai-status"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="drawer-ai-advisor-model"]')?.textContent).toContain("gpt-4o-mini");
+  const aiPane = host.querySelector('[data-testid="drawer-ai"]');
+  expect(aiPane?.textContent).toMatch(/Hazır/);
+  expect(aiPane?.textContent || "").not.toMatch(/gpt-4o|openai|OpenAI|GPT|Claude|Gemini/i);
   expect(host.querySelector('[data-testid="drawer-addons-ai"]')).not.toBeNull();
   const toggle = host.querySelector('[data-testid="addon-toggle-ai-invoice"]');
   expect(toggle).not.toBeNull();

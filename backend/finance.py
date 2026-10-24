@@ -113,9 +113,10 @@ async def _statement_text(file: UploadFile) -> str:
 async def _ask_json(system: str, text: str) -> dict:
     try:
         chat = await make_chat(f"fin-{uuid.uuid4().hex[:8]}", system, purpose="extract")
+        raw = str(await chat.send_message(UserMessage(text=f"METİN:\n\n{text[:25000]}"))).strip()
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    raw = str(await chat.send_message(UserMessage(text=f"METİN:\n\n{text[:25000]}"))).strip()
+        from ai_service import redact_vendor_text
+        raise HTTPException(status_code=500, detail=redact_vendor_text(str(e)))
     a, b = raw.find("{"), raw.rfind("}")
     if a == -1:
         raise HTTPException(status_code=502, detail="AI yanıtı JSON içermiyor.")

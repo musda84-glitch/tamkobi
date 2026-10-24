@@ -16,7 +16,7 @@ const errText = (e, fallback) => {
 const maskedKeyLabel = (d) => {
   if (d?.key_hint) return `••••••••${d.key_hint}`;
   if (d?.has_key) return "••••••••••••";
-  if (d?.has_env_key) return d.env_var || "ortam değişkeni";
+  if (d?.has_env_key) return "ortam değişkeni";
   return "";
 };
 
@@ -71,7 +71,7 @@ export const AiProviderPanel = () => {
         });
         setD((prev) => ({
           ...prev,
-          last_test: { ok: t.data.ok, reason: t.data.reason, model: t.data.model, provider: t.data.provider },
+          last_test: { ok: t.data.ok, reason: t.data.reason },
           ready: t.data.ok,
         }));
         (t.data.ok ? toast.success : toast.error)(t.data.message);
@@ -97,7 +97,7 @@ export const AiProviderPanel = () => {
         extract_model: d.extract_model,
         base_url: custom ? (d.base_url || "") : "",
       });
-      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason, model: r.data.model } }));
+      setD((prev) => ({ ...prev, last_test: { ok: r.data.ok, reason: r.data.reason } }));
       (r.data.ok ? toast.success : toast.error)(r.data.message);
     } catch (e) {
       toast.error(errText(e, "Test yapılamadı."));
@@ -146,19 +146,19 @@ export const AiProviderPanel = () => {
           ))}
         </div>
         {current?.hint && <p className="text-[11px] text-slate-500 bg-slate-50 rounded-xl px-3 py-2">{current.hint}</p>}
-        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test{d.last_test.model ? ` (${d.last_test.model})` : ""}: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
+        {d.last_test && <div className={`text-[10px] rounded-lg px-3 py-2 ${d.last_test.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`} data-testid="ai-last-test">Son test: {d.last_test.ok ? "başarılı" : `başarısız – ${d.last_test.reason || ""}`}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {custom && (
             <div className="sm:col-span-2">
               <label className="block font-semibold text-slate-700 mb-1">Uç nokta adresi</label>
-              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value, last_test: null })} placeholder="https://openrouter.ai/api/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
-              <p className="text-[10px] text-slate-500 mt-1">OpenAI uyumlu sohbet ucu. Sonuna <b>/chat/completions</b> otomatik eklenir.</p>
+              <input value={d.base_url || ""} onChange={(e) => setD({ ...d, base_url: e.target.value, last_test: null })} placeholder="https://ornek.example/v1" className={inputCls} data-testid="ai-base-url" autoComplete="off" />
+              <p className="text-[10px] text-slate-500 mt-1">Sohbet uç noktası. Sonuna <b>/chat/completions</b> otomatik eklenir.</p>
             </div>
           )}
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Danışman modeli</label>
             {custom ? (
-              <input value={d.advisor_model || ""} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} placeholder="openai/gpt-4o-mini" className={inputCls} data-testid="ai-advisor-model" autoComplete="off" />
+              <input value={d.advisor_model || ""} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} placeholder="model adı" className={inputCls} data-testid="ai-advisor-model" autoComplete="off" />
             ) : (
               <select value={d.advisor_model} onChange={(e) => setD({ ...d, advisor_model: e.target.value })} className={inputCls} data-testid="ai-advisor-model">
                 {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -199,7 +199,7 @@ export const AiProviderPanel = () => {
                       setF({ api_key: e.target.value });
                       if (d.last_test) setD({ ...d, last_test: null });
                     }}
-                    placeholder={`${current?.label || "Sağlayıcı"} API anahtarı`}
+                    placeholder="API anahtarı"
                     className={inputCls}
                     data-testid="ai-api-key"
                     autoComplete="new-password"
@@ -216,7 +216,7 @@ export const AiProviderPanel = () => {
           </div>
         </div>
         <div className="rounded-xl bg-amber-50 text-amber-900 px-3 py-2 text-[11px]" data-testid="ai-active-badge">
-          Aktif: <b>{current?.label || d.provider_label}</b> · danışman <b>{models.find((m) => m.id === d.advisor_model)?.label || d.advisor_label}</b> · ayrıştırma <b>{models.find((m) => m.id === d.extract_model)?.label || d.extract_label}</b>
+          Yapay zekâ {d.enabled === false ? "kapalı" : "etkin"}
           {d.has_key ? <> · anahtar <b data-testid="ai-badge-key">{maskedKeyLabel(d)}</b></> : null}
         </div>
         {d.last_test && d.last_test.ok === false && (
@@ -227,7 +227,7 @@ export const AiProviderPanel = () => {
         )}
         {d.last_test && d.last_test.ok === true && (
           <div className="rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2 text-[11px]" data-testid="ai-last-test-ok">
-            Son bağlantı testi başarılı{d.last_test.model ? ` (${d.last_test.model})` : ""}.
+            Son bağlantı testi başarılı.
           </div>
         )}
         <div className="flex justify-end gap-2">

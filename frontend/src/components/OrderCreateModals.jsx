@@ -12,7 +12,6 @@ import { orderDraftInvoiceCaption } from "../utils/orderMoreMenu";
 import { postOrQueue } from "../offline/write";
 import { safeReadProducts } from "../offline/db";
 import { useEscape } from "../utils/useEscape";
-import { useAiStatus } from "../hooks/useAiStatus";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { OrderAiCart } from "./B2BAiCart";
@@ -231,8 +230,6 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
 
 export const AiOrderImportModal = ({ companyId, onClose, onSaved }) => {
   useEscape(onClose);
-  const { extractLabel } = useAiStatus();
-  const aiModelName = extractLabel || "AI";
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [sel, setSel] = useState([]);
@@ -259,7 +256,7 @@ export const AiOrderImportModal = ({ companyId, onClose, onSaved }) => {
             <input type="file" accept=".pdf,.xlsx,.xlsm,.csv,.txt" className="hidden" onChange={(e) => upload(e.target.files?.[0])} data-testid="ai-order-file" />
             {busy ? <Loader2 className="w-8 h-8 mx-auto animate-spin text-purple-500" /> : <Upload className="w-8 h-8 mx-auto text-purple-400" />}
             <div className="mt-2 font-semibold text-slate-800">{busy ? "AI belgeyi okuyor…" : "Sipariş formu, proforma, bayi sipariş listesi veya pazaryeri Excel dökümünü sürükleyin / seçin"}</div>
-            <div className="text-slate-500 mt-1">{aiModelName} müşteri, adres ve kalemleri çıkarır; stok kartı ve cari eşleşmesi otomatik önerilir. Onaylamadan hiçbir kayıt oluşmaz.</div>
+            <div className="text-slate-500 mt-1">Yapay zekâ müşteri, adres ve kalemleri çıkarır; stok kartı ve cari eşleşmesi otomatik önerilir. Onaylamadan hiçbir kayıt oluşmaz.</div>
           </label>
         ) : (<>
           <div className="flex items-center justify-between"><span className="font-semibold">{res.filename} → <b>{res.count}</b> sipariş bulundu</span><button onClick={() => setRes(null)} className="px-3 py-1.5 border rounded-lg" data-testid="ai-order-reupload">Başka dosya</button></div>

@@ -17,7 +17,7 @@ import { guessTaxSourceKind, TAX_SOURCE_KINDS, taxKindLabel, taxSourceById } fro
 const fmt = (n) => `${formatTrAmount(n || 0)} ₺`;
 
 export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChanged }) {
-  const { extractLabel, ready: aiReady } = useAiStatus();
+  const { ready: aiReady } = useAiStatus();
   const [kind, setKind] = useState("bordro");
   const [rows, setRows] = useState([]);
   const [documents, setDocuments] = useState([]);
@@ -149,7 +149,7 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
         <div>
           <div className="flex items-center gap-2 font-bold text-amber-800 text-xs">
             <Sparkles className="w-4 h-4" /> AI ile ödenecek vergi / SGK yükle
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{extractLabel || "AI"}</span>
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>Yapay zekâ</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">
             Bordro, mizan veya tahakkuk yükleyin. Satırlar hem burada hem{" "}

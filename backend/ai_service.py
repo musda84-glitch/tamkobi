@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -106,6 +107,82 @@ def sdk_vendor(provider: str, model: str) -> str:
 
 def provider_label(provider: str) -> str:
     return (AI_PROVIDERS.get(provider) or {}).get("label") or provider or "AI sağlayıcısı"
+
+
+# Arayüze giden metin. Sağlayıcı ve model adı gösterilmez.
+USER_AI_LABEL = "Yapay zekâ"
+
+# Uzundan kısaya. Küçük/büyük harf duyarsız değiştirilir.
+_VENDOR_TOKENS = (
+    "Google AI Studio",
+    "Google Gemini",
+    "Google AI",
+    "ChatGPT",
+    "OpenAI",
+    "Anthropic",
+    "Claude Opus",
+    "Claude Sonnet",
+    "Claude",
+    "Gemini",
+    "Emergent",
+    "GPT-4o Mini",
+    "GPT-4o",
+    "GPT-4.1",
+    "GPT-5.4",
+    "GPT-4",
+    "GPT",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gpt-4o-mini",
+    "gpt-5.4",
+    "gpt-4.1",
+    "gpt-4o",
+    "EMERGENT_LLM_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "CUSTOM_AI_API_KEY",
+    "openrouter",
+)
+
+
+def redact_vendor_text(text: str) -> str:
+    """Kullanıcıya giden metinden sağlayıcı ve model adını çıkar."""
+    out = str(text or "")
+    for token in sorted(set(_VENDOR_TOKENS), key=len, reverse=True):
+        out = re.sub(re.escape(token), USER_AI_LABEL, out, flags=re.IGNORECASE)
+    out = re.sub(r"\bGoogle\b", USER_AI_LABEL, out)
+    out = re.sub(rf"({re.escape(USER_AI_LABEL)})(?:\s*[·,./\-]*\s*\1)+", USER_AI_LABEL, out)
+    return out
+
+
+_CLIENT_HINTS = {
+    "emergent": "Tek anahtar. Boş bırakılırsa sunucudaki ortam değişkeni kullanılır.",
+    "openai": "Doğrudan API anahtarı. Danışman ve belge ayrıştırma aynı kaynağı kullanır.",
+    "anthropic": "Doğrudan API anahtarı. Danışman ve belge ayrıştırma aynı kaynağı kullanır.",
+    "google": "Doğrudan API anahtarı. Boş bırakılırsa sunucudaki ortam değişkeni kullanılır.",
+    "custom": "Uyumlu bir sohbet uç noktası. Adresi ve model adını siz yazarsınız. Anahtar boşsa sunucudaki ortam değişkeni kullanılır.",
+}
+_CLIENT_LABELS = {"custom": "Özel uç nokta"}
+
+
+def client_catalog() -> list:
+    """Ayar ekranının seçim anahtarları. İpucu metninde sağlayıcı adı yoktur."""
+    out = []
+    for key, meta in AI_PROVIDERS.items():
+        item = {
+            "id": key,
+            "label": _CLIENT_LABELS.get(key) or meta.get("label") or key,
+            "hint": _CLIENT_HINTS.get(key) or "",
+            "models": [{"id": m["id"], "label": m["label"]} for m in meta.get("models") or []],
+        }
+        if meta.get("custom"):
+            item["custom"] = True
+        out.append(item)
+    return out
 
 
 def env_var_name(provider: str) -> str:
@@ -283,14 +360,21 @@ def normalize_ai(raw: dict | None) -> dict:
     }
 
 
+def _public_last_test(raw) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    return {
+        "ok": bool(raw.get("ok")),
+        "reason": redact_vendor_text(str(raw.get("reason") or ""))[:220],
+        "at": raw.get("at") or "",
+    }
+
+
 def public_ai_status(cfg: dict) -> dict:
+    """Tarayıcıya giden durum. Sağlayıcı, model ve rozet adı yoktur."""
     provider = cfg.get("provider") or "emergent"
-    meta = AI_PROVIDERS.get(provider) or AI_PROVIDERS["emergent"]
-    models = {m["id"]: m for m in meta["models"]}
     advisor = cfg.get("advisor_model") or ""
     extract = cfg.get("extract_model") or ""
-    advisor_label = (models.get(advisor) or {}).get("label") or advisor
-    extract_label = (models.get(extract) or {}).get("label") or extract
     # "configured" = çağrı için kullanılabilir anahtar/uç nokta var (yalnızca kayıtlı blob yetmez).
     usable_key = bool(str(cfg.get("api_key") or "").strip())
     custom_ok = is_custom(provider) and bool(cfg.get("base_url")) and bool(extract or advisor)
@@ -304,15 +388,12 @@ def public_ai_status(cfg: dict) -> dict:
         "enabled": enabled,
         "configured": configured,
         "ready": ready,
-        "provider": provider,
-        "provider_label": meta["label"],
-        "advisor_model": advisor,
-        "extract_model": extract,
-        "advisor_label": advisor_label,
-        "extract_label": extract_label,
-        "badge": f"{meta['label']} {advisor_label}".strip(),
-        "extract_badge": f"{meta['label']} {extract_label}".strip(),
-        "last_test": last_test,
+        "provider_label": USER_AI_LABEL,
+        "advisor_label": USER_AI_LABEL,
+        "extract_label": USER_AI_LABEL,
+        "badge": USER_AI_LABEL,
+        "extract_badge": USER_AI_LABEL,
+        "last_test": _public_last_test(last_test),
         "decrypt_failed": bool(cfg.get("decrypt_failed")),
     }
 
@@ -442,7 +523,7 @@ def _is_config_error(exc: BaseException) -> bool:
 
 def _advice_failure(exc: BaseException, fallback_text: str) -> dict:
     """İstisna tavsiye metnine karışmasın. Anahtar ve istem loglanmaz."""
-    message = str(exc)
+    message = redact_vendor_text(str(exc))
     if _is_config_error(exc):
         logger.warning("AI advisor config error (%s)", type(exc).__name__)
         return {"advice": message, "source": "config_error", "error": message}
