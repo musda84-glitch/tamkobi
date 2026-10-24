@@ -20,6 +20,7 @@ import { PrintDocument, PrintTemplateEditor, shouldUseIntegratorPdf } from "../c
 import { ExpenseSlipPrint } from "../components/ExpenseSlipPrint";
 import { SearchSelect } from "../components/SearchSelect";
 import { ContactSearchSelect } from "../components/ContactSearchSelect";
+import { invoiceBuyerName, previewBuyerLabel } from "../utils/invoiceBuyerName";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { DocumentFormModal } from "../components/DocumentFormModal";
 import { MoneyInput } from "../components/MoneyInput";
@@ -619,7 +620,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       e_type: newParam === "purchase" ? "paper" : "e_archive",
       post_stock: newParam === "purchase" ? true : fd.post_stock,
       contact_id: c?.id || fd.contact_id || "",
-      contact_name: c?.name || fd.contact_name || "",
+      contact_name: c ? invoiceBuyerName(c, { fallback: fd.contact_name || "" }) : (fd.contact_name || ""),
       contact_tax_id: c?.tax_number_or_id || fd.contact_tax_id || "",
       contact_tax_office: c?.tax_office || fd.contact_tax_office || "",
       shipping_address: c?.address || fd.shipping_address || "",
@@ -2629,12 +2630,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       value={formData.contact_id}
                       valueLabel={formData.contact_name || ""}
                       placeholder="Cari ara ve seç..."
+                      optionLabel={(c) => invoiceBuyerName(c) || c?.name || "Cari"}
                       onChange={(id, c) => {
                         setContactFieldsOpen(!id);
                         setFormData({
                           ...formData,
                           contact_id: id,
-                          contact_name: c?.name || "",
+                          contact_name: c ? invoiceBuyerName(c) : "",
                           contact_tax_id: c?.tax_number_or_id || "",
                           contact_tax_office: c?.tax_office || "",
                           shipping_address: c?.address || formData.shipping_address || "",
@@ -2745,12 +2747,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               </div>
               {quickContact && (
                 <QuickContactForm companyId={activeCompanyId(activeCompany)} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
-                  onCreated={(c) => { setContacts((prev) => [c, ...prev]); setContactFieldsOpen(false); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(fd.e_type) ? "e_archive" : fd.e_type })); setQuickContact(false); }} />
+                  onCreated={(c) => { setContacts((prev) => [c, ...prev]); setContactFieldsOpen(false); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: invoiceBuyerName(c), shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(fd.e_type) ? "e_archive" : fd.e_type })); setQuickContact(false); }} />
               )}
               <details className="rounded-md border border-slate-200 bg-white px-2 py-1">
                 <summary className="cursor-pointer text-[11px] font-semibold text-slate-600">GİB’den getir</summary>
                 <div className="pt-1.5">
-                  <GibContactLookup companyId={activeCompanyId(activeCompany)} onSelect={(c, eType, meta) => { setContactFieldsOpen(false); setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
+                  <GibContactLookup companyId={activeCompanyId(activeCompany)} onSelect={(c, eType, meta) => { setContactFieldsOpen(false); setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: invoiceBuyerName(c, { gibTitle: meta?.name, fallback: c?.name || "" }), contact_tax_id: c.tax_number_or_id || meta?.tax_id || f.contact_tax_id || "", contact_tax_office: c.tax_office || meta?.tax_office || f.contact_tax_office || "", shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
               </details>
               </div>
@@ -2899,7 +2901,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex justify-between items-start text-xs">
                 <div>
                   <div className="text-slate-400 font-semibold uppercase text-[10px]">SAYIN (ALICI)</div>
-                  <div className="font-bold text-slate-900 text-sm mt-0.5">{previewInvoice.contact_name}</div>
+                  <div className="font-bold text-slate-900 text-sm mt-0.5" data-testid="invoice-preview-buyer">{previewBuyerLabel(previewInvoice, contacts)}</div>
                   <div className="text-slate-600 mt-1">VKN / TCKN: {previewInvoice.contact_tax_id || 'Belirtilmedi'}</div>
                   {(previewInvoice.incoterm || previewInvoice.country) && <div className="text-slate-600 mt-1">{previewInvoice.incoterm} {previewInvoice.country}{previewInvoice.customs_office ? ` · ${previewInvoice.customs_office}` : ""}</div>}
                   {(previewInvoice.declaration_no || previewInvoice.bl_awb || previewInvoice.dab_no || previewInvoice.trade_file_number) && (
