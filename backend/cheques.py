@@ -1119,6 +1119,7 @@ async def delete_cheque(cheque_id: str, user: dict = Depends(_user_dep)):
     cid = _doc_cid(doc)
     if doc.get("status") not in ("open", "cancelled", "bounced"):
         raise HTTPException(status_code=400, detail="Tahsil/ödeme/ciro edilmiş kayıt silinemez. Banka hareketinden geri alın.")
+    await trash.refuse_repeat("cheques", doc)
     if doc.get("status") == "open" and not doc.get("skip_ledger"):
         await _apply_contact(doc.get("contact_id"), -_contact_delta_on_create(doc["direction"], float(doc["amount"])), company_id=cid)
     related = []

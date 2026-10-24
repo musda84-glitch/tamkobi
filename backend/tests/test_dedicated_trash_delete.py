@@ -21,6 +21,7 @@ sys.path.insert(0, str(_BACKEND / "docker" / "stubs"))
 
 os.environ.setdefault("REACT_APP_BACKEND_URL", "http://127.0.0.1:9")
 
+import account_balance  # noqa: E402
 import server  # noqa: E402
 import storage_router  # noqa: E402
 import trash  # noqa: E402
@@ -353,15 +354,92 @@ def test_reuse_does_not_insert_a_second_trash_copy(routed):
         "doc": {"_id": "tx-live", "company_id": CO_A},
         "related": [],
     })
-    tid = _run(trash.soft_delete(
-        "bank_transactions",
-        {"_id": "tx-live", "company_id": CO_A, "amount": 1, "description": "bir"},
-        "bank_transaction",
-        "bir",
-    ))
-    assert tid == "trash-tx"
+    with pytest.raises(HTTPException) as again:
+        _run(trash.soft_delete(
+            "bank_transactions",
+            {"_id": "tx-live", "company_id": CO_A, "amount": 1, "description": "bir"},
+            "bank_transaction",
+            "bir",
+        ))
+    assert again.value.status_code == 409
     assert _live(db, CO_A, "bank_transactions", "tx-live") is None
     assert [row["_id"] for row in db.dedicated[CO_A]["trash"]] == ["trash-tx"]
+
+
+def test_repeat_delete_with_existing_trash_does_not_refund(routed):
+    """Çöpte aynı _id varken ikinci silme bakiyeye iade yazmaz."""
+    db = routed
+    _put(db, CO_A, "bank_accounts", {
+        "_id": POS_ACC, "type": "pos", "account_name": "POS",
+        "current_balance": 0.0, "currency": "TRY",
+    })
+    _put(db, CO_A, "bank_transactions", {
+        "_id": POS_TX, "account_id": POS_ACC, "account_name": "POS",
+        "type": "outflow", "amount": 30000.0, "source": "manual",
+        "description": "POS çıkış", "date": "2026-10-24",
+    })
+    _put(db, CO_A, "trash", {
+        "_id": "trash-pos",
+        "collection": "bank_transactions",
+        "entity_type": "bank_transaction",
+        "company_id": CO_A,
+        "doc": {"_id": POS_TX, "company_id": CO_A, "amount": 30000.0, "type": "outflow"},
+        "related": [],
+    })
+    user = _user(CO_A)
+    with pytest.raises(HTTPException) as first:
+        _run(server.delete_bank_transaction(POS_TX, user))
+    assert first.value.status_code == 409
+    assert _live(db, CO_A, "bank_accounts", POS_ACC)["current_balance"] == pytest.approx(0.0)
+    assert _inc_sum(db, "bank_accounts", CO_A, "current_balance") == pytest.approx(0.0)
+    assert [row["_id"] for row in db.dedicated[CO_A]["trash"]] == ["trash-pos"]
+
+    with pytest.raises(HTTPException) as second:
+        _run(server.delete_bank_transaction(POS_TX, user))
+    assert second.value.status_code in (404, 409)
+    assert _live(db, CO_A, "bank_accounts", POS_ACC)["current_balance"] == pytest.approx(0.0)
+    assert _inc_sum(db, "bank_accounts", CO_A, "current_balance") == pytest.approx(0.0)
+
+
+def _movement(db, company_id, account_id):
+    acc = _live(db, company_id, "bank_accounts", account_id)
+    txs = [
+        row for row in db.dedicated.get(company_id, {}).get("bank_transactions", [])
+        if row.get("account_id") == account_id or row.get("target_account_id") == account_id
+    ]
+    return account_balance.movement_balance(txs, account_id, acc), acc
+
+
+def test_dedicated_delete_keeps_current_balance_on_movement(routed):
+    """Silme sonrası kayıtlı bakiye kalan hareket toplamına eşittir. İkinci silme dokunmaz."""
+    db = routed
+    _put(db, CO_A, "bank_accounts", {
+        "_id": POS_ACC, "type": "pos", "account_name": "POS",
+        "current_balance": 20000.0, "currency": "TRY",
+    })
+    _put(db, CO_A, "bank_transactions", {
+        "_id": "tx-in", "account_id": POS_ACC, "account_name": "POS",
+        "type": "inflow", "amount": 30000.0, "source": "manual",
+        "description": "Giriş", "date": "2026-10-24",
+    })
+    _put(db, CO_A, "bank_transactions", {
+        "_id": "tx-out", "account_id": POS_ACC, "account_name": "POS",
+        "type": "outflow", "amount": 10000.0, "source": "manual",
+        "description": "Çıkış", "date": "2026-10-24",
+    })
+    user = _user(CO_A)
+    out = _run(server.delete_bank_transaction("tx-out", user))
+    assert out["status"] == "success"
+    moved, acc = _movement(db, CO_A, POS_ACC)
+    assert acc["current_balance"] == pytest.approx(moved)
+    assert acc["current_balance"] == pytest.approx(30000.0)
+
+    with pytest.raises(HTTPException) as again:
+        _run(server.delete_bank_transaction("tx-out", user))
+    assert again.value.status_code in (404, 409)
+    moved, acc = _movement(db, CO_A, POS_ACC)
+    assert acc["current_balance"] == pytest.approx(moved)
+    assert acc["current_balance"] == pytest.approx(30000.0)
 
 
 def test_legacy_without_company_id_deletes_catalog_only(routed):

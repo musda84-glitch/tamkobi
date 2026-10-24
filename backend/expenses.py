@@ -602,10 +602,11 @@ async def delete_expense(expense_id: str, user: dict = Depends(_user_dep)):
     if not cid:
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
     had_partner = bool(await _db.partner_transactions.find_one({"expense_id": expense_id, "company_id": cid}))
+    import trash
+    await trash.refuse_repeat("expenses", exp)
     if exp.get("payment_status") == "paid":
         await _reverse_payment(exp, company_id=cid)  # ortak / kasa karşılığını siler, bakiyeleri geri alır
     await detach_bank_match_expense(exp, company_id=cid)
-    import trash
     note = f"{float(exp.get('total') or 0):,.2f} ₺ · {exp.get('payment_status')}"
     if had_partner:
         note += " · bağlı ortak hareketi silindi"

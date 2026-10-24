@@ -365,6 +365,15 @@ async def reverse_linked(
     # 1) Bank effects + soft/reverse
     for tx in bank:
         try:
+            if await trash.original_in_trash("bank_transactions", tx):
+                if mode != "reverse":
+                    await _soft_delete_move(
+                        "bank_transactions",
+                        tx,
+                        "bank_transaction",
+                        note=f"linked:{st}/{sid}" + (f" · {reason}" if reason else ""),
+                    )
+                continue
             if mode == "reverse":
                 await _write_reverse_bank_entry(db, tx, reason or "kaynak silindi")
                 # Mark original so find_linked / idempotency skips double-reverse
@@ -390,6 +399,15 @@ async def reverse_linked(
     # 2) Partner — balance undo + soft_delete (delete mode) or compensating move
     for ptx in partner:
         try:
+            if await trash.original_in_trash("partner_transactions", ptx):
+                if mode != "reverse":
+                    await _soft_delete_move(
+                        "partner_transactions",
+                        ptx,
+                        "partner_transaction",
+                        note=f"linked:{st}/{sid}",
+                    )
+                continue
             amount = float(ptx.get("amount") or 0)
             t = ptx.get("type")
             ptx_cid = str(ptx.get("company_id") or "")
@@ -535,10 +553,14 @@ async def undo_effects_keep_docs(db, related: List[dict]) -> None:
     for block in related or []:
         if block.get("collection") == "bank_transactions":
             for tx in block.get("docs") or []:
+                if await trash.original_in_trash("bank_transactions", tx):
+                    continue
                 if _reverse_tx_effects:
                     await _reverse_tx_effects(tx, -1)
         elif block.get("collection") == "partner_transactions":
             for ptx in block.get("docs") or []:
+                if await trash.original_in_trash("partner_transactions", ptx):
+                    continue
                 amount = float(ptx.get("amount") or 0)
                 t = ptx.get("type")
                 ptx_cid = str(ptx.get("company_id") or "")
