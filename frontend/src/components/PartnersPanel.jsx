@@ -12,7 +12,7 @@ import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { MoneyInput } from "./MoneyInput";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { isPartnerCashType, isPartnerLedgerType, PARTNER_PAID_LABEL, PARTNER_RECEIVED_LABEL, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
 import { sortBankTransactions } from "../utils/bankAccountTx";
@@ -509,7 +509,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged, focusApprova
                   onClick={(e) => e.stopPropagation()}
                 >
                   {p.photo_url ? (
-                    <img src={resolveImageUrl(p.photo_url)} alt="" className="w-10 h-10 rounded-full object-cover bg-white border border-slate-200" />
+                    <img src={listThumbUrl(p.photo_url)} alt="" width={40} height={40} loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover bg-white border border-slate-200" />
                   ) : (
                     <div className="w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center font-black text-xs">{(p.name || "O").slice(0, 2).toUpperCase()}</div>
                   )}

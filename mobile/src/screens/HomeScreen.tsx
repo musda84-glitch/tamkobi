@@ -20,15 +20,26 @@ import { requestConfirm } from "../utils/confirmDialog";
 import {
   HOME_QUICK_EXTRA_KEY,
   HOME_QUICK_HIDDEN_KEY,
+  addExtraTile,
   filterHomeQuickTiles,
   hideQuickTile,
+  isTileOnHome,
   parseExtraTileIds,
   parseHiddenTileIds,
   removeExtraTile,
+  restoreQuickTile,
   serializeExtraTileIds,
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
 import { isDefaultOverviewOrder, normalizeOverviewOrder, readHomeOverviewOrder, resetHomeOverviewOrder, writeHomeOverviewOrder } from "../utils/homeOverviewOrder";
+import {
+  isDefaultQuickOrder,
+  moveQuickTile,
+  readHomeQuickOrder,
+  reconcileQuickOrder,
+  resetHomeQuickOrder,
+  writeHomeQuickOrder,
+} from "../utils/homeQuickOrder";
 import { readHomeStartPage, startPageIndex } from "../utils/homeStartPage";
 import { idOf } from "../utils/money";
 import { resolveMediaUrl } from "../utils/media";
@@ -68,6 +79,10 @@ export function HomeScreen() {
   const [overviewOrderScope, setOverviewOrderScope] = useState("");
   const [reordering, setReordering] = useState(false);
   const [draftOrder, setDraftOrder] = useState<OverviewSectionKey[]>(() => [...DEFAULT_OVERVIEW_SECTION_ORDER]);
+  const [tileOrder, setTileOrder] = useState<string[]>([]);
+  const [tileOrderScope, setTileOrderScope] = useState("");
+  const [tileReordering, setTileReordering] = useState(false);
+  const [tileDraft, setTileDraft] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [frameHeight, setFrameHeight] = useState(0);
   const [dotsHeight, setDotsHeight] = useState(0);
@@ -87,6 +102,22 @@ export function HomeScreen() {
     [user, license]
   );
   const visibleTiles = useMemo(() => filterHomeQuickTiles(tiles, hiddenIds, extraIds), [tiles, hiddenIds, extraIds]);
+  const allowedIds = useMemo(() => tiles.map((tile) => tile.id), [tiles]);
+  const tileById = useMemo(() => {
+    const map = new Map<string, QuickTile>();
+    for (const tile of tiles) map.set(tile.id, tile);
+    return map;
+  }, [tiles]);
+  const appliedTileOrder = useMemo(
+    () => reconcileQuickOrder(tileOrderScope === overviewScope ? tileOrder : [], allowedIds),
+    [allowedIds, overviewScope, tileOrder, tileOrderScope],
+  );
+  const orderedVisible = useMemo(
+    () => appliedTileOrder
+      .map((id) => tileById.get(id))
+      .filter((tile): tile is QuickTile => Boolean(tile) && isTileOnHome(tile, hiddenIds, extraIds)),
+    [appliedTileOrder, extraIds, hiddenIds, tileById],
+  );
 
   const badges = useMemo(() => tileBadges(notes, { ...live, my_tasks: openTasks }), [notes, live, openTasks]);
 
@@ -99,13 +130,7 @@ export function HomeScreen() {
     ]);
   }, []);
 
-  const askHideTile = useCallback(async (tile: QuickTile) => {
-    const ok = await requestConfirm(
-      "Karo gizlensin mi?",
-      `"${tile.label}" ana ekrandan kaldırılsın. Daha menüsünden tekrar ekleyebilirsiniz.`,
-      "Gizle",
-    );
-    if (!ok) return;
+  const hideTileNow = useCallback(async (tile: QuickTile) => {
     if (tile.optIn) {
       await persistHomePrefs(hiddenIds, removeExtraTile(extraIds, tile.id));
     } else {
@@ -113,19 +138,77 @@ export function HomeScreen() {
     }
   }, [extraIds, hiddenIds, persistHomePrefs]);
 
-  const quickItems: ActionTile[] = useMemo(
-    () => visibleTiles.map((tile) => ({
-      key: tile.id,
-      label: tile.label,
-      icon: tile.icon as ActionTile["icon"],
-      tone: tile.tone,
-      badge: badges[tile.id],
-      testID: `home-quick-${tile.id}`,
-      onPress: () => goHref(tile.href),
-      onLongPress: () => { void askHideTile(tile); },
-    })),
-    [visibleTiles, badges, askHideTile]
+  const showQuickTile = useCallback(async (tile: QuickTile) => {
+    if (tile.optIn) {
+      await persistHomePrefs(hiddenIds, addExtraTile(extraIds, tile.id));
+    } else {
+      await persistHomePrefs(restoreQuickTile(hiddenIds, tile.id), extraIds);
+    }
+  }, [extraIds, hiddenIds, persistHomePrefs]);
+
+  const askHideTile = useCallback(async (tile: QuickTile) => {
+    const ok = await requestConfirm(
+      "Karo gizlensin mi?",
+      `"${tile.label}" ana ekrandan kaldırılsın. Daha menüsünden tekrar ekleyebilirsiniz.`,
+      "Gizle",
+    );
+    if (!ok) return;
+    await hideTileNow(tile);
+  }, [hideTileNow]);
+
+  const askTileMenu = useCallback((tile: QuickTile) => {
+    Alert.alert(
+      "Karo gizlensin mi?",
+      `"${tile.label}" ana ekrandan kaldırılsın. Daha menüsünden tekrar ekleyebilirsiniz.`,
+      [
+        { text: "Gizle", onPress: () => { void hideTileNow(tile); } },
+        {
+          text: "Yerini değiştir",
+          onPress: () => {
+            if (reordering || tileOrderScope !== overviewScope) return;
+            triggerReorderHaptic();
+            setTileDraft(reconcileQuickOrder(tileOrder, allowedIds));
+            setTileReordering(true);
+            setPage(1);
+            if (width > 0) pagerRef.current?.scrollTo({ x: width, y: 0, animated: true });
+          },
+        },
+        { text: "Vazgeç", style: "cancel" },
+      ],
+    );
+  }, [allowedIds, hideTileNow, overviewScope, reordering, tileOrder, tileOrderScope, width]);
+
+  const toQuickAction = useCallback((tile: QuickTile, onLongPress?: () => void, onPress?: () => void): ActionTile => ({
+    key: tile.id,
+    label: tile.label,
+    icon: tile.icon as ActionTile["icon"],
+    tone: tile.tone,
+    badge: badges[tile.id],
+    testID: `home-quick-${tile.id}`,
+    onPress: onPress ?? (() => goHref(tile.href)),
+    onLongPress,
+  }), [badges]);
+
+  const plainQuickItems = useMemo(
+    () => visibleTiles.map((tile) => toQuickAction(tile, () => { void askHideTile(tile); })),
+    [askHideTile, toQuickAction, visibleTiles],
   );
+
+  const financeQuickItems = useMemo(
+    () => orderedVisible.map((tile) => toQuickAction(tile, () => askTileMenu(tile))),
+    [askTileMenu, orderedVisible, toQuickAction],
+  );
+
+  const editItems = useMemo(() => tileDraft.flatMap((id) => {
+    const tile = tileById.get(id);
+    if (!tile) return [];
+    const hidden = !isTileOnHome(tile, hiddenIds, extraIds);
+    return [{
+      ...toQuickAction(tile, undefined, hidden ? () => { void showQuickTile(tile); } : () => {}),
+      badge: hidden ? undefined : badges[tile.id],
+      dimmed: hidden,
+    }];
+  }), [badges, extraIds, hiddenIds, showQuickTile, tileById, tileDraft, toQuickAction]);
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -203,19 +286,47 @@ export function HomeScreen() {
   }, [showFinance, user?.id, companyId]);
 
   useEffect(() => {
+    if (!showFinance) return undefined;
+    let live = true;
+    const userId = String(user?.id || "");
+    const company = String(companyId || "");
+    const nextScope = `${userId}:${company}`;
+    readHomeQuickOrder(userId, company).then((order) => {
+      if (!live) return;
+      setTileOrder(order);
+      setTileOrderScope(nextScope);
+    });
+    return () => { live = false; };
+  }, [showFinance, user?.id, companyId]);
+
+  useEffect(() => {
     if (settledOverviewScope.current === overviewScope) return;
     settledOverviewScope.current = overviewScope;
     setReordering(false);
+    setTileReordering(false);
   }, [overviewScope]);
 
   useEffect(() => {
-    if (!reordering) return undefined;
+    if (!reordering && !tileReordering) return undefined;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (tileReordering) {
+        setTileReordering(false);
+        return true;
+      }
       setReordering(false);
       return true;
     });
     return () => subscription.remove();
-  }, [reordering]);
+  }, [reordering, tileReordering]);
+
+  useEffect(() => {
+    if (!tileReordering) return;
+    setTileDraft((prev) => {
+      const next = reconcileQuickOrder(prev, allowedIds);
+      if (next.length === prev.length && next.every((id, index) => id === prev[index])) return prev;
+      return next;
+    });
+  }, [allowedIds, tileReordering]);
 
   const commitOverviewOrder = useCallback(async () => {
     const userId = String(user?.id || "");
@@ -238,6 +349,29 @@ export function HomeScreen() {
     setDraftOrder(def);
     setOverviewOrder(def);
   }, [companyId, user?.id]);
+
+  const commitTileOrder = useCallback(async () => {
+    const userId = String(user?.id || "");
+    const company = String(companyId || "");
+    const scopeAtStart = `${userId}:${company}`;
+    const next = reconcileQuickOrder(tileDraft, allowedIds);
+    await writeHomeQuickOrder(userId, company, next, allowedIds);
+    if (overviewScopeRef.current !== scopeAtStart) return;
+    setTileOrder(next);
+    setTileOrderScope(scopeAtStart);
+    setTileReordering(false);
+  }, [allowedIds, companyId, tileDraft, user?.id]);
+
+  const resetTileDraft = useCallback(async () => {
+    const userId = String(user?.id || "");
+    const company = String(companyId || "");
+    const scopeAtStart = `${userId}:${company}`;
+    const def = await resetHomeQuickOrder(userId, company, allowedIds);
+    if (overviewScopeRef.current !== scopeAtStart) return;
+    setTileDraft(def);
+    setTileOrder(def);
+    setTileOrderScope(scopeAtStart);
+  }, [allowedIds, companyId, user?.id]);
 
   useEffect(() => {
     if (!showFinance || !startReady || width <= 0) return;
@@ -316,7 +450,7 @@ export function HomeScreen() {
   const tilesPage = (
     <HomeTilesPage
       error={error}
-      quickItems={quickItems}
+      quickItems={plainQuickItems}
       showRefresh={showRefresh}
       refreshing={refreshing}
       onRefresh={load}
@@ -386,7 +520,7 @@ export function HomeScreen() {
         pagingEnabled
         nestedScrollEnabled
         showsHorizontalScrollIndicator={false}
-        scrollEnabled={!reordering}
+        scrollEnabled={!reordering && !tileReordering}
         testID="home-pager"
         style={{ height: pageHeight || undefined, flex: pageHeight ? undefined : 1 }}
         contentOffset={{ x: pageOffset, y: 0 }}
@@ -420,7 +554,7 @@ export function HomeScreen() {
                 {...panelProps}
                 sectionOrder={visibleOverviewOrder}
                 onRequestReorder={() => {
-                  if (overviewOrderScope !== overviewScope) return;
+                  if (tileReordering || overviewOrderScope !== overviewScope) return;
                   triggerReorderHaptic();
                   setDraftOrder([...visibleOverviewOrder]);
                   setReordering(true);
@@ -430,8 +564,19 @@ export function HomeScreen() {
           </Screen>
         </View>
         <View style={{ width, height: pageHeight || undefined }} testID="home-page-tiles">
-          <Screen onRefresh={load} refreshing={refreshing}>
-            {tilesPage}
+          <Screen onRefresh={tileReordering ? undefined : load} refreshing={refreshing}>
+            <HomeTilesPage
+              error={error}
+              quickItems={tileReordering ? editItems : financeQuickItems}
+              showRefresh={showRefresh && !tileReordering}
+              refreshing={refreshing}
+              onRefresh={load}
+              editing={tileReordering}
+              onMoveTile={(from, to) => setTileDraft((prev) => moveQuickTile(prev, from, to))}
+              onDoneEdit={() => { void commitTileOrder(); }}
+              onResetEdit={() => { void resetTileDraft(); }}
+              resetDisabled={isDefaultQuickOrder(tileDraft, allowedIds)}
+            />
           </Screen>
         </View>
       </ScrollView>

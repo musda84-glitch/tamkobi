@@ -30,7 +30,7 @@ export default function LoginPage() {
   const { login, applySession } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "", phone: "" });
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState("login");
@@ -156,7 +156,7 @@ export default function LoginPage() {
           <BuildStamp tone="light" />
         </form>
       ) : (
-        <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-page">
+        <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-page" autoComplete="on">
           <LoginBrand subtitle="KOBİ'LER İÇİN TAM ERP" />
           <p className="text-xs text-slate-500">Hesabınızla giriş yapın. Personel ve yönetici aynı ekranı kullanır.</p>
           <div>

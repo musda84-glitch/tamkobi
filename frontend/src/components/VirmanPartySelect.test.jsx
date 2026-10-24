@@ -10,7 +10,11 @@ jest.mock("axios", () => {
 });
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
 jest.mock("../utils/dataRefresh", () => ({ useDataRefresh: () => ({}) }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 
 let host;
 let last;

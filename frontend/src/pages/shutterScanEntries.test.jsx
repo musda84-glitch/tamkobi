@@ -51,8 +51,15 @@ jest.mock("../context/PosSessionContext", () => ({
     shift: null,
   }),
 }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (url) => url || "" }));
-jest.mock("../utils/productImages", () => ({ productListImageUrl: () => "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (url) => url || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
+jest.mock("../utils/productImages", () => ({
+  productListImageUrl: () => "",
+  productCardImageUrl: (p) => (p && p.image_url) || "",
+}));
 jest.mock("../utils/dataRefresh", () => ({ useDataRefresh: () => {}, notifyDataChanged: jest.fn() }));
 jest.mock("../utils/dataSync", () => ({
   __esModule: true,

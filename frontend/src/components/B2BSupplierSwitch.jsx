@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, ChevronDown, LogOut } from "lucide-react";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { logoutB2B, supplierAvatarClass, supplierCartUnits, supplierInitials } from "../utils/b2bSession";
 import { useEscape } from "../utils/useEscape";
 
@@ -9,8 +9,12 @@ export function SupplierFace({ name, logoUrl, className = "w-10 h-10 text-xs" })
   if (logoUrl) {
     return (
       <img
-        src={resolveImageUrl(logoUrl)}
+        src={listThumbUrl(logoUrl)}
         alt=""
+        width={44}
+        height={44}
+        loading="lazy"
+        decoding="async"
         className={`${className} rounded-xl object-contain bg-white border border-slate-200 shrink-0`}
       />
     );

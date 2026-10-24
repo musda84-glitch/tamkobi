@@ -1,0 +1,244 @@
+"""Yalnız `_id` ile giden kiracı sorguları.
+
+Üretildi: dedicated_id_scan.scan. Elle yalnız silme yapın.
+Yeni çağrı company_id ister ya da satırında `# id-ok: neden` taşır.
+rbac.py ve addons.py DEDICATED_ID_FROZEN içindedir; bu dosyalar değişmez.
+"""
+
+from __future__ import annotations
+
+# (dosya, fonksiyon, koleksiyon, op) -> adet. Satır numarası anahtarda yoktur.
+# Dinamik db[koleksiyon] adı boş stringdir.
+
+DEDICATED_ID_FROZEN: dict[tuple[str, str, str, str], int] = {
+    # rbac.py
+    ('rbac.py', 'accept_invite', 'employees', 'update_one'): 1,
+    ('rbac.py', 'accept_invite', 'user_invites', 'find_one'): 1,
+    ('rbac.py', 'accept_invite', 'user_invites', 'update_one'): 1,
+    ('rbac.py', 'cancel_invite', 'user_invites', 'delete_one'): 1,
+    ('rbac.py', 'cancel_invite', 'user_invites', 'find_one'): 1,
+    ('rbac.py', 'delete_role', 'roles', 'delete_one'): 1,
+    ('rbac.py', 'ensure_roles', 'roles', 'update_one'): 1,
+    ('rbac.py', 'get_invite', 'user_invites', 'find_one'): 1,
+    ('rbac.py', 'invite_user', 'user_invites', 'update_one'): 1,
+    ('rbac.py', 'list_users', 'employees', 'find'): 1,
+    ('rbac.py', 'update_role', 'roles', 'find_one'): 1,
+    ('rbac.py', 'update_role', 'roles', 'update_one'): 1,
+    ('rbac.py', 'update_user', 'employees', 'find_one'): 1,
+    ('rbac.py', 'update_user', 'employees', 'update_one'): 1,
+}
+
+DEDICATED_ID_BASELINE: dict[tuple[str, str, str, str], int] = {
+    # account_balance.py
+    ('account_balance.py', '_lookup_company_id', 'bank_accounts', 'find_one'): 2,
+    # b2b_identity.py
+    ('b2b_identity.py', '_stored_contact_links', 'contacts', 'find'): 1,
+    ('b2b_identity.py', 'finish_b2b_forgot', 'b2b_password_resets', 'update_one'): 1,
+    # balance_reconciliation.py
+    ('balance_reconciliation.py', 'conflicting_connection_iban', 'bank_accounts', 'find'): 1,
+    # bank_guard.py
+    ('bank_guard.py', 'assert_collection_allowed', 'bank_accounts', 'find_one'): 1,
+    # bank_match_desc.py
+    ('bank_match_desc.py', 'migrate_match_descriptions', 'bank_transactions', 'update_one'): 2,
+    # company_audit.py
+    ('company_audit.py', 'commit_from_request', '', 'find_one'): 1,
+    ('company_audit.py', 'prepare', '', 'find_one'): 1,
+    ('company_audit.py', 'prepare', 'trash', 'find_one'): 1,
+    ('company_audit.py', 'purge_expired', '', 'delete_one'): 1,
+    # e_invoice.py
+    ('e_invoice.py', '_require_einvoice_access', 'invoices', 'find_one'): 1,
+    # einvoice_designs.py
+    ('einvoice_designs.py', '_delete_scoped', '', 'delete_one'): 2,
+    ('einvoice_designs.py', '_get', '', 'find_one'): 1,
+    ('einvoice_designs.py', '_select_scoped', '', 'update_one'): 2,
+    ('einvoice_designs.py', '_unselect_scope', '', 'update_one'): 1,
+    ('einvoice_designs.py', '_update_design_impl', '', 'update_one'): 1,
+    ('einvoice_designs.py', 'delete_company_design', '', 'delete_one'): 1,
+    ('einvoice_designs.py', 'ensure_defaults', '', 'find_one'): 1,
+    ('einvoice_designs.py', 'import_company_design', '', 'update_one'): 1,
+    ('einvoice_designs.py', 'select_company_design', '', 'update_one'): 1,
+    # event_notify.py
+    ('event_notify.py', '_inc_sms_daily', 'notify_sms_daily', 'update_one'): 1,
+    ('event_notify.py', 'save_tenant_prefs', 'company_notify_tenant', 'update_one'): 1,
+    # fx.py
+    ('fx.py', '_upsert_rates', 'fx_rates', 'update_one'): 1,
+    # idempotency.py
+    ('idempotency.py', 'purge_expired', 'idempotency_keys', 'delete_one'): 1,
+    # mobile_logs.py
+    ('mobile_logs.py', 'delete_mobile_log', '', 'delete_one'): 1,
+    # notify.py
+    ('notify.py', 'remember_push_receipts', 'push_receipts_pending', 'update_one'): 1,
+    # order_time.py
+    ('order_time.py', 'collect_order_date_fixes', 'orders', 'update_one'): 1,
+    # partner_pay.py
+    ('partner_pay.py', '_partner_company_id', 'partners', 'find_one'): 2,
+    ('partner_pay.py', 'sync_partner_from_ledger', 'partners', 'find_one'): 1,
+    # platform_admin_v1_write.py
+    ('platform_admin_v1_write.py', '_write', 'idempotency_keys', 'find_one'): 1,
+    # saas.py
+    ('saas.py', 'apply_upgrade_resolution', 'upgrade_requests', 'find_one'): 1,
+    ('saas.py', 'seed', 'products', 'update_one'): 1,
+    ('saas.py', 'send_password_reset_for', 'password_resets', 'update_one'): 1,
+    # saas_docs.py
+    ('saas_docs.py', '_require_invoice_doc_access', 'invoices', 'find_one'): 1,
+    ('saas_docs.py', 'invoice_pdf', 'contacts', 'find_one'): 1,
+    ('saas_docs.py', 'quote_pdf', 'quotes', 'find_one'): 1,
+    # saas_extras.py
+    ('saas_extras.py', 'issue_subscription_invoice', 'invoices', 'update_one'): 1,
+    # seed_data.py
+    ('seed_data.py', 'seed_shopfloor_pins', 'employees', 'find_one'): 1,
+    ('seed_data.py', 'seed_shopfloor_pins', 'employees', 'update_one'): 1,
+    # server.py
+    ('server.py', '_annotate_orders_invoice_mismatch', 'invoices', 'find'): 1,
+    ('server.py', '_apply_shopfloor_station_grouping', 'work_orders', 'update_one'): 1,
+    ('server.py', '_assert_salary_bank_only', 'bank_accounts', 'find_one'): 1,
+    ('server.py', '_b2b_reset_doc', 'b2b_password_resets', 'find_one'): 1,
+    ('server.py', '_body', 'invoices', 'delete_one'): 1,
+    ('server.py', '_body', 'invoices', 'update_one'): 1,
+    ('server.py', '_body', 'products', 'update_one'): 1,
+    ('server.py', '_collapse_marketplace_order_dupes', 'orders', 'delete_many'): 1,
+    ('server.py', '_complete_production_order_core', 'production_orders', 'update_one'): 1,
+    ('server.py', '_complete_production_order_core', 'products', 'update_one'): 4,
+    ('server.py', '_complete_production_order_core', 'recipes', 'find_one'): 1,
+    ('server.py', '_create_draft_invoice_for_order', 'orders', 'update_one'): 1,
+    ('server.py', '_drop_trash_row', 'trash', 'delete_one'): 1,
+    ('server.py', '_employee_assigned_work', 'employees', 'find_one'): 1,
+    ('server.py', '_enrich_work_orders_job_fields', 'products', 'find'): 1,
+    ('server.py', '_enrich_work_orders_job_fields', 'work_orders', 'update_one'): 3,
+    ('server.py', '_ensure_company_doc', '', 'find_one'): 1,
+    ('server.py', '_erp_reset_doc', 'password_resets', 'find_one'): 1,
+    ('server.py', '_execute_contact_partner_payment', 'contacts', 'find_one'): 1,
+    ('server.py', '_execute_contact_partner_payment', 'contacts', 'update_one'): 1,
+    ('server.py', '_filter_active_production_work_orders', 'production_orders', 'find'): 1,
+    ('server.py', '_forgot_sms_deliver', 'password_resets', 'update_one'): 1,
+    ('server.py', '_notify_new_task_assignees', 'employees', 'find_one'): 1,
+    ('server.py', '_pay_payroll_core', 'employees', 'find_one'): 1,
+    ('server.py', '_pos_do_cancel_sale', 'bank_accounts', 'update_one'): 1,
+    ('server.py', '_pos_return_core', 'bank_accounts', 'update_one'): 1,
+    ('server.py', '_pos_return_core', 'contacts', 'update_one'): 1,
+    ('server.py', '_pos_return_core', 'invoices', 'find_one'): 1,
+    ('server.py', '_pos_return_core', 'invoices', 'update_one'): 2,
+    ('server.py', '_post_marketplace_settlement', 'bank_accounts', 'find_one'): 1,
+    ('server.py', '_post_marketplace_settlement', 'bank_accounts', 'update_one'): 1,
+    ('server.py', '_post_marketplace_settlement', 'contacts', 'update_one'): 3,
+    ('server.py', '_post_marketplace_settlement', 'invoices', 'update_one'): 1,
+    ('server.py', '_post_marketplace_settlement', 'orders', 'update_one'): 1,
+    ('server.py', '_restore_approved_annual_leave', 'employees', 'update_one'): 1,
+    ('server.py', '_restore_assigned_task', 'assigned_tasks', 'delete_one'): 1,
+    ('server.py', '_restore_assigned_task', 'employees', 'find_one'): 1,
+    ('server.py', '_restore_assigned_task', 'employees', 'update_one'): 1,
+    ('server.py', '_restore_assigned_task', 'projects', 'find_one'): 1,
+    ('server.py', '_restore_assigned_task', 'projects', 'update_one'): 1,
+    ('server.py', '_restore_bank_tx', 'bank_accounts', 'find_one'): 1,
+    ('server.py', '_restore_bonus', 'bank_accounts', 'find_one'): 1,
+    ('server.py', '_restore_bonus', 'bank_accounts', 'update_one'): 1,
+    ('server.py', '_restore_invoice', 'orders', 'find_one'): 1,
+    ('server.py', '_restore_invoice', 'orders', 'update_one'): 1,
+    ('server.py', '_restore_leave', 'employees', 'update_one'): 1,
+    ('server.py', '_restore_partner_tx', 'partners', 'update_one'): 2,
+    ('server.py', '_restore_payroll', 'bank_accounts', 'find_one'): 1,
+    ('server.py', '_restore_payroll', 'bank_accounts', 'update_one'): 1,
+    ('server.py', '_reverse_marketplace_settlement', 'bank_accounts', 'update_one'): 1,
+    ('server.py', '_reverse_marketplace_settlement', 'bank_transactions', 'find_one'): 1,
+    ('server.py', '_reverse_marketplace_settlement', 'contacts', 'update_one'): 1,
+    ('server.py', '_reverse_marketplace_settlement', 'expenses', 'find_one'): 1,
+    ('server.py', '_reverse_marketplace_settlement', 'orders', 'update_one'): 1,
+    ('server.py', '_save_signed_opening_balance', 'bank_accounts', 'find_one'): 1,
+    ('server.py', '_sms_creds', 'sms_settings', 'update_one'): 1,
+    ('server.py', '_sms_settings_view', 'sms_settings', 'update_one'): 1,
+    ('server.py', '_soft_trash_work_order_cascade', 'production_orders', 'find_one'): 1,
+    ('server.py', '_statement_bundle', 'contacts', 'find_one'): 1,
+    ('server.py', '_store_product_image_bytes', 'products', 'find_one'): 1,
+    ('server.py', '_store_product_image_bytes', 'products', 'update_one'): 1,
+    ('server.py', '_suggest_contact', 'contacts', 'find_one'): 1,
+    ('server.py', '_sync_bank_connection_core', 'bank_connections', 'find_one'): 1,
+    ('server.py', '_sync_ecommerce_channel_core', 'integration_configs', 'find_one'): 1,
+    ('server.py', '_undo_stock', 'products', 'update_one'): 1,
+    ('server.py', 'accountant_export', 'contacts', 'find'): 1,
+    ('server.py', 'add_ecommerce_channel', 'integration_configs', 'find_one'): 1,
+    ('server.py', 'approve_cash_request', 'cash_approval_requests', 'update_one'): 1,
+    ('server.py', 'approve_marketplace_claim', 'marketplace_claims', 'find_one'): 1,
+    ('server.py', 'approve_marketplace_claim', 'marketplace_claims', 'update_one'): 1,
+    ('server.py', 'b2b_reset_post', 'b2b_password_resets', 'update_one'): 1,
+    ('server.py', 'complete_my_assigned_task', 'employees', 'update_one'): 2,
+    ('server.py', 'complete_my_assigned_task', 'projects', 'update_one'): 1,
+    ('server.py', 'convert_order_to_invoice', 'invoices', 'find_one'): 2,
+    ('server.py', 'convert_order_to_invoice', 'invoices', 'update_one'): 2,
+    ('server.py', 'convert_order_to_invoice', 'orders', 'find_one'): 1,
+    ('server.py', 'convert_order_to_invoice', 'orders', 'update_one'): 1,
+    ('server.py', 'convert_purchase_order_to_invoice', 'invoices', 'find_one'): 1,
+    ('server.py', 'convert_purchase_order_to_invoice', 'purchase_orders', 'update_one'): 1,
+    ('server.py', 'create_dispatch', 'invoices', 'find_one'): 1,
+    ('server.py', 'create_dispatch', 'orders', 'update_one'): 1,
+    ('server.py', 'create_statement_link', 'contacts', 'update_one'): 1,
+    ('server.py', 'delete_bank_connection', 'bank_connections', 'delete_one'): 1,
+    ('server.py', 'delete_employee_assigned_task', 'employees', 'update_one'): 2,
+    ('server.py', 'delete_employee_assigned_task', 'projects', 'update_one'): 1,
+    ('server.py', 'delete_file_record', 'files', 'update_one'): 1,
+    ('server.py', 'delete_label_template', 'label_templates', 'delete_one'): 1,
+    ('server.py', 'erp_forgot_password', 'password_resets', 'update_one'): 1,
+    ('server.py', 'erp_reset_post', 'password_resets', 'update_one'): 1,
+    ('server.py', 'finalize_b2b_order_payment', 'payment_intents', 'find_one'): 1,
+    ('server.py', 'generate_work_orders_for_order', 'recipes', 'find_one'): 1,
+    ('server.py', 'list_bank_connections', 'bank_accounts', 'find'): 1,
+    ('server.py', 'list_orders', 'orders', 'delete_many'): 2,
+    ('server.py', 'mail_open_pixel', 'mail_logs', 'find_one'): 1,
+    ('server.py', 'mail_open_pixel', 'mail_logs', 'update_one'): 1,
+    ('server.py', 'produce_production_order_shortages', 'production_orders', 'update_one'): 2,
+    ('server.py', 'produce_production_order_shortages', 'recipes', 'find_one'): 1,
+    ('server.py', 'reject_marketplace_claim', 'marketplace_claims', 'find_one'): 1,
+    ('server.py', 'reject_marketplace_claim', 'marketplace_claims', 'update_one'): 1,
+    ('server.py', 'set_channel_fees', 'integration_configs', 'find_one'): 1,
+    ('server.py', 'set_channel_fees', 'integration_configs', 'update_one'): 1,
+    ('server.py', 'set_quote_payment_plan', 'quotes', 'update_one'): 2,
+    ('server.py', 'set_stage_photo_visibility', 'projects', 'update_one'): 1,
+    ('server.py', 'test_bank_connection', 'bank_accounts', 'find_one'): 1,
+    ('server.py', 'test_bank_connection', 'bank_connections', 'update_one'): 1,
+    ('server.py', 'trash_completed_employee_tasks', 'employees', 'update_one'): 1,
+    ('server.py', 'trash_completed_employee_tasks', 'projects', 'update_one'): 1,
+    ('server.py', 'update_employee_assigned_task', 'employees', 'update_one'): 2,
+    ('server.py', 'update_employee_assigned_task', 'projects', 'update_one'): 1,
+    ('server.py', 'update_label_template', 'label_templates', 'find_one'): 1,
+    ('server.py', 'update_label_template', 'label_templates', 'update_one'): 1,
+    ('server.py', 'update_production_order', 'production_orders', 'find_one'): 2,
+    ('server.py', 'update_production_order', 'production_orders', 'update_one'): 1,
+    ('server.py', 'update_production_order', 'recipes', 'find_one'): 2,
+    ('server.py', 'upload_my_task_photo', 'employees', 'find_one'): 1,
+    ('server.py', 'upload_my_task_photo', 'employees', 'update_one'): 1,
+    ('server.py', 'upload_my_task_photo', 'projects', 'find_one'): 1,
+    ('server.py', 'upload_my_task_photo', 'projects', 'update_one'): 1,
+    # shopfloor_devices.py
+    ('shopfloor_devices.py', '_claim_pairing_code', 'shopfloor_device_codes', 'find_one'): 1,
+    # storage_admin.py
+    ('storage_admin.py', '_prune_snapshots', '', 'delete_one'): 1,
+    ('storage_admin.py', '_running', '', 'update_one'): 1,
+    ('storage_admin.py', '_save', '', 'update_one'): 1,
+    ('storage_admin.py', '_set_progress', '', 'update_one'): 1,
+    ('storage_admin.py', 'cancel_job', '', 'update_one'): 1,
+    ('storage_admin.py', 'claim_next', '', 'update_one'): 1,
+    ('storage_admin.py', 'execute', '', 'update_one'): 2,
+    # storage_manager.py
+    ('storage_manager.py', 'ensure_account_folders', 'storage_folders', 'find_one'): 2,
+    ('storage_manager.py', 'ensure_account_folders', 'storage_folders', 'update_one'): 1,
+    # tenant_access.py
+    ('tenant_access.py', 'get_tenant_child', '', 'find_one'): 1,
+    ('tenant_access.py', 'get_tenant_doc', '', 'find_one'): 1,
+    # trash.py
+    ('trash.py', '_delete_ids', '', 'delete_many'): 1,
+    ('trash.py', '_delete_ids', '', 'delete_one'): 1,
+    ('trash.py', '_live_doc', '', 'find_one'): 1,
+    ('trash.py', '_rollback_new_trash', 'trash', 'delete_one'): 1,
+    # ubl_export.py
+    ('ubl_export.py', 'invoice_xml_payload', 'contacts', 'find_one'): 1,
+    # user_erase.py
+    ('user_erase.py', '_linked_employee', 'employees', 'find_one'): 1,
+    ('user_erase.py', 'apply_erase', 'employees', 'update_one'): 1,
+    # vpos/api.py
+    ('vpos/api.py', '_kuveytturk_return', 'payment_intents', 'find_one'): 1,
+    ('vpos/api.py', 'iyzico_callback', 'payment_intents', 'find_one'): 1,
+    ('vpos/api.py', 'paytr_notify', 'vpos_configs', 'find_one'): 1,
+    ('vpos/api.py', 'vpos_callback', 'payment_intents', 'find_one'): 1,
+    # warehouse_ship.py
+    ('warehouse_ship.py', 'apply_warehouse_ship', 'orders', 'find_one'): 3,
+    ('warehouse_ship.py', 'apply_warehouse_ship', 'orders', 'update_one'): 1,
+}

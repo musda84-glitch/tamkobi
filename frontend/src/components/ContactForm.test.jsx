@@ -25,7 +25,11 @@ jest.mock("axios", () => ({
 
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
 jest.mock("../utils/modalBackdrop", () => ({ backdropDismissProps: () => ({}) }));
 jest.mock("./GibContactLookup", () => ({ GibContactLookup: () => <div data-testid="gib" /> }));

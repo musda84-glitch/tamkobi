@@ -65,7 +65,7 @@ import { withMarketplaceVatFlag } from "../utils/marketplaceVat";
 import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { TimeInput } from "./TimeInput";
@@ -965,7 +965,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       <div className="bg-white w-full max-w-[min(1680px,calc(100vw-2rem))] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
         <div className="px-6 py-4 border-b flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
-            {c.logo_url ? <div className="w-12 h-12 rounded-xl border border-slate-200 bg-white overflow-hidden shrink-0" data-testid="detail-contact-logo"><img src={resolveImageUrl(c.logo_url)} alt="" className="w-full h-full object-contain" /></div> : null}
+            {c.logo_url ? <div className="w-12 h-12 rounded-xl border border-slate-200 bg-white overflow-hidden shrink-0" data-testid="detail-contact-logo"><img src={listThumbUrl(c.logo_url)} alt="" width={48} height={48} decoding="async" className="w-full h-full object-contain" /></div> : null}
             <div className="min-w-0">
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${c.type === "customer" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{c.type === "customer" ? "Müşteri" : c.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi"}</span>
             {c.is_active === false && <span className="ml-1.5 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200" data-testid="detail-contact-inactive">Pasif</span>}

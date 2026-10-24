@@ -758,8 +758,12 @@ async def mark_orders_invoiced(db, inv: Dict[str, Any]) -> None:
         "invoice_id": iid,
         "invoice_number": inv.get("invoice_number"),
     }
+    cid = str(inv.get("company_id") or "").strip()
     for oid in ids:
-        await orders.update_one({"_id": oid}, {"$set": payload})
+        query: Dict[str, Any] = {"_id": oid}
+        if cid:
+            query["company_id"] = cid
+        await orders.update_one(query, {"$set": payload})
 
 
 async def draft_dispatch_warning(db, inv: Dict[str, Any]) -> Optional[str]:

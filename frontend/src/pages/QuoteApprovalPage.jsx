@@ -4,7 +4,7 @@ import axios from "axios";
 import { useParams } from "react-router-dom";
 import { CheckCircle2, XCircle, Loader2, FileSignature, Building2, CalendarClock, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { lineGross, lineUnitGross } from "../utils/orderMoney";
 import { fmtDate, formatTrAmount } from "../utils/money";
 
@@ -34,7 +34,7 @@ export default function QuoteApprovalPage() {
     <div className="min-h-screen bg-slate-100 py-6 px-3 sm:px-6" data-testid="public-quote-page">
       <div className="max-w-3xl mx-auto space-y-4">
         <div className="bg-slate-900 text-white rounded-2xl p-5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">{c.logo_url ? <img src={resolveImageUrl(c.logo_url)} alt="" className="h-12 bg-white rounded-lg p-1 object-contain" /> : <Building2 className="w-8 h-8 text-slate-400" />}<div><div className="font-bold text-lg leading-tight">{c.name}</div><div className="text-xs text-slate-400">{c.phone} {c.email && `• ${c.email}`}</div></div></div>
+          <div className="flex items-center gap-3">{c.logo_url ? <img src={listThumbUrl(c.logo_url)} alt="" width={48} height={48} decoding="async" className="h-12 bg-white rounded-lg p-1 object-contain" /> : <Building2 className="w-8 h-8 text-slate-400" />}<div><div className="font-bold text-lg leading-tight">{c.name}</div><div className="text-xs text-slate-400">{c.phone} {c.email && `• ${c.email}`}</div></div></div>
           <div className="text-right"><div className="text-[10px] uppercase tracking-wide text-slate-400">Fiyat Teklifi</div><div className="font-mono font-bold">{q.quote_number}</div></div>
         </div>
         {result && <div className={`rounded-2xl p-4 flex items-center gap-3 font-semibold ${q.approval.status === "accepted" ? "bg-emerald-50 border border-emerald-200 text-emerald-800" : "bg-rose-50 border border-rose-200 text-rose-800"}`} data-testid="public-quote-result">{q.approval.status === "accepted" ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />} {result.message}</div>}
@@ -52,7 +52,7 @@ export default function QuoteApprovalPage() {
           <div className="flex justify-end"><div className="w-64 space-y-1 text-sm"><div className="flex justify-between text-slate-500"><span>Ara Toplam (KDV Hariç)</span><span>{fmt(q.subtotal)} ₺</span></div><div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(q.vat_total)} ₺</span></div><div className="flex justify-between text-lg font-black border-t-2 border-slate-900 pt-1" data-testid="public-quote-grand"><span>TOPLAM (KDV Dahil)</span><span>{fmt(q.grand_total)} ₺</span></div></div></div>
           {q.payment_plan?.rows?.length > 0 && <div className="bg-violet-50 border border-violet-100 rounded-xl p-3"><div className="flex items-center gap-1 font-bold text-violet-800 text-xs mb-1"><CalendarClock className="w-3.5 h-3.5" /> Ödeme Planı ({q.payment_plan.rows.length} taksit)</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 text-xs">{q.payment_plan.rows.map((r) => <div key={r.no} className="flex justify-between border-b border-violet-100 py-1"><span>{r.label}</span><span className="text-slate-500">{fmtDate(r.due_date)}</span><b>{fmt(r.amount)} ₺</b></div>)}</div></div>}
           {(q.notes || q.terms) && <div className="text-xs text-slate-600 whitespace-pre-wrap">{q.notes}{q.terms && <div className="mt-1"><b>Şartlar:</b> {q.terms}</div>}</div>}
-          {q.images?.length > 0 && <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">{q.images.map((img) => <img key={img} src={resolveImageUrl(img)} alt="" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
+          {q.images?.length > 0 && <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">{q.images.map((img) => <img key={img} src={listThumbUrl(img)} alt="" width={200} height={96} loading="lazy" decoding="async" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
         </div>
         <div className="bg-white rounded-2xl shadow-sm p-5 sm:p-8 space-y-3" data-testid="public-quote-decision">
           <h3 className="font-bold text-slate-900 flex items-center gap-1.5"><FileSignature className="w-4 h-4 text-emerald-600" /> Kararınız</h3>

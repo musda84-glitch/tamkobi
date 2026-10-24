@@ -13,6 +13,7 @@ import hashlib
 import inspect
 import logging
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -32,6 +33,7 @@ from mysql_store import (
     materialize_docs_async,
     new_upsert_doc,
     offload,
+    parse_ts,
     project_doc,
     values_at,
 )
@@ -65,6 +67,15 @@ _DOC_ID_MAX = 191
 _COMPANY_ID_MAX = 64
 _EXT_MAX = 191
 _BANK_KEY_TABLE = "storage_bank_external"
+_FETCH_PAGE = 200
+_SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# ISO tarih öneki. Sayı ve bool aralığı Python'da kalır; harf sırası koleksiyona bağlıdır.
+_DATEISH = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?")
+_OP_ORDER = (
+    "$regex", "$in", "$nin", "$ne", "$exists",
+    "$gt", "$gte", "$lt", "$lte", "$eq", "$not", "$elemMatch",
+)
+_RANGE_SQL = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
 
 _pools: "OrderedDict[str, _Pool]" = OrderedDict()
 _sealed: "OrderedDict[str, str]" = OrderedDict()
@@ -245,6 +256,20 @@ def list_collections(company_id: str, dsn: str) -> list[str]:
             (cid,),
         )
     return sorted({str(row[0]) for row in rows if row and row[0]})
+
+
+def _mysql_dsn(dsn: str) -> bool:
+    text = str(dsn or "").lower()
+    return text.startswith("mysql") or text.startswith("mariadb")
+
+
+async def list_collections_async(company_id: str, dsn: str) -> list[str]:
+    """Koleksiyon adları. MySQL döngünün dışında. Belge gövdesi okunmaz."""
+    if not _mysql_dsn(dsn):
+        return list_collections(company_id, dsn)
+    import platform_lease
+
+    return await platform_lease.call_blocking(list_collections, company_id, dsn)
 
 
 def checkout(company_id: str, dsn: str) -> _Pool:
@@ -649,6 +674,199 @@ def _upsert_sql(dialect: str) -> str:
     return "INSERT OR REPLACE INTO storage_records (collection, doc_id, doc) VALUES (?, ?, ?)"
 
 
+class _Plan:
+    """Daraltılmış SELECT. exact ise sonuç match_query ile aynı kümedir."""
+
+    def __init__(self, sql: str, args: list, exact: bool):
+        self.sql = sql
+        self.args = args
+        self.exact = exact
+
+
+def _sqlite_dialect(dialect) -> bool:
+    return str(dialect or "").lower().startswith("sqlite")
+
+
+def _json_text(dialect, field: str) -> str:
+    if _sqlite_dialect(dialect):
+        return f"CAST(json_extract(doc, '$.{field}') AS TEXT)"
+    return f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{field}'))"
+
+
+def _json_type(dialect, field: str) -> str:
+    if _sqlite_dialect(dialect):
+        return f"json_type(doc, '$.{field}')"
+    return f"JSON_TYPE(JSON_EXTRACT(doc, '$.{field}'))"
+
+
+def _scalar_types(dialect) -> str:
+    if _sqlite_dialect(dialect):
+        return "'text', 'integer', 'real'"
+    return "'STRING', 'INTEGER', 'DOUBLE', 'DECIMAL'"
+
+
+def _high_types(dialect) -> str:
+    """Rakamla başlayan sınıra göre Python str() karşılaştırmasında her zaman büyük olan tipler."""
+    if _sqlite_dialect(dialect):
+        return "'array', 'object', 'true', 'false'"
+    return "'ARRAY', 'OBJECT', 'BOOLEAN'"
+
+
+def _null_type(dialect) -> str:
+    return "null" if _sqlite_dialect(dialect) else "NULL"
+
+
+def _string_type(dialect) -> str:
+    return "text" if _sqlite_dialect(dialect) else "STRING"
+
+
+def _array_has(dialect, field: str, count: int) -> str:
+    """Dizinin birinci düzeyinde metin eleman. İç içe dizi elemanı sayılmaz."""
+    if count < 1:
+        return "0"
+    if _sqlite_dialect(dialect):
+        checks = " OR ".join("(_jk.type = 'text' AND _jk.value = ?)" for _ in range(count))
+        return (
+            f"(json_type(doc, '$.{field}') = 'array' AND EXISTS ("
+            f"SELECT 1 FROM json_each(doc, '$.{field}') AS _jk WHERE {checks}))"
+        )
+    parts = " OR ".join(
+        f"JSON_CONTAINS(JSON_EXTRACT(doc, '$.{field}'), JSON_QUOTE(?))" for _ in range(count)
+    )
+    return f"(JSON_TYPE(JSON_EXTRACT(doc, '$.{field}')) = 'ARRAY' AND ({parts}))"
+
+
+def _string_members(dialect, field: str, values: list) -> tuple:
+    """Metin eşitliği ya da dizide eleman. Python _eq / $in ile aynı küme."""
+    text = _json_text(dialect, field)
+    typ = _json_type(dialect, field)
+    if len(values) == 1:
+        if _sqlite_dialect(dialect):
+            scalar = f"({typ} = '{_string_type(dialect)}' AND {text} = ?)"
+            args = list(values)
+        else:
+            scalar = f"({typ} = 'STRING' AND {text} = ? AND {text} COLLATE utf8mb4_bin = ?)"
+            args = [values[0], values[0]]
+    else:
+        marks = ",".join("?" for _ in values)
+        if _sqlite_dialect(dialect):
+            scalar = f"({typ} = '{_string_type(dialect)}' AND {text} IN ({marks}))"
+            args = list(values)
+        else:
+            scalar = (
+                f"({typ} = 'STRING' AND {text} IN ({marks}) "
+                f"AND {text} COLLATE utf8mb4_bin IN ({marks}))"
+            )
+            args = list(values) + list(values)
+    clause = f"({scalar} OR {_array_has(dialect, field, len(values))})"
+    args.extend(values)
+    return clause, args
+
+
+def _range_clause(dialect, field: str, op: str, value: str) -> tuple:
+    """Tarih benzeri sınır. Rakamla başlayan metne göre bool/dizi/nesne/_null Python ile aynıdır."""
+    sqlop = _RANGE_SQL[op]
+    text = _json_text(dialect, field)
+    typ = _json_type(dialect, field)
+    parts = [f"({typ} IN ({_scalar_types(dialect)}) AND {text} {sqlop} ?)"]
+    if op in ("$gt", "$gte"):
+        parts.append(f"{typ} IN ({_high_types(dialect)})")
+    else:
+        parts.append(f"{typ} = '{_null_type(dialect)}'")
+    return "(" + " OR ".join(parts) + ")", [str(value)]
+
+
+def _date_bound(value) -> bool:
+    if isinstance(value, bool) or not isinstance(value, str):
+        return False
+    return _DATEISH.match(value) is not None
+
+
+def _winning_op(cond: dict):
+    """match_query ilk gördüğü işlemi uygular, sonrakileri yok sayar."""
+    for op in _OP_ORDER:
+        if op in cond:
+            return op
+    return None
+
+
+def _push_clause(key, val, dialect):
+    """Tek alan. None ise SQL'e girmez; çağıran exact bayrağını düşürür.
+
+    Eklenen her ifade Python eşleşmesinin üst kümesidir. Dizi company_id
+    üretilmiş kolonla zaten elenirdi; o daraltma aynı kaldı.
+    """
+    if not isinstance(key, str) or key.startswith("$") or not _SAFE_FIELD.match(key):
+        return None
+    if key == "_id":
+        if isinstance(val, str):
+            return "doc_id = ?", [val], True
+        if isinstance(val, dict) and list(val.keys()) == ["$in"] and isinstance(val.get("$in"), (list, tuple)):
+            items = list(val.get("$in") or [])
+            if not all(isinstance(item, str) for item in items):
+                return None
+            if not items:
+                return "1=0", [], True
+            marks = ",".join("?" for _ in items)
+            return f"doc_id IN ({marks})", items, True
+        return None
+    if key == "company_id":
+        if not isinstance(val, str) or len(val) > _COMPANY_ID_MAX:
+            return None
+        text = _json_text(dialect, "company_id")
+        typ = _json_type(dialect, "company_id")
+        if _sqlite_dialect(dialect):
+            clause = f"(company_id = ? AND {typ} = '{_string_type(dialect)}' AND {text} = ?)"
+            return clause, [val, val], True
+        clause = (
+            f"(company_id = ? AND {typ} = 'STRING' AND {text} = ? "
+            f"AND {text} COLLATE utf8mb4_bin = ?)"
+        )
+        return clause, [val, val, val], True
+    if isinstance(val, str):
+        clause, args = _string_members(dialect, key, [val])
+        return clause, args, True
+    if not isinstance(val, dict):
+        return None
+    op = _winning_op(val)
+    if op == "$eq" and isinstance(val.get("$eq"), str):
+        clause, args = _string_members(dialect, key, [val["$eq"]])
+        return clause, args, True
+    if op == "$in" and isinstance(val.get("$in"), (list, tuple)):
+        items = list(val.get("$in") or [])
+        if not items:
+            return "1=0", [], True
+        if not all(isinstance(item, str) for item in items):
+            return None
+        clause, args = _string_members(dialect, key, items)
+        return clause, args, True
+    if op in _RANGE_SQL and _date_bound(val.get(op)):
+        clause, args = _range_clause(dialect, key, op, val.get(op))
+        return clause, args, True
+    return None
+
+
+def _tomb_key(doc: dict):
+    return (str(doc.get("deleted_at") or ""), str(doc.get("_id") or ""))
+
+
+def _matched_docs(rows, query) -> tuple:
+    docs = []
+    dropped = 0
+    for row in rows or []:
+        doc = loads(row[0])
+        if query and not match_query(doc, query):
+            dropped += 1
+            continue
+        if isinstance(doc, dict):
+            docs.append(doc)
+    return docs, dropped
+
+
+def _cursor_ok(value) -> bool:
+    return bool(value) and parse_ts(str(value)) is not None
+
+
 class DedicatedCollection(StorageCollection):
     def __init__(self, company_id: str, name: str, dsn: str):
         super().__init__(name)
@@ -710,34 +928,180 @@ class DedicatedCollection(StorageCollection):
                     raise DuplicateKeyError("Kayıt zaten var.") from None
                 raise DedicatedStorageError("Dedicated işlemi kesildi.", company_id=self.company_id) from None
 
-    def _narrow_sql(self, query):
-        """İndeksli doc_id / company_id daraltması. Eşleşmeyi match_query doğrular."""
+    def _dialect(self, session) -> str:
+        return getattr(session, "dialect", None) or "sqlite"
+
+    def _narrow_plan(self, query, dialect="mysql") -> _Plan:
+        """collection zaten WHERE'de. doc_id ve company_id indeksli kolondur.
+
+        Diğer düz metin eşitlikleri ve tarih aralığı JSON'dan süzülür.
+        Eşleşmeyi yine match_query doğrular. exact ise SQL kümesi Python ile aynıdır.
+        """
         sql = "SELECT doc FROM storage_records WHERE collection = ?"
         args = [self.name]
         if not isinstance(query, dict):
-            return sql, args
-        ident = query.get("_id")
-        if isinstance(ident, str):
-            sql += " AND doc_id = ?"
-            args.append(ident)
-        elif isinstance(ident, dict):
-            items = ident.get("$in")
-            if isinstance(items, (list, tuple)) and all(isinstance(item, str) for item in items):
-                if items:
-                    marks = ",".join("?" for _ in items)
-                    sql += f" AND doc_id IN ({marks})"
-                    args.extend(items)
-                elif set(ident.keys()) == {"$in"}:
-                    sql += " AND 1=0"
-        company = query.get("company_id")
-        if isinstance(company, str) and len(company) <= 64:
-            sql += " AND company_id = ?"
-            args.append(company)
-        return sql, args
+            return _Plan(sql, args, query in (None, {}))
+        exact = True
+        for key, val in query.items():
+            built = _push_clause(key, val, dialect)
+            if built is None:
+                exact = False
+                continue
+            clause, clause_args, clause_exact = built
+            if clause:
+                sql += " AND " + clause
+                args.extend(clause_args)
+            exact = exact and clause_exact
+        return _Plan(sql, args, exact)
+
+    def _narrow_sql(self, query, dialect=None):
+        """Eski ikili dönüş. Üretim MySQL metnidir; okuma oturumun lehçesini kullanır."""
+        plan = self._narrow_plan(query, dialect or "mysql")
+        return plan.sql, plan.args
+
+    def _fetch_sql(self, session, sql, args):
+        """Satırları sayfa sayfa al. Sahte oturum yalnız fetchall verirse ona düşer.
+
+        pymysql varsayılan imleci execute içinde tamponlar. Asıl kazanç WHERE'in
+        az satır döndürmesidir; okuma MySQL'de _run_async ile döngü dışındadır.
+        """
+        cursor = session.execute(sql, tuple(args))
+        if cursor is not None and hasattr(cursor, "fetchmany"):
+            rows = []
+            try:
+                while True:
+                    chunk = cursor.fetchmany(_FETCH_PAGE)
+                    if not chunk:
+                        break
+                    rows.extend(chunk)
+            finally:
+                close = getattr(cursor, "close", None)
+                if close is not None:
+                    close()
+            return rows
+        fetch = getattr(session, "fetchall", None)
+        if fetch is None:
+            return []
+        found = fetch(sql, tuple(args))
+        return list(found or [])
 
     def _fetch_rows(self, session, query):
-        sql, args = self._narrow_sql(query)
-        return list(session.fetchall(sql, tuple(args)))
+        plan = self._narrow_plan(query, self._dialect(session))
+        return self._fetch_sql(session, plan.sql, plan.args)
+
+    def _use_thread(self) -> bool:
+        return _mysql_dsn(self._dsn)
+
+    async def _run_async(self, fn):
+        """MySQL okuması döngünün dışında. SQLite testi aynı iş parçacığında kalır.
+
+        Yazma çağıran iş parçacığında durur. Draft #1552 aynı
+        platform_lease.call_blocking yardımcısını yazmaya da taşır.
+        """
+        if not self._use_thread():
+            return self._run(fn)
+        import platform_lease
+
+        return await platform_lease.call_blocking(self._run, fn)
+
+    def _count_exact(self, session, query):
+        plan = self._narrow_plan(query, self._dialect(session))
+        if not plan.exact:
+            return None
+        prefix = "SELECT doc "
+        if not plan.sql.startswith(prefix):
+            return None
+        sql = "SELECT COUNT(*) " + plan.sql[len(prefix):]
+        rows = self._fetch_sql(session, sql, plan.args)
+        if not rows:
+            return 0
+        return int(rows[0][0] or 0)
+
+    def _tombstone_page(self, session, query, cap: int):
+        """deleted_at artan sayfa. Aynı damga bölünmez; sonraki imleç ilk verilmeyen damgadır."""
+        dialect = self._dialect(session)
+        plan = self._narrow_plan(query, dialect)
+        order = f" ORDER BY {_json_text(dialect, 'deleted_at')} ASC, doc_id ASC"
+
+        def everything():
+            rows = self._fetch_sql(session, plan.sql, plan.args)
+            docs, _dropped = _matched_docs(rows, query)
+            docs.sort(key=_tomb_key)
+            return self._page_sorted(docs, cap)
+
+        if not plan.exact:
+            return everything()
+        limited = self._fetch_sql(
+            session,
+            plan.sql + order + " LIMIT ?",
+            list(plan.args) + [cap + 1],
+        )
+        docs, dropped = _matched_docs(limited, query)
+        if dropped or any(not isinstance(doc.get("deleted_at"), str) for doc in docs):
+            return everything()
+        if len(docs) <= cap:
+            return self._ids_of(docs), False, None
+        boundary = docs[cap - 1].get("deleted_at")
+        extra = docs[cap].get("deleted_at")
+        if extra != boundary:
+            if not _cursor_ok(extra):
+                return everything()
+            return self._ids_of(docs[:cap]), True, str(extra)
+        text = _json_text(dialect, "deleted_at")
+        last_id = str(docs[-1].get("_id") or "")
+        rest = self._fetch_sql(
+            session,
+            plan.sql + f" AND {text} = ? AND doc_id > ?" + order,
+            list(plan.args) + [boundary, last_id],
+        )
+        more_docs, dropped_rest = _matched_docs(rest, query)
+        if dropped_rest or any(not isinstance(doc.get("deleted_at"), str) for doc in more_docs):
+            return everything()
+        page = list(docs) + list(more_docs)
+        peek = self._fetch_sql(
+            session,
+            plan.sql + f" AND {text} > ?" + order + " LIMIT 1",
+            list(plan.args) + [boundary],
+        )
+        peeked, dropped_peek = _matched_docs(peek, query)
+        if dropped_peek or any(not isinstance(doc.get("deleted_at"), str) for doc in peeked):
+            return everything()
+        if not peeked:
+            return self._ids_of(page), False, None
+        nxt = peeked[0].get("deleted_at")
+        if not _cursor_ok(nxt):
+            return everything()
+        return self._ids_of(page), True, str(nxt)
+
+    def _page_sorted(self, docs, cap: int):
+        ordered = list(docs or [])
+        if len(ordered) <= cap:
+            return self._ids_of(ordered), False, None
+        boundary = str(ordered[cap - 1].get("deleted_at") or "")
+        end = cap
+        while end < len(ordered) and str(ordered[end].get("deleted_at") or "") == boundary:
+            end += 1
+        page = ordered[:end]
+        if end >= len(ordered):
+            return self._ids_of(page), False, None
+        nxt = ordered[end].get("deleted_at")
+        if not _cursor_ok(nxt):
+            return self._ids_of(ordered), False, None
+        return self._ids_of(page), True, str(nxt)
+
+    def _ids_of(self, docs) -> list:
+        seen = set()
+        out = []
+        for doc in docs or []:
+            ident = doc.get("doc_id")
+            if not ident:
+                continue
+            text = str(ident)
+            if text in seen:
+                continue
+            seen.add(text)
+            out.append(text)
+        return out
 
     def _load(self, session, query=None) -> list:
         return [loads(row[0]) for row in self._fetch_rows(session, query)]
@@ -856,7 +1220,7 @@ class DedicatedCollection(StorageCollection):
         self._guard("find", query=query)
 
         async def load():
-            rows = self._run(lambda session: self._fetch_rows(session, query))
+            rows = await self._run_async(lambda session: self._fetch_rows(session, query))
             return await materialize_docs_async(rows, query)
 
         return StorageCursor(load, projection)
@@ -878,19 +1242,88 @@ class DedicatedCollection(StorageCollection):
         requested = str(company_id or "").strip()
         if requested and storage_router.canonical_company_id(requested) != self.company_id:
             return [], since, False
-        rows = self._run(lambda session: self._fetch_rows(session, None))
+        rows = await self._run_async(lambda session: self._fetch_rows(session, None))
         docs = await materialize_docs_async(rows)
         return await offload(_owned_window, docs, self.company_id, since, limit, size=len(docs))
 
+    async def deleted_since(self, collection_name, company_id, since, limit: int = 3000):
+        """Silinen kayıtlar. since öncesi okunmaz. Sayfa bitince sonraki damga döner.
+
+        Dönüş: (doc_id listesi, devam var mı, sonraki since). Devam yoksa imleç None.
+        Aynı deleted_at grubu limitten büyükse grup bölünmez.
+        """
+        query = {
+            "collection": str(collection_name or ""),
+            "company_id": company_id if isinstance(company_id, str) else str(company_id or ""),
+            "deleted_at": {"$gte": str(since or "")},
+        }
+        self._guard("find", query=query)
+        requested = str(company_id or "").strip()
+        if requested and storage_router.canonical_company_id(requested) != self.company_id:
+            return [], False, None
+        try:
+            cap = int(limit)
+        except (TypeError, ValueError):
+            cap = 3000
+        if cap < 1:
+            cap = 1
+        if cap > 5000:
+            cap = 5000
+
+        def work(session):
+            return self._tombstone_page(session, query, cap)
+
+        return await self._run_async(work)
+
     async def count_documents(self, query=None):
         self._guard("count_documents", query=query)
-        rows = self._run(lambda session: self._fetch_rows(session, query))
-        docs = await materialize_docs_async(rows, query)
+
+        def work(session):
+            exact = self._count_exact(session, query)
+            if exact is not None:
+                return ("count", exact)
+            return ("rows", self._fetch_rows(session, query))
+
+        kind, payload = await self._run_async(work)
+        if kind == "count":
+            return payload
+        docs = await materialize_docs_async(payload, query)
         return len(docs)
+
+    async def measure_volume(self, company_id: str, *, with_bytes: bool = True):
+        """Periyodik hacim. COUNT ve gerekirse LENGTH toplamı. Satır dönmez.
+
+        Taşıma ve checksum bu metodu kullanmaz; onlar belgeyi olduğu gibi okur.
+        MySQL çağrısı _run_async ile döngünün dışındadır.
+        """
+        cid = str(company_id or "")
+        self._guard("count_documents", query={"company_id": cid})
+        if storage_router.canonical_company_id(cid) != self.company_id:
+            return (0, 0)
+        if with_bytes:
+            sql = (
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(doc)), 0) "
+                "FROM storage_records WHERE collection = ? AND company_id = ?"
+            )
+        else:
+            sql = (
+                "SELECT COUNT(*) FROM storage_records "
+                "WHERE collection = ? AND company_id = ?"
+            )
+
+        def work(session):
+            rows = self._fetch_sql(session, sql, [self.name, self.company_id])
+            if not rows:
+                return (0, 0)
+            count = int(rows[0][0] or 0)
+            nbytes = int(rows[0][1] or 0) if with_bytes else 0
+            return (count, nbytes)
+
+        return await self._run_async(work)
 
     async def distinct(self, key, query=None):
         self._guard("distinct", query=query)
-        rows = self._run(lambda session: self._fetch_rows(session, query))
+        rows = await self._run_async(lambda session: self._fetch_rows(session, query))
         docs = await materialize_docs_async(rows, query)
         return await offload(_distinct_values, docs, key, size=len(docs))
 
@@ -899,7 +1332,7 @@ class DedicatedCollection(StorageCollection):
         match = _pipeline_match(pipeline)
 
         async def load():
-            rows = self._run(lambda session: self._fetch_rows(session, match))
+            rows = await self._run_async(lambda session: self._fetch_rows(session, match))
             docs = await materialize_docs_async(rows)
             return await offload(aggregate_rows, docs, pipeline, size=len(docs))
 

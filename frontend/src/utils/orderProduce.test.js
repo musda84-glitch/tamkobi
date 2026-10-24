@@ -1,4 +1,4 @@
-import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "./orderProduce";
+import { buildOrderProductIndex, buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "./orderProduce";
 
 describe("orderProduce", () => {
   const catalog = [
@@ -11,6 +11,9 @@ describe("orderProduce", () => {
     expect(resolveOrderLineProduct({ product_id: "p1" }, catalog)?.sku).toBe("DRA-W");
     expect(resolveOrderLineProduct({ sku: "RAW-1" }, catalog)?.id).toBe("p2");
     expect(resolveOrderLineProduct({ sku: "NOPE" }, catalog)).toBeNull();
+    const index = buildOrderProductIndex(catalog);
+    expect(resolveOrderLineProduct({ product_id: "p1" }, index)?.sku).toBe("DRA-W");
+    expect(resolveOrderLineProduct({ sku: "RAW-1" }, index)?.id).toBe("p2");
   });
 
   it("allows produce only for non-service non-raw", () => {

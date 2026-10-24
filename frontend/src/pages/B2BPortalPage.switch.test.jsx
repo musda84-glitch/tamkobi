@@ -246,15 +246,20 @@ test("çok tedarikçide başlık ve menü aynı çıkış fonksiyonunu kullanır
   expect(menuLogout.textContent).toContain("Çıkış");
   await act(async () => { menuLogout.click(); });
   expect(axios.post).toHaveBeenCalledWith(
+    "/api/auth/logout",
+    {},
+    { withCredentials: true, headers: undefined },
+  );
+  expect(axios.post).toHaveBeenCalledWith(
     "/api/public/b2b/logout",
     { select_token: "select-secret" },
-    { headers: { Authorization: "B2BSession select-secret" } },
+    { withCredentials: true, headers: { Authorization: "B2BSession select-secret" } },
   );
   expect(sessionStorage.getItem("b2b_session")).toBeNull();
   expect(goSpy).toHaveBeenCalledWith("/b2b/giris");
 });
 
-test("çıkış ucu hata verse de oturumu siler, sepeti ve panel anahtarını bırakır", async () => {
+test("çıkış ucu hata verse de oturumu ve erişim anahtarını siler, sepeti ve çerezi bırakır", async () => {
   sessionStorage.setItem("b2b_session", "select-secret");
   sessionStorage.setItem("b2b_session_email", "ali@ornek.test");
   sessionStorage.setItem("tamkobi_access_token", "panel-session");
@@ -269,9 +274,14 @@ test("çıkış ucu hata verse de oturumu siler, sepeti ve panel anahtarını b�
   await openAccount();
   await act(async () => { host.querySelector('[data-testid="b2b-header-logout"]').click(); });
   expect(axios.post).toHaveBeenCalledWith(
+    "/api/auth/logout",
+    {},
+    { withCredentials: true, headers: undefined },
+  );
+  expect(axios.post).toHaveBeenCalledWith(
     "/api/public/b2b/logout",
     { select_token: "select-secret" },
-    { headers: { Authorization: "B2BSession select-secret" } },
+    { withCredentials: true, headers: { Authorization: "B2BSession select-secret" } },
   );
   expect(String(axios.post.mock.calls[0][0])).not.toContain("select-secret");
   expect(sessionStorage.getItem("b2b_session")).toBeNull();
@@ -279,8 +289,8 @@ test("çıkış ucu hata verse de oturumu siler, sepeti ve panel anahtarını b�
   expect(localStorage.getItem("b2b_contact_portals")).toBeNull();
   expect(localStorage.getItem("b2b_cart_tok-a")).toContain("p1");
   expect(localStorage.getItem("b2b_held_carts_tok-a")).toContain("h1");
-  expect(sessionStorage.getItem("tamkobi_access_token")).toBe("panel-session");
-  expect(localStorage.getItem("tamkobi_access_token")).toBe("panel-local");
+  expect(sessionStorage.getItem("tamkobi_access_token")).toBeNull();
+  expect(localStorage.getItem("tamkobi_access_token")).toBeNull();
   expect(document.cookie).toContain("tamkobi_app=stay");
   expect(goSpy).toHaveBeenCalledWith("/b2b/giris");
   expect(toast.message).toHaveBeenCalledWith("Sepetiniz bu cihazda saklandı.");

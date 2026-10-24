@@ -153,7 +153,12 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     if e_type == "e_archive" and len(buyer_tax) not in (10, 11):
         buyer_tax = "11111111111"
     buyer_scheme = "VKN" if len(buyer_tax) == 10 else "TCKN"
-    buyer_name = (contact or {}).get("name") or invoice.get("contact_name") or "Nihai Tüketici"
+    from buyer_tax import invoice_buyer_name
+    buyer_name = invoice_buyer_name(
+        contact,
+        fallback=invoice.get("contact_name") or "Nihai Tüketici",
+        tax_id=buyer_tax,
+    ) or "Nihai Tüketici"
     buyer_email = (
         (contact or {}).get("email")
         or invoice.get("contact_email")
