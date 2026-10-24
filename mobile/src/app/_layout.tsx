@@ -13,7 +13,9 @@ import { typeface } from "@/theme/softFont";
 import { enableSoftFonts, SOFT_FONT_FACES } from "@/theme/softFontRuntime";
 import { stackHeaderFallback } from "@/utils/stackHeader";
 import { useFonts } from "expo-font";
-import { type Href, Stack } from "expo-router";
+import { type Href, Stack, usePathname, router } from "expo-router";
+import { useEffect } from "react";
+import { isShopfloorDevice, shopfloorDeviceMayOpen } from "@/utils/shopfloorDevice";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, Text, View } from "react-native";
 
@@ -31,6 +33,13 @@ function MaintenanceBanner() {
 
 function RootStack() {
   const { ready, user, b2bToken } = useAuth();
+  const pathname = usePathname();
+  const device = isShopfloorDevice(user);
+  useEffect(() => {
+    if (!device) return;
+    if (shopfloorDeviceMayOpen(pathname)) return;
+    router.replace("/atolye");
+  }, [device, pathname]);
   if (!ready) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.ink }}>
@@ -53,7 +62,7 @@ function RootStack() {
         ),
       })}
     >
-      <Stack.Protected guard={signedIn}>
+      <Stack.Protected guard={signedIn && !device}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="search" options={{ title: "Ara" }} />
         <Stack.Screen name="notifications" options={{ title: "Bildirimler" }} />
@@ -74,7 +83,6 @@ function RootStack() {
         <Stack.Screen name="vehicles/index" options={{ title: "Araçlarım" }} />
         <Stack.Screen name="vehicles/new" options={{ title: "Yeni araç" }} />
         <Stack.Screen name="vehicles/[id]" options={{ title: "Araç" }} />
-        <Stack.Screen name="atolye/index" options={{ title: "Üretim Atölye" }} />
         <Stack.Screen name="production/index" options={{ title: "Üretim & Reçete (BOM)" }} />
         <Stack.Screen name="orders/[id]" options={{ title: "Sipariş" }} />
         <Stack.Screen name="stock/new" options={{ title: "Yeni stok kartı" }} />
@@ -110,11 +118,18 @@ function RootStack() {
         <Stack.Screen name="qr-web-login" options={{ title: "Web girişi" }} />
         <Stack.Screen name="settings/printers" options={{ title: "Yazıcılar" }} />
       </Stack.Protected>
+      <Stack.Protected guard={signedIn}>
+        <Stack.Screen
+          name="atolye/index"
+          options={device ? { title: "Üretim Atölye", headerBackVisible: false, headerLeft: () => null } : { title: "Üretim Atölye" }}
+        />
+      </Stack.Protected>
       <Stack.Protected guard={onB2b}>
         <Stack.Screen name="b2b" options={{ headerShown: false }} />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn && !onB2b}>
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="atolye-eslestir" options={{ headerShown: false, title: "Atölye eşleştir" }} />
       </Stack.Protected>
     </Stack>
   );

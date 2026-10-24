@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -251,6 +252,9 @@ export function LoginScreen() {
                   <Text style={styles.b2bLink}>B2B Girişi</Text>
                 </Pressable>
               </View>
+              <Pressable onPress={() => router.push("/atolye-eslestir")} testID="login-shopfloor-pair" style={{ paddingTop: 8 }}>
+                <Text style={styles.forgot}>Atölye tableti eşleştir</Text>
+              </Pressable>
             </>
           ) : mode === "erp-forgot" ? (
             <>

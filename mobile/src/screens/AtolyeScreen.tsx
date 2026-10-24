@@ -81,6 +81,7 @@ import {
   unlockErrorMessage,
   type ShopfloorOperatorSession,
 } from "../utils/shopfloorOperatorSession";
+import { isShopfloorDevice } from "../utils/shopfloorDevice";
 import { stationNamesFromParks } from "../utils/workParks";
 
 type ShopfloorOperatorRow = {
@@ -504,10 +505,11 @@ function WoCard({
 }
 
 export function AtolyeScreen() {
-  const { client, companyId, user, baseUrl, can } = useAuth();
+  const { client, companyId, user, baseUrl, can, logout } = useAuth();
   const canView = can("/atolye");
   const mayOperate = user ? shopfloorMayOperate(user) : can("/atolye", "edit");
-  const atolye = isAtolyeAccount(user);
+  const device = isShopfloorDevice(user);
+  const atolye = isAtolyeAccount(user) || device;
   const userId = String(user?.id || "");
   const [wos, setWos] = useState<WorkOrder[]>([]);
   /** İstasyon filtresinden bağımsız in_progress — operatör kilit UI */
@@ -1278,8 +1280,13 @@ export function AtolyeScreen() {
           style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8 }}
         >
           <Text testID="shopfloor-atolye-account" style={{ fontWeight: "800", color: colors.text }}>
-            {user?.name || "Atölye"} · Atölye kullanıcısı
+            {device ? `${user?.name || "Atölye cihazı"} · Atölye cihazı` : `${user?.name || "Atölye"} · Atölye kullanıcısı`}
           </Text>
+          {device ? (
+            <Pressable onPress={() => { void logout(); }} testID="shopfloor-device-logout" style={{ marginLeft: "auto", minHeight: 44, justifyContent: "center" }}>
+              <Text style={{ fontWeight: "800", color: colors.danger }}>Cihazdan çık</Text>
+            </Pressable>
+          ) : null}
           {stationBadges.map((name) => {
             const tone = stationColor(name);
             return (

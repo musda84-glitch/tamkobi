@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { AppState } from "react-native";
 import { get } from "../api/client";
 import { liveBadgeCounts, unreadFromBadges } from "../utils/notifications";
+import { isShopfloorDevice } from "../utils/shopfloorDevice";
 import { setAppIconBadge } from "../utils/pushRegister";
 import { useAuth } from "./AuthContext";
 
@@ -18,12 +19,12 @@ type BadgeContextValue = {
 const BadgeContext = createContext<BadgeContextValue | null>(null);
 
 export function BadgeProvider({ children }: { children: React.ReactNode }) {
-  const { client, companyId, token, sessionKind } = useAuth();
+  const { client, companyId, token, sessionKind, user } = useAuth();
   const [live, setLive] = useState<LiveBadges>({});
   const [unread, setUnread] = useState(0);
 
   const refresh = useCallback(async () => {
-    if (!companyId || !token || sessionKind === "b2b") {
+    if (!companyId || !token || sessionKind === "b2b" || isShopfloorDevice(user)) {
       setLive({});
       setUnread(0);
       await setAppIconBadge(0);
@@ -39,7 +40,7 @@ export function BadgeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* son bilinen rozet kalsın */
     }
-  }, [client, companyId, sessionKind, token]);
+  }, [client, companyId, sessionKind, token, user]);
 
   useEffect(() => {
     refresh();

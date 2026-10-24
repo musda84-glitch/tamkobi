@@ -8,6 +8,7 @@ import type { Notification } from "../types";
 import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { visibleNotifications } from "../utils/notifications";
 import { guardedNotificationHref } from "../utils/push";
+import { isShopfloorDevice } from "../utils/shopfloorDevice";
 import { askPushPermission, enablePushHandler, registerDevicePush, rememberPresentedNotificationIds, rememberReceivedNotification, syncLocalPhoneAlerts } from "../utils/pushRegister";
 
 const POLL_MS = 30000;
@@ -41,7 +42,7 @@ export function PushBridge() {
   }, []);
 
   useEffect(() => {
-    if (sessionKind === "b2b" || !user || !token || !companyId) return;
+    if (sessionKind === "b2b" || isShopfloorDevice(user) || !user || !token || !companyId) return;
 
     if (Platform.OS === "web") {
       let cancelled = false;

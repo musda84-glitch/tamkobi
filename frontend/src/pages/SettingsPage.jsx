@@ -3,7 +3,7 @@ import { MoneyInput, parseTrNumber } from "../components/MoneyInput";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Monitor, Bell, CreditCard, Copy } from "lucide-react";
+import { Building2, MessageSquare, Mail, Landmark, ShoppingCart, Truck, FileCheck2, Printer, Upload, Save, Loader2, ListOrdered, Link as LinkIcon, Ruler, Trash2, Pencil, Users, ShieldCheck, Coins, HardDrive, Puzzle, Briefcase, Plus, GripVertical, Star, Monitor, Bell, CreditCard, Copy, Tablet } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupIdOf, groupMenuItems, SETTINGS_TAB_GROUPS } from "../navGroups";
 import { readSettingsTab, resolveSettingsTab, writeSettingsTab } from "../utils/settingsTabs";
@@ -35,6 +35,8 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { B2BCardSettingsFields } from "../components/B2BCardSettingsFields";
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "../components/NoCompanyNotice";
+import { ShopfloorDevicesPanel } from "../components/ShopfloorDevicesPanel";
+import { canManageShopfloorDevices } from "../utils/shopfloorDeviceSession";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
@@ -43,7 +45,7 @@ const EinvoiceDesignSupportNote = () => (
     Fatura tasarımı değişikliği için destek ile iletişime geçin.
   </p>
 );
-const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["vpos", "Sanal POS", CreditCard], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["notifications", "Bildirimler", Bell], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["vpos", "Sanal POS", CreditCard], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["desktop", "Masaüstü Uygulaması", Monitor], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["shopfloor_devices", "Atölye Cihazları", Tablet], ["users", "Kullanıcılar & Roller", Users], ["pos_rules", "Hızlı Satış Kuralları", ShoppingCart], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 export const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -856,7 +858,8 @@ export default function SettingsPage({ embedded = false }) {
   const shownTab = fullSettings ? resolvedTab : "desktop";
   const roleCode = String(user?.role || "").trim().toLowerCase();
   const notifyCanEdit = Boolean(user?.is_super_admin) || roleCode === "admin" || roleCode === "owner";
-  const navTabs = fullSettings ? TABS : TABS.filter(([k]) => k === "desktop");
+  const deviceAdmin = canManageShopfloorDevices(user);
+  const navTabs = (fullSettings ? TABS : TABS.filter(([k]) => k === "desktop")).filter(([k]) => k !== "shopfloor_devices" || deviceAdmin);
   const [contacts, setContacts] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const selectTab = (k) => setSearchParams((prev) => writeSettingsTab(prev, embedded, k), { replace: true });
@@ -927,6 +930,7 @@ export default function SettingsPage({ embedded = false }) {
           {shownTab === "project_stages" && <ProjectStagesSettings companyId={companyId} />}
           {shownTab === "work_parks" && <WorkParksSettings companyId={companyId} />}
           {shownTab === "workshop_zones" && <WorkshopZonesSettings companyId={companyId} />}
+          {shownTab === "shopfloor_devices" && (deviceAdmin ? <ShopfloorDevicesPanel companyId={companyId} /> : <div className="bg-white border border-slate-200 rounded-2xl p-5 text-sm text-slate-700" data-testid="shopfloor-devices-denied">Bu ekran yalnız şirket yöneticisine açıktır.</div>)}
           {shownTab === "users" && <UsersRolesPanel companyId={companyId} />}
           {shownTab === "pos_rules" && <PosRulesPanel companyId={companyId} />}
           {shownTab === "migration" && <MigrationPanel companyId={companyId} />}
