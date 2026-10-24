@@ -493,11 +493,12 @@ export default function BankingPage() {
   const refreshCashSilent = useCallback(() => {
     setCashTick((n) => n + 1);
     if (silentReloadRef.current) return silentReloadRef.current;
-    silentReloadRef.current = Promise.resolve(loadBankingData({ silent: true }))
-      .then(() => (pagingCtx.current.active ? runServerLoad("refresh") : null))
-      .finally(() => {
-        silentReloadRef.current = null;
-      });
+    // Hesap listesi ile sayfalı hareket birbirini beklemez.
+    const jobs = [Promise.resolve(loadBankingData({ silent: true }))];
+    if (pagingCtx.current.active) jobs.push(runServerLoad("refresh"));
+    silentReloadRef.current = Promise.all(jobs).finally(() => {
+      silentReloadRef.current = null;
+    });
     return silentReloadRef.current;
   }, [loadBankingData, runServerLoad]);
   useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
@@ -521,7 +522,7 @@ export default function BankingPage() {
       setTransactions((prev) => mergeMatchedTx(prev, matchedTx));
       if (isBankTxServerPagingEnabled()) setServerItems((prev) => mergeMatchedTx(prev, matchedTx));
     }
-    // Cache düşür + diğer ekranlara sinyal; ardından hesap grubu bakiyelerini (accounts + ortak özeti) bekleyerek yenile.
+    // Diğer ekranlara sinyal; ardından hesap grubu bakiyelerini ve sayfalı hareketi yenile.
     await notifyDataChanged({ companyId, scopes: ["cash"] });
     await refreshCashSilent();
   }, [companyId, refreshCashSilent]);

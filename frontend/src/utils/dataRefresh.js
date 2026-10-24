@@ -1,10 +1,9 @@
 import { useEffect } from "react";
-import { dropCached } from "./dataSync";
 
 /** Kasa / cari / fatura gibi ekranlar arası arka plan yenileme olayı. */
 export const DATA_CHANGED_EVENT = "tamkobi:data-changed";
 
-/** Scope → IndexedDB koleksiyonları (mutation sonrası drop edilir). */
+/** Scope → IndexedDB koleksiyonları (olay ayrıntısında listelenir). */
 export const SCOPE_COLLECTIONS = {
   cash: ["bank_transactions", "contacts"],
   contacts: ["contacts"],
@@ -16,8 +15,10 @@ export const SCOPE_COLLECTIONS = {
 };
 
 /**
- * İşlem sonrası: ilgili IndexedDB cache'ini düşür ve açık ekranlara
- * arka planda yeniden yükleme sinyali gönder.
+ * İşlem sonrası açık ekranlara arka planda yeniden yükleme sinyali gönder.
+ * IndexedDB imleci silinmez. Silmek sonraki cachedList'i since'siz tam
+ * /api/sync yapar; 8 sayfa tavanı listeyi eksik bırakır. Delta ve mezar
+ * taşları silinen kaydı düşürür.
  */
 export async function notifyDataChanged({
   companyId,
@@ -27,9 +28,6 @@ export async function notifyDataChanged({
   const cols = new Set(collections);
   for (const scope of scopes) {
     for (const name of SCOPE_COLLECTIONS[scope] || []) cols.add(name);
-  }
-  if (companyId) {
-    await Promise.all([...cols].map((name) => dropCached(name, companyId)));
   }
   if (typeof window === "undefined") return;
   window.dispatchEvent(

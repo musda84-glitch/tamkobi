@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import { MoneyInput } from "../components/MoneyInput";
 import { expenseListDateLines, fmtDmyTime } from "../utils/dateFormat";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
 import { expenseDateRange } from "../utils/expenseDateRange";
+import { mergeSavedExpense, savedExpenseCaughtUp } from "../utils/expenseListMerge";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { activeCompanyId } from "../utils/activeCompanyId";
@@ -183,8 +184,10 @@ const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: acc
         paid_by_name: f.account_id ? (actorName || undefined) : undefined,
         ...splitPaymentTarget(f.account_id),
       };
-      if (isEdit) await axios.put(`${API_URL}/expenses/${f.id}`, body); else await axios.post(`${API_URL}/expenses`, body);
-      toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); if (f.account_id) await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); onSaved(); onClose();
+      const r = isEdit
+        ? await axios.put(`${API_URL}/expenses/${f.id}`, body)
+        : await axios.post(`${API_URL}/expenses`, body);
+      toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); if (f.account_id) await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); onSaved(r.data); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
@@ -277,6 +280,7 @@ export default function ExpensesPage() {
   const [modal, setModal] = useState(null);
   const [payFor, setPayFor] = useState(null);
   const [payAcc, setPayAcc] = useState("");
+  const pinnedExpenseRef = useRef(null);
   // Debounce arama — her tuşta 6 API çağrısı yapmayalım.
   useEffect(() => {
     const t = setTimeout(() => setFilters((f) => (f.q === qDraft ? f : { ...f, q: qDraft })), 350);
@@ -302,7 +306,10 @@ export default function ExpensesPage() {
       ...(filters.q && { q: filters.q }),
     });
     const e = await axios.get(`${API_URL}/expenses?${p}`);
-    setData(e.data);
+    const saved = pinnedExpenseRef.current;
+    const expenses = mergeSavedExpense(e.data?.expenses, saved, filters);
+    if (!saved || savedExpenseCaughtUp(e.data?.expenses, saved)) pinnedExpenseRef.current = null;
+    setData({ ...e.data, expenses });
   }, [companyId, filters.category, filters.status, filters.from, filters.to, filters.q]);
   useEffect(() => { load().catch(() => toast.error("Masraflar yüklenemedi.")); }, [load]);
   useEffect(() => {
@@ -318,6 +325,14 @@ export default function ExpensesPage() {
       .catch(() => {});
     return () => { cancel = true; };
   }, [openExpenseId, companyId]);
+  const rememberSavedExpense = useCallback((row) => {
+    if (!row || typeof row !== "object") return;
+    const id = row.id || row._id;
+    if (!id) return;
+    const saved = { ...row, id };
+    pinnedExpenseRef.current = saved;
+    setData((prev) => ({ ...prev, expenses: mergeSavedExpense(prev.expenses, saved, filters) }));
+  }, [filters]);
   const refreshLoadSilent = useCallback(() => load({ silent: true }), [load]);
   useDataRefresh(refreshLoadSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
   const rows = useMemo(() => { const c = { date_desc: (a, b) => b.date.localeCompare(a.date), date_asc: (a, b) => a.date.localeCompare(b.date), amount_desc: (a, b) => b.total - a.total, amount_asc: (a, b) => a.total - b.total, category: (a, b) => a.category.localeCompare(b.category, "tr") }[filters.sort]; return [...data.expenses].sort(c); }, [data.expenses, filters.sort]);
@@ -450,7 +465,7 @@ export default function ExpensesPage() {
           </div>
         )}
       </div>
-      {modal && <ExpenseModal companyId={companyId} actorName={actorName} initial={modal} categories={categories} accounts={accounts} contacts={[]} employees={[]} projects={[]} onClose={() => setModal(null)} onSaved={load} />}
+      {modal && <ExpenseModal companyId={companyId} actorName={actorName} initial={modal} categories={categories} accounts={accounts} contacts={[]} employees={[]} projects={[]} onClose={() => setModal(null)} onSaved={(row) => { rememberSavedExpense(row); load().catch(() => toast.error("Masraflar yüklenemedi.")); }} />}
       {payFor && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setPayFor(null))}>
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">
