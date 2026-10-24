@@ -1,6 +1,6 @@
 import React from "react";
 import { CalendarClock } from "lucide-react";
-import { cardThumbUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { lineGross, lineUnitGross } from "../utils/orderMoney";
 import { fmtDate, fmtMoney } from "../utils/money";
 
@@ -75,7 +75,7 @@ export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
       {q.images?.length > 0 ? (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {q.images.map((img) => (
-            <img key={img} src={cardThumbUrl(img)} alt="" width={240} height={96} loading="lazy" decoding="async" className="w-full h-24 object-cover rounded-lg border" />
+            <img key={img} src={listThumbUrl(img)} alt="" width={200} height={96} loading="lazy" decoding="async" className="w-full h-24 object-cover rounded-lg border" />
           ))}
         </div>
       ) : null}
