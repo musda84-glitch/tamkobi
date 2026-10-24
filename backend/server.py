@@ -22828,7 +22828,13 @@ async def _mark_sales_order_sent_to_production(
     await db.orders.update_one({"_id": order_id, "company_id": cid}, {"$set": patch})
 
 @api_router.post("/orders")
-async def create_order(order: Order, request: Request, user: dict = Depends(get_current_user)):
+async def create_order(
+    order: Order,
+    user: dict = Depends(get_current_user),
+    request: Request = None,
+):
+    # Request sonda ve varsayılanı boş: doğrudan create_order(order, user) çağrıları
+    # Idempotency-Key olmadan eskisi gibi bir kez yazar. HTTP'de FastAPI Request'i doldurur.
     order.company_id = tenant_access.resolve_company_id(user, order.company_id)
     return await idempotency.run(
         db, order.company_id, request, "orders/create",
@@ -22856,13 +22862,16 @@ async def _create_order_core(order: Order, request: Request, user: dict):
     _apply_order_totals(order)
 
     doc = order.to_mongo()
+    doc["company_id"] = order.company_id
     await db.orders.insert_one(doc)
     await _ensure_order_contact(doc)
     await _attach_draft_invoice_on_intake(doc, source="intake")
-    refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+    refreshed = await db.orders.find_one({"_id": doc["_id"], "company_id": order.company_id}) or doc
     payload = clean_doc(refreshed)
+    headers = getattr(request, "headers", None) if request is not None else None
+    expected_total = headers.get("X-Offline-Expected-Total") if headers is not None else None
     amount_note = offline_sync.amount_decision(
-        request.headers.get("X-Offline-Expected-Total"),
+        expected_total,
         payload.get("grand_total") if isinstance(payload, dict) else None,
     )
     if amount_note and isinstance(payload, dict):

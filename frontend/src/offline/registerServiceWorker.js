@@ -5,6 +5,9 @@ export function registerOfflineServiceWorker() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
   window.addEventListener("load", () => {
     const url = `${process.env.PUBLIC_URL || ""}/service-worker.js`;
-    navigator.serviceWorker.register(url).catch(() => {});
+    // Tarayıcı service-worker.js dosyasını HTTP önbelleğinden okumasın; yeni deploy gelsin.
+    navigator.serviceWorker.register(url, { updateViaCache: "none" }).then((reg) => {
+      reg.update().catch(() => {});
+    }).catch(() => {});
   });
 }

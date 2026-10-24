@@ -458,7 +458,13 @@ def _match_line(items: list, code: str, product: Optional[dict]) -> Optional[dic
 
 
 @router.post("/order-picks/{order_id}/scan")
-async def scan_pick(order_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(_user_dep)):
+async def scan_pick(
+    order_id: str,
+    req: Dict[str, Any],
+    user: dict = Depends(_user_dep),
+    request: Request = None,
+):
+    # Request sonda: scan_pick(order_id, body, user) Idempotency-Key'siz tek tarama yapar.
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     cid = o.get("company_id")
     if not str(cid or "").strip():

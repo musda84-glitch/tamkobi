@@ -120,17 +120,38 @@ let webpackConfig = {
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
-      // App shell + statik dosyalar cache-first. API önbelleğe alınmaz; sayfalar çevrimdışı index.html'e düşer.
+      // Hash'li statik dosyalar cache-first. index.html precache'e girmez; gezinme
+      // NetworkFirst olur ki yeni deploy eski kabuğu "Arayüz eski" diye tutmasın.
+      // Ağ yokken son başarılı HTML yanıtı kalır. API önbelleğe alınmaz.
       if (process.env.NODE_ENV === "production") {
         const { GenerateSW } = require("workbox-webpack-plugin");
         webpackConfig.plugins.push(new GenerateSW({
           clientsClaim: true,
           skipWaiting: true,
-          navigateFallback: "/index.html",
-          navigateFallbackDenylist: [/^\/api\//],
-          exclude: [/\.map$/, /browser-extension/, /\.txt$/],
+          cleanupOutdatedCaches: true,
+          exclude: [/\.map$/, /browser-extension/, /\.txt$/, /index\.html$/],
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
           runtimeCaching: [
+            {
+              urlPattern: ({ request, url }) => request.mode === "navigate" && !String(url.pathname || "").startsWith("/api/"),
+              handler: "NetworkFirst",
+              options: {
+                cacheName: "tamkobi-html",
+                networkTimeoutSeconds: 3,
+                expiration: { maxEntries: 32, maxAgeSeconds: 60 * 60 * 24 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
+            {
+              urlPattern: /\/index\.html$/,
+              handler: "NetworkFirst",
+              options: {
+                cacheName: "tamkobi-html",
+                networkTimeoutSeconds: 3,
+                expiration: { maxEntries: 4, maxAgeSeconds: 60 * 60 * 24 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
             {
               urlPattern: ({ request }) => ["style", "script", "worker", "image", "font"].includes(request.destination),
               handler: "CacheFirst",
