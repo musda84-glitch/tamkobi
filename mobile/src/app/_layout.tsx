@@ -115,6 +115,7 @@ function RootStack() {
         <Stack.Screen name="personnel/index" options={{ title: "Personel & Bordro" }} />
         <Stack.Screen name="personnel/new" options={{ title: "Yeni personel" }} />
         <Stack.Screen name="settings/index" options={{ title: "Ayarlar" }} />
+        <Stack.Screen name="qr-web-login" options={{ title: "Web girişi" }} />
         <Stack.Screen name="settings/printers" options={{ title: "Yazıcılar" }} />
       </Stack.Protected>
       <Stack.Protected guard={signedIn}>

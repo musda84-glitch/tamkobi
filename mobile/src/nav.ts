@@ -54,6 +54,8 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push({ pathname: "/orders/edit/[id]", params: { id: String(params?.id || "") } });
     case "Settings":
       return router.push("/settings");
+    case "QrWebLogin":
+      return router.push("/qr-web-login");
     case "Printers":
       return router.push("/settings/printers");
     case "Mesai":
