@@ -1006,11 +1006,21 @@ def _tombstone_row(row) -> Tuple[dict, str, str]:
     return doc, stamp, row_id
 
 
-def _tombstone_keep(doc: dict, since: str) -> bool:
+def _tombstone_keep(doc: dict, since: str, updated_at: str = "") -> bool:
+    """Silme istemcinin since'inden eskiyse düşer.
+
+    Devam imleci bir sonraki satırın updated_at değeridir. deleted_at her
+    zaman ondan küçüktür; aynı toplu silmenin sonraki sayfası bu yüzden
+    boşalıyordu. updated_at since'e yetişmiş satır tutulur. Tekrar gelen
+    silme kimliği istemcide zararsızdır. Slack penceresinde kalan
+    (updated_at < since) eski silmeler elenmeye devam eder.
+    """
     deleted = doc.get("deleted_at") if isinstance(doc, dict) else None
     if not isinstance(deleted, str) or not deleted:
         return False
     if not since:
+        return True
+    if updated_at and _cmp(updated_at, since) >= 0:
         return True
     return _cmp(deleted, since) >= 0
 
@@ -1051,7 +1061,7 @@ def walk_tombstones(fetch, since: str, cap: int, hops: int = 8):
         for doc, stamp, row_id in loaded:
             after_stamp = stamp
             after_id = row_id
-            if not _tombstone_keep(doc, since_text):
+            if not _tombstone_keep(doc, since_text, stamp):
                 continue
             ident = str(doc.get("doc_id") or "")
             if not ident or ident in seen_docs:

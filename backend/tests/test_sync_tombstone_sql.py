@@ -145,6 +145,64 @@ def test_same_stamp_group_is_not_split():
     assert cursor == later
 
 
+def test_continuation_keeps_bulk_delete_when_deleted_at_precedes_updated_at():
+    """İmleç updated_at'tir. deleted_at daha eskiyse ikinci sayfa satırı düşürmesin."""
+    deleted = "2026-06-01T00:00:00+00:00"
+    base = datetime(2026, 6, 1, 0, 1, tzinfo=timezone.utc)
+    rows = []
+    for i in range(6):
+        stamp = (base + timedelta(seconds=i)).isoformat()
+        rows.append((
+            {"doc_id": f"b{i}", "collection": "invoices", "deleted_at": deleted, "company_id": "co"},
+            stamp,
+            f"b{i}",
+        ))
+    assert rows[0][0]["deleted_at"] < rows[0][1]
+
+    def fetch(after_stamp, after_id):
+        return _window(rows, after_stamp, after_id, 2)
+
+    ids, more, cursor = walk_tombstones(fetch, "2026-05-01T00:00:00+00:00", 2)
+    assert ids == ["b0", "b1"]
+    assert more is True
+    assert cursor == rows[2][1]
+    assert rows[2][0]["deleted_at"] < cursor
+    rest, more_rest, _cursor = walk_tombstones(fetch, cursor, 2)
+    assert rest == ["b2", "b3"]
+    assert more_rest is True
+    tail, tail_more, _tail_cursor = walk_tombstones(fetch, _cursor, 2)
+    assert tail == ["b4", "b5"]
+    assert tail_more is False
+
+
+def test_sync_page_over_3000_tombstones_continues():
+    deleted = "2026-06-01T00:00:00+00:00"
+    base = datetime(2026, 6, 1, 0, 1, tzinfo=timezone.utc)
+    total = 3001
+    rows = []
+    for i in range(total):
+        stamp = (base + timedelta(seconds=i)).isoformat()
+        rows.append((
+            {"doc_id": f"d{i}", "deleted_at": deleted, "collection": "invoices"},
+            stamp,
+            f"id{i:05d}",
+        ))
+    cap = 3000
+
+    def fetch(after_stamp, after_id):
+        return _window(rows, after_stamp, after_id, cap)
+
+    ids, more, cursor = walk_tombstones(fetch, "2026-05-01T00:00:00+00:00", cap)
+    assert len(ids) == 3000
+    assert ids[0] == "d0" and ids[-1] == "d2999"
+    assert more is True
+    assert cursor == rows[3000][1]
+    assert rows[3000][0]["deleted_at"] < cursor
+    rest, more_rest, _cursor = walk_tombstones(fetch, cursor, cap)
+    assert rest == ["d3000"]
+    assert more_rest is False
+
+
 def test_indexed_reader_asks_sql_for_each_page_only():
     import asyncio
 
