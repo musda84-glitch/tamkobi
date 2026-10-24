@@ -72,7 +72,7 @@ export function listImageUrl(url, edge = 64) {
 
 /** Liste satırı (ürün, sipariş, toplama) için saklanan küçük kenar. */
 export const LIST_THUMB_EDGE = 200;
-/** Kart, yazdırma önizleme ve hover için saklanan kenar. */
+/** Kart ve hover için saklanan kenar. Yazdırma satırı 200 px kullanır. */
 export const CARD_THUMB_EDGE = 600;
 
 export function listThumbUrl(url) {

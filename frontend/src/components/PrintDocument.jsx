@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
-import { cardThumbUrl, listImageUrl, resolveImageUrl } from "../utils/imageUrl";
+import { listImageUrl } from "../utils/imageUrl";
+import { preloadPrintThumbs, printItemImageRef, printLineThumbUrls, printThumbUrl } from "../utils/printFormImages";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
@@ -14,39 +15,12 @@ export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIn
 import { activeCompanyId } from "../utils/activeCompanyId";
 import NoCompanyNotice from "./NoCompanyNotice";
 
-const mediaUrl = (v) => {
-  if (v == null || v === "") return "";
-  if (typeof v === "string") return v.trim();
-  if (typeof v === "object") {
-    const u = v.url ?? v.image_url ?? v.thumbnail_url ?? v.src ?? "";
-    return u == null ? "" : String(u).trim();
-  }
-  return String(v).trim();
+const printTplCache = new Map();
+
+const cachedPrintTpl = (companyId, docType) => {
+  if (!companyId) return {};
+  return printTplCache.get(`${companyId}|${docType}`) || {};
 };
-
-const pickItemImage = (it = {}, prod = {}) => (
-  mediaUrl(it.thumbnail_url) || mediaUrl(it.image_url)
-  || mediaUrl(prod.thumbnail_url) || mediaUrl(prod.image_url)
-  || (Array.isArray(it.images) && mediaUrl(it.images[0]))
-  || (Array.isArray(prod.images) && mediaUrl(prod.images[0]))
-  || ""
-);
-
-const printThumbUrl = (raw) => {
-  const resolved = resolveImageUrl(raw);
-  if (!resolved) return "";
-  try {
-    const u = new URL(resolved, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-    if (u.pathname.startsWith("/api/files/")) return listImageUrl(resolved, 200);
-    if (/unsplash\.com|images\.pexels\.com|cloudinary\.com/i.test(u.hostname) || u.searchParams.has("w")) {
-      u.searchParams.set("w", "128");
-      if (!u.searchParams.has("q") && /unsplash/i.test(u.hostname)) u.searchParams.set("q", "60");
-      return u.toString();
-    }
-  } catch { /* keep */ }
-  return resolved;
-};
-
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE", expense_slip: "GİDER PUSULASI" };
@@ -202,7 +176,8 @@ export const PrintDocument = (props) => {
 };
 
 const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate, onPrinted }) => {
-  const [tpl, setTpl] = useState(null);
+  const companyId = activeCompanyId(company);
+  const [tpl, setTpl] = useState(() => cachedPrintTpl(companyId, docType));
   const [tplKey, setTplKey] = useState(docType);
   const [formOptions, setFormOptions] = useState([]);
   const [prodById, setProdById] = useState({});
@@ -212,9 +187,8 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contactBalance, setContactBalance] = useState(null);
   const [partyContact, setPartyContact] = useState(null);
-  const companyId = activeCompanyId(company);
   const compactForm = isOrderQuotePrint(docType);
-  const items = doc.items || [];
+  const items = useMemo(() => doc.items || [], [doc.items]);
   const productIds = useMemo(
     () => [...new Set(items.map((it) => it.product_id).filter(Boolean))],
     [items]
@@ -298,19 +272,15 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     load();
     return () => { cancelled = true; };
   }, [companyId, productIdsKey, productSkusKey, items]);
+  const printSrcKey = useMemo(() => printLineThumbUrls(items, (it) => (
+    (it?.product_id && prodById[it.product_id])
+    || (it?.sku && prodBySku[String(it.sku).trim()])
+    || prodByName[String(it?.name || it?.product_name || "").trim().toLocaleLowerCase("tr-TR")]
+    || {}
+  )).join("\n"), [items, prodById, prodBySku, prodByName]);
   useEffect(() => {
-    const urls = items
-      .map((it) => printThumbUrl(pickItemImage(it, resolveProd(it))))
-      .filter(Boolean);
-    const loaders = urls.map((src) => {
-      const img = new Image();
-      img.decoding = "async";
-      img.fetchPriority = "high";
-      img.src = src;
-      return img;
-    });
-    return () => { loaders.forEach((img) => { img.src = ""; }); };
-  }, [items, prodById, prodBySku, prodByName]);
+    preloadPrintThumbs(printSrcKey ? printSrcKey.split("\n") : []);
+  }, [printSrcKey]);
   useEffect(() => {
     if (!companyId) { setTpl({}); return undefined; }
     const load = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
@@ -321,7 +291,9 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
       setFormOptions([{ key: docType, label: TITLES[docType] || "Varsayılan" }, ...cats]);
       setTplKey((prev) => {
         const next = (prev && (prev === docType || cats.some((c) => c.key === prev))) ? prev : docType;
-        setTpl(all[next] || all[docType] || {});
+        const chosen = all[next] || all[docType] || {};
+        if (companyId) printTplCache.set(`${companyId}|${docType}`, chosen);
+        setTpl(chosen);
         return next;
       });
     }).catch(() => setTpl({}));
@@ -372,7 +344,6 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     });
     return () => { cancelled = true; };
   }, [companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
-  if (!tpl) return null;
   const layout = tpl.layout || "classic";
   const pickLayout = async (l) => {
     const next = { ...tpl, layout: l };
@@ -531,7 +502,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             </thead>
             <tbody>{items.map((it, i) => {
               const prod = resolveProd(it);
-              const img = printThumbUrl(pickItemImage(it, prod));
+              const img = printThumbUrl(printItemImageRef(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               const shelf = printShelfLabel(it, prod);
               return (
@@ -542,7 +513,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
                       {showImages && (
                         <span className="print-compact-thumb shrink-0" data-testid={`print-item-image-${i}`}>
                           {img ? (
-                            <img src={img} alt="" width={44} height={44} loading={i < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={i < 4 ? "high" : "low"} className="w-11 h-11 object-contain bg-white" />
+                            <img src={img} alt="" width={44} height={44} loading="eager" decoding="async" fetchPriority={i < 8 ? "high" : "auto"} className="w-11 h-11 object-contain bg-white" />
                           ) : <span className="block w-11 h-11 bg-slate-50" />}
                         </span>
                       )}
@@ -592,7 +563,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             </thead>
             <tbody>{items.map((it, i) => {
               const prod = resolveProd(it);
-              const img = printThumbUrl(pickItemImage(it, prod));
+              const img = printThumbUrl(printItemImageRef(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
                 <tr key={i} className={`border-b border-slate-100 ${isBold && i % 2 ? "bg-slate-50" : ""}`} data-testid={`print-item-row-${i}`}>
@@ -603,9 +574,9 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
                         alt=""
                         width={64}
                         height={64}
-                        loading={i < 4 ? "eager" : "lazy"}
+                        loading="eager"
                         decoding="async"
-                        fetchPriority={i < 4 ? "high" : "low"}
+                        fetchPriority={i < 8 ? "high" : "auto"}
                         className="w-16 h-16 min-w-16 shrink-0 object-contain rounded border bg-white"
                       />
                     ) : <div className="w-16 h-16 min-w-16 rounded border border-dashed border-slate-200 bg-slate-50" />}
@@ -663,7 +634,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             </div>
           )}
           {(doc.notes || doc.terms) && <div className="mt-6 text-slate-600 whitespace-pre-wrap">{doc.notes}{doc.terms && <div className="mt-2"><b>Şartlar:</b> {doc.terms}</div>}</div>}
-          {doc.images?.length > 0 && <div className="mt-6 grid grid-cols-4 gap-2">{doc.images.slice(0, 8).map((img) => <img key={img} src={cardThumbUrl(img)} alt="" width={240} height={96} loading="lazy" decoding="async" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
+          {doc.images?.length > 0 && <div className="mt-6 grid grid-cols-4 gap-2">{doc.images.slice(0, 8).map((img) => <img key={img} src={printThumbUrl(img)} alt="" width={200} height={96} loading="eager" decoding="async" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
           {tpl.show_bank_info && company?.iban && <div className="mt-6 text-slate-600"><b>Banka:</b> {company.bank_name} • <b>IBAN:</b> <span className="font-mono">{company.iban}</span></div>}
           {(() => {
             const footerNote = String(tpl.footer_note || "").trim();

@@ -53,6 +53,7 @@ import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
+import { preloadPrintThumbs, printItemImageRef, printThumbUrl } from "../utils/printFormImages";
 import { eBelgeMenuItems, orderEBelgeType, resolveOrderContact } from "../utils/orderEBelge";
 import { contactMukellefPatch, docBuyerTaxId, faturalastirMenuLabel, fetchGibMukellef } from "../utils/gibMukellef";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, faturalastirConfirmMessage, orderDeleteConfirmMessage, ordersBulkDeleteConfirmMessage, canDeleteFromMoreMenu } from "../utils/orderMoreMenu";
@@ -261,6 +262,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
   const [printShareOrder, setPrintShareOrder] = useState(null);
   const [printInvoice, setPrintInvoice] = useState(null);
   const [printOrder, setPrintOrder] = useState(null);
+  const printReq = useRef(0);
   const [labelOrder, setLabelOrder] = useState(null);
   const [dispatchDoc, setDispatchDoc] = useState(null);
   const [returnOrder, setReturnOrder] = useState(null);
@@ -1192,53 +1194,67 @@ function OrdersB2BPageImpl({ staffMode = false }) {
     }
   };
 
-  /** Sipariş formu yazdır: varsa fatura kalemlerini (güncel ad/ürün) kullan; görselleri stoktan bas. */
-  const openPrintOrder = useCallback(async (ord) => {
+  /** Sipariş formu hemen açılır. Fatura ve eksik görsel arkadan gelir; form onları beklemez. */
+  const openPrintOrder = useCallback((ord) => {
     if (!ord) return;
-    let doc = ord;
+    const req = ++printReq.current;
+    setPrintOrder(ord);
+    preloadPrintThumbs((ord.items || []).map((it) => printThumbUrl(printItemImageRef(it))));
     const invId = ord.invoice_id;
-    if (invId) {
-      try {
-        const r = await axios.get(`${API_URL}/invoices/${invId}`);
-        doc = mergeInvoiceItemsIntoOrder(ord, r.data) || ord;
-      } catch {
-        doc = ord;
-      }
-    }
-    const items = doc.items || [];
+    const items = ord.items || [];
     const missingImg = items.some((it) => !(it.image_url || it.thumbnail_url));
-    if (missingImg && items.length) {
-      try {
-        const companyId = activeCompanyId(activeCompany);
-        const ids = [...new Set(items.map((it) => it.product_id).filter(Boolean))];
-        const skus = [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))];
-        let products = [];
-        if (ids.length || skus.length) {
-          const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
-          if (ids.length) qs.set("ids", ids.join(","));
-          if (skus.length) qs.set("skus", skus.join(","));
-          const r = await axios.get(`${API_URL}/products?${qs}`);
-          products = Array.isArray(r.data) ? r.data : [];
+    if (!invId && !missingImg) return;
+    (async () => {
+      let doc = ord;
+      if (invId) {
+        try {
+          const r = await axios.get(`${API_URL}/invoices/${invId}`);
+          if (req !== printReq.current) return;
+          doc = mergeInvoiceItemsIntoOrder(ord, r.data) || ord;
+        } catch {
+          doc = ord;
         }
-        const stillMissing = hydratePrintItemImages(items, products).some((it) => !(it.image_url || it.thumbnail_url));
-        if (stillMissing) {
-          const all = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
-          const extra = Array.isArray(all.data) ? all.data : [];
-          const seen = new Set(products.map((p) => p.id || p._id));
-          extra.forEach((p) => {
-            const id = p.id || p._id;
-            if (id && !seen.has(id)) {
-              seen.add(id);
-              products.push(p);
-            }
-          });
-        }
-        doc = { ...doc, items: hydratePrintItemImages(items, products) };
-      } catch {
-        /* yazdırma yine açılsın */
       }
-    }
-    setPrintOrder(doc);
+      const nextItems = doc.items || [];
+      const stillNeed = nextItems.some((it) => !(it.image_url || it.thumbnail_url));
+      if (stillNeed && nextItems.length) {
+        try {
+          const companyId = activeCompanyId(activeCompany);
+          const ids = [...new Set(nextItems.map((it) => it.product_id).filter(Boolean))];
+          const skus = [...new Set(nextItems.map((it) => String(it.sku || "").trim()).filter(Boolean))];
+          let products = [];
+          if (ids.length || skus.length) {
+            const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
+            if (ids.length) qs.set("ids", ids.join(","));
+            if (skus.length) qs.set("skus", skus.join(","));
+            const r = await axios.get(`${API_URL}/products?${qs}`);
+            if (req !== printReq.current) return;
+            products = Array.isArray(r.data) ? r.data : [];
+          }
+          const hydrated = hydratePrintItemImages(nextItems, products);
+          const stillMissing = hydrated.some((it) => !(it.image_url || it.thumbnail_url));
+          if (stillMissing) {
+            const all = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+            if (req !== printReq.current) return;
+            const extra = Array.isArray(all.data) ? all.data : [];
+            const seen = new Set(products.map((p) => p.id || p._id));
+            extra.forEach((p) => {
+              const id = p.id || p._id;
+              if (id && !seen.has(id)) {
+                seen.add(id);
+                products.push(p);
+              }
+            });
+          }
+          doc = { ...doc, items: hydratePrintItemImages(nextItems, products) };
+        } catch {
+          /* form zaten açık */
+        }
+      }
+      if (req !== printReq.current) return;
+      if (doc !== ord) setPrintOrder(doc);
+      preloadPrintThumbs((doc.items || []).map((it) => printThumbUrl(printItemImageRef(it))));
+    })();
   }, [activeCompany]);
 
   /** Faturalaştır → cariye işlenmiş fatura (yeşil). E-belge ayrıca kesilir. */
@@ -1897,7 +1913,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
           docType="order"
           doc={printOrder}
           company={activeCompany}
-          onClose={() => setPrintOrder(null)}
+          onClose={() => { printReq.current += 1; setPrintOrder(null); }}
           onEditTemplate={() => setEditTpl(true)}
           onPrinted={(doc) => {
             const id = doc?.id || doc?._id;
