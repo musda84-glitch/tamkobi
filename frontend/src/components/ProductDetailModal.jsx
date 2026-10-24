@@ -7,7 +7,7 @@ import LotManager from "./LotManager";
 import { ProductImageGallery } from "./ProductImageGallery";
 import { VariantManager } from "./VariantManager";
 import { LabelQuickPrint } from "./LabelDesigner";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { useAuth } from "../context/AuthContext";
 import { activeCompanyId } from "../utils/activeCompanyId";
@@ -41,7 +41,7 @@ export const ProductDetailModal = ({ product, initialTab = "images", onClose, on
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center text-slate-400">
-              {productListImageUrl(product) ? <img src={resolveImageUrl(productListImageUrl(product))} alt={product.name} className="w-full h-full object-cover" /> : <Package className="w-5 h-5" />}
+              {productListImageUrl(product) ? <img src={listThumbUrl(productListImageUrl(product))} alt={product.name} width={48} height={48} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-5 h-5" />}
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 leading-tight">{product.name}</h3>

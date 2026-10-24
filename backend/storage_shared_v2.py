@@ -441,6 +441,41 @@ class SharedV2Collection:
         ).fetchone()
         return int((row or [0])[0] or 0)
 
+    async def measure_volume(self, company_id: str, *, with_bytes: bool = True):
+        """Periyodik hacim. Belge satırı okunmaz. MySQL döngünün dışındadır.
+
+        Taşıma bu metodu kullanmaz. Tablo adı şemadan gelir, parametre değildir.
+        """
+        cid = str(company_id or "")
+        _guard(self.name, "count_documents", query={"company_id": cid or self.company_id})
+        if cid and cid != self.company_id:
+            import storage_router
+
+            if storage_router.canonical_company_id(cid) != storage_router.canonical_company_id(self.company_id):
+                return (0, 0)
+        table = str(self._data_table() or "")
+        if not table or not (table[0].isalpha() or table[0] == "_") or not all(ch.isalnum() or ch == "_" for ch in table):
+            raise RuntimeError("ölçüm tablosu geçersiz")
+        scope, params = self._scope()
+        if with_bytes:
+            sql = f"SELECT COUNT(*), COALESCE(SUM(LENGTH(doc)), 0) FROM {table} WHERE {scope}"
+        else:
+            sql = f"SELECT COUNT(*) FROM {table} WHERE {scope}"
+
+        def work():
+            row = self._run(sql, tuple(params)).fetchone()
+            if not row:
+                return (0, 0)
+            count = int(row[0] or 0)
+            nbytes = int(row[1] or 0) if with_bytes else 0
+            return (count, nbytes)
+
+        if getattr(self.store, "dialect", "") == "mysql":
+            import platform_lease
+
+            return await platform_lease.call_blocking(work)
+        return work()
+
     async def distinct(self, key, query=None):
         _guard(self.name, "distinct", query=query)
         docs = await self._match_docs(query)

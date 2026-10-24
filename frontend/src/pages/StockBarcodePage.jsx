@@ -15,7 +15,7 @@ import { useDataRefresh } from "../utils/dataRefresh";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { isProductsServerPagingEnabled } from "../utils/featureFlags";
 import { AiStockImportModal } from "../components/AiStockImportModal";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { ScanButton } from "../components/CameraScanner";
 import { SearchSelect } from "../components/SearchSelect";
@@ -1016,7 +1016,7 @@ export default function StockBarcodePage() {
                           title="Görselleri Yönet"
                           data-testid={`product-thumb-${prod.sku}`}
                         >
-                          {productListImageUrl(prod) ? <img src={resolveImageUrl(productListImageUrl(prod))} alt={prod.name} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-4 h-4" />}
+                          {productListImageUrl(prod) ? <img src={listThumbUrl(productListImageUrl(prod))} alt={prod.name} width={44} height={44} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-4 h-4" />}
                         </button>
                         <div>
                           <div className="font-bold text-slate-900">{prod.name}</div>

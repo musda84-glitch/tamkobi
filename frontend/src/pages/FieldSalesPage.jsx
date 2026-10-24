@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { statusTr } from "../utils/labels";
 import { orderStatusLabel } from "../utils/warehouseShip";
@@ -19,6 +19,7 @@ import {
   RefreshCw, Package, ShoppingCart, CheckCircle2, MapPin, Phone, X,
 } from "lucide-react";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -202,7 +203,7 @@ export default function FieldSalesPage() {
           vat_rate, total, vat_amount, total_incl: Math.round((total + vat_amount) * 100) / 100,
         };
       });
-      const r = await axios.post(`${API_URL}/orders`, {
+      const r = await postOrQueue(axios, { url: `${API_URL}/orders`, companyId, kind: "order_create", critical: true, expected: { grandTotal: total }, body: {
         company_id: companyId, channel: "saha", order_status: "pending",
         customer_name: name, customer_phone: customer?.phone || newCust?.phone || "",
         customer_email: customer?.email || "",
@@ -211,12 +212,14 @@ export default function FieldSalesPage() {
         contact_id: pid(customer) || null, notes,
         salesperson_name: user?.name || "",
         items, total_amount: total,
-      });
+      } });
+      if (r.data?.queued) { toast.success(r.data.message); setCart([]); setNotes(""); setCustomer(null); setNewCust(null); setShowCart(false); return; }
       toast.success(`Sipariş alındı: ${r.data.order_number}`);
       setCart([]); setNotes(""); setCustomer(null); setNewCust(null); setShowCart(false);
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Sipariş kaydedilemedi.");
+      const detail = e.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : detail?.message || "Sipariş kaydedilemedi.");
     } finally { setBusy(false); }
   };
 
@@ -318,7 +321,7 @@ export default function FieldSalesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[52vh] overflow-y-auto">
             {prodHits.map((p) => (
               <button key={pid(p)} type="button" onClick={() => addProduct(p)} className="text-left flex gap-3 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-xl p-3 min-h-16" data-testid={`saha-product-${pid(p)}`}>
-                {resolveImageUrl(productListImageUrl(p)) ? <img src={resolveImageUrl(productListImageUrl(p))} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-lg object-cover bg-white border shrink-0" /> : <div className="w-14 h-14 rounded-lg border bg-white flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
+                {listThumbUrl(productListImageUrl(p)) ? <img src={listThumbUrl(productListImageUrl(p))} alt="" width={56} height={56} loading="lazy" decoding="async" className="w-14 h-14 rounded-lg object-cover bg-white border shrink-0" /> : <div className="w-14 h-14 rounded-lg border bg-white flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-slate-900 truncate">{p.name}</div>
                   <div className="text-[11px] text-slate-500 truncate">{p.sku || p.barcode || "—"} · stok {p.stock_quantity ?? "—"}</div>

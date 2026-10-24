@@ -4,7 +4,7 @@ import { useEscape } from "../utils/useEscape";
 import JsBarcode from "jsbarcode";
 import { QRCodeSVG } from "qrcode.react";
 import { Printer, X, Tag } from "lucide-react";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { isEan13 } from "../utils/barcodeFormat";
 import { fmtMoney } from "../utils/money";
 import { productGalleryUrls, productLabelImageUrl } from "../utils/productImages";
@@ -97,7 +97,7 @@ export const BarcodeLabelPrint = ({ product, company, onClose }) => {
                         className={`w-10 h-10 rounded-lg overflow-hidden border-2 ${labelImage === u ? "border-indigo-500" : "border-slate-200"}`}
                         data-testid="label-image-option"
                       >
-                        <img src={resolveImageUrl(u)} alt="" className="w-full h-full object-cover" />
+                        <img src={listThumbUrl(u)} alt="" width={120} height={120} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       </button>
                     ))}
                   </div>
@@ -140,7 +140,7 @@ const Label = ({ t, size, opts, showImg, company, fmt, extra }) => {
         </div>
       )}
       <div className="flex-1 min-h-0 flex gap-[1.5mm] p-[1.2mm]">
-        {showImg && <div className="shrink-0 h-full rounded-[0.8mm] border border-slate-200 overflow-hidden bg-white" style={{ width: `${Math.round(size.w * (wide ? 0.18 : 0.26))}mm` }}><img src={resolveImageUrl(t.image_url)} alt="" className="w-full h-full object-contain" /></div>}
+        {showImg && <div className="shrink-0 h-full rounded-[0.8mm] border border-slate-200 overflow-hidden bg-white" style={{ width: `${Math.round(size.w * (wide ? 0.18 : 0.26))}mm` }}><img src={listThumbUrl(t.image_url)} alt="" width={240} height={240} decoding="async" className="w-full h-full object-contain" /></div>}
         <div className="flex-1 min-w-0 flex flex-col justify-between leading-none">
           <div className="space-y-[0.4mm]">
             {opts.name && <div className={`font-bold leading-tight ${big ? "text-[8pt]" : wide ? "text-[7pt]" : "text-[6pt]"} ${big ? "line-clamp-2" : "truncate"}`}>{t.name}</div>}

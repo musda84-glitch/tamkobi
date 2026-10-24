@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { FileSpreadsheet, Loader2, Sparkles, X, Check, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { isOnline, onlineOnlyBlock } from "../offline/policy";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { QuantityInput } from "./MoneyInput";
 
@@ -32,6 +33,11 @@ export const AiCartUpload = ({
     const name = (file.name || "").toLowerCase();
     if (name.endsWith(".xls") && !name.endsWith(".xlsx") && !name.endsWith(".xlsm")) {
       toast.error("Eski .xls desteklenmiyor. Excel’de .xlsx olarak kaydedip yeniden yükleyin.");
+      return;
+    }
+    const blocked = onlineOnlyBlock(uploadUrl, { online: isOnline() });
+    if (blocked) {
+      toast.error(blocked.message);
       return;
     }
     setBusy(true);

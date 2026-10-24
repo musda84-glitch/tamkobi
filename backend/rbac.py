@@ -1692,6 +1692,9 @@ CROSS_MODULE_VIEW = (
     ("GET", "/api/companies/{id}/print-templates", ("/invoices", "/quotes", "/orders", "/settings"), (), True),
     # Saha sipariş listesi. Ayrıntı /orders veya portal_orders. Yazma portal_saha.
     ("GET", "/api/orders", ("/orders", "/saha"), (), True),
+    # Çevrimdışı delta: ürün, stok özeti, cari, fiyat listesi. Yazma yok.
+    # Üyelik uçta resolve_company_id; parola, PIN, token, VKN ve IBAN dönmez.
+    ("GET", "/api/offline/sync", _CROSS_PRODUCT_MODULES, _CROSS_PRODUCT_PORTAL, True),
 )
 
 _RBAC_GET_ENFORCE_VALUES = ("off", "shadow", "enforce")

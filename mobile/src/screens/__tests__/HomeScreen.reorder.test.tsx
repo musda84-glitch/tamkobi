@@ -130,6 +130,7 @@ jest.mock("react-native", () => {
     ActivityIndicator: () => null,
     RefreshControl: () => ReactLib.createElement("div", { "data-testid": "refresh-control" }),
     AppState: { addEventListener: () => ({ remove() { /* no-op */ } }) },
+    PanResponder: { create: () => ({ panHandlers: {} }) },
     useWindowDimensions: () => ({ width: WIDTH, height: 800, scale: 2, fontScale: 1 }),
     TextInput: Object.assign(host("input"), { State: { currentlyFocusedInput: () => null } }),
   };
@@ -178,6 +179,8 @@ const overview = {
 };
 
 let orderRaw: string | null = null;
+let quickOrderRaw: string | null = null;
+let hiddenRaw: string | null = null;
 
 async function flush() {
   for (let i = 0; i < 10; i += 1) {
@@ -200,11 +203,16 @@ describe("HomeScreen reorder", () => {
 
   beforeEach(() => {
     orderRaw = null;
+    quickOrderRaw = null;
+    hiddenRaw = null;
     backHandlers.splice(0, backHandlers.length);
     mockAuth.user = { id: "uid-1", name: "Mustafa Yılmaz", email: "m@tamkobi.com", role: "admin" };
     mockAuth.companyId = "cid-1";
     (AsyncStorage.getItem as jest.Mock).mockImplementation(async (key: string) => {
-      if (String(key).includes("overview_order")) return orderRaw;
+      const name = String(key);
+      if (name.includes("overview_order")) return orderRaw;
+      if (name.includes("quick_order")) return quickOrderRaw;
+      if (name.includes("quick_hidden")) return hiddenRaw;
       return null;
     });
     (AsyncStorage.getItem as jest.Mock).mockClear();
@@ -328,9 +336,119 @@ describe("HomeScreen reorder", () => {
     expect(findByTestId(container, "home-pager")).toBeNull();
     expect(findByTestId(container, "home-overview-reorder")).toBeNull();
     expect(findByTestId(container, "home-overview-section-today")).toBeNull();
+    expect(findByTestId(container, "home-tiles-editor")).toBeNull();
     expect(backHandlers).toHaveLength(0);
   });
+
+  it("keeps hide-only long press when the home is not paged", async () => {
+    const { Alert } = require("react-native") as { Alert: { alert: jest.Mock } };
+    mockAuth.user = { id: "uid-1", name: "Mustafa Yılmaz", email: "m@tamkobi.com", role: "admin", employee_id: "emp-1" };
+    await show();
+    expect(findByTestId(container, "home-pager")).toBeNull();
+    Alert.alert.mockClear();
+    const tile = findByTestId(container, "home-quick-invoices");
+    expect(tile).toBeTruthy();
+    await act(async () => { reactProps(tile)?.onLongPress?.(); });
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(findByTestId(container, "home-tiles-editor")).toBeNull();
+  });
+
+  it("saves page-2 tile ids from the long-press menu without touching page 1", async () => {
+    const { Alert } = require("react-native") as { Alert: { alert: jest.Mock } };
+    quickOrderRaw = JSON.stringify(["contacts", "invoices"]);
+    await show();
+    const page = findByTestId(container, "home-page-tiles");
+    expect(quickIds(page)[0]).toBe("home-quick-contacts");
+    expect(quickIds(page)[1]).toBe("home-quick-invoices");
+    expect(findByTestId(container, "home-overview-section-today")).toBeTruthy();
+    await act(async () => { reactProps(findByTestId(page, "home-quick-contacts"))?.onLongPress?.(); });
+    const call = Alert.alert.mock.calls.at(-1);
+    expect(call?.[0]).toBe("Karo gizlensin mi?");
+    const buttons = call?.[2] as { text?: string; onPress?: () => void }[];
+    expect(buttons.map((button) => button.text)).toEqual(["Gizle", "Yerini değiştir", "Vazgeç"]);
+    await act(async () => { buttons[1].onPress?.(); });
+    expect(findByTestId(container, "home-tiles-editor")).toBeTruthy();
+    expect(findByTestId(container, "home-overview-reorder")).toBeNull();
+    expect(findByTestId(container, "home-overview-section-today")).toBeTruthy();
+    expect(findByTestId(container, "home-pager").getAttribute("data-scroll-enabled")).toBe("false");
+    expect(findByTestId(container, "home-quick-refresh")).toBeNull();
+    (AsyncStorage.setItem as jest.Mock).mockClear();
+    await act(async () => { reactProps(findByTestId(container, "home-tiles-editor-done"))?.onClick?.(); });
+    await flush();
+    const write = (AsyncStorage.setItem as jest.Mock).mock.calls.find((args) => String(args[0]).includes("quick_order"));
+    expect(write?.[0]).toBe("tamkobi.home.quick_order.v1:uid-1:cid-1");
+    const saved = JSON.parse(String(write?.[1])) as string[];
+    expect(saved.slice(0, 2)).toEqual(["contacts", "invoices"]);
+    expect(saved).not.toContain("notifications");
+    expect(saved.every((id) => typeof id === "string" && !id.includes("@"))).toBe(true);
+    expect(findByTestId(container, "home-tiles-editor")).toBeNull();
+    expect(findByTestId(container, "home-pager").getAttribute("data-scroll-enabled")).toBe("true");
+  });
+
+  it("hides from the menu without rewriting tile order", async () => {
+    const { Alert } = require("react-native") as { Alert: { alert: jest.Mock } };
+    await show();
+    const page = findByTestId(container, "home-page-tiles");
+    await act(async () => { reactProps(findByTestId(page, "home-quick-invoices"))?.onLongPress?.(); });
+    const buttons = Alert.alert.mock.calls.at(-1)?.[2] as { onPress?: () => void }[];
+    (AsyncStorage.setItem as jest.Mock).mockClear();
+    await act(async () => { buttons[0].onPress?.(); });
+    await flush();
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith("tamkobi.home.quick_hidden.v1", JSON.stringify(["invoices"]));
+    expect((AsyncStorage.setItem as jest.Mock).mock.calls.some((args) => String(args[0]).includes("quick_order"))).toBe(false);
+    expect(findByTestId(container, "home-page-tiles") && findByTestId(findByTestId(container, "home-page-tiles"), "home-quick-invoices")).toBeNull();
+  });
+
+  it("shows a hidden tile from edit mode and resets order without clearing hidden ids", async () => {
+    const { Alert } = require("react-native") as { Alert: { alert: jest.Mock } };
+    hiddenRaw = JSON.stringify(["vehicles"]);
+    quickOrderRaw = JSON.stringify(["vehicles", "invoices", "contacts"]);
+    await show();
+    const page = findByTestId(container, "home-page-tiles");
+    expect(findByTestId(page, "home-quick-vehicles")).toBeNull();
+    expect(quickIds(page)[0]).toBe("home-quick-invoices");
+    await act(async () => { reactProps(findByTestId(page, "home-quick-invoices"))?.onLongPress?.(); });
+    const buttons = Alert.alert.mock.calls.at(-1)?.[2] as { onPress?: () => void }[];
+    await act(async () => { buttons[1].onPress?.(); });
+    const slot = findByTestId(container, "home-tiles-editor-slot-vehicles");
+    expect(reactProps(slot)?.style?.opacity).toBe(0.4);
+    (AsyncStorage.setItem as jest.Mock).mockClear();
+    await act(async () => { reactProps(findByTestId(container, "home-tiles-show-vehicles"))?.onClick?.(); });
+    await flush();
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith("tamkobi.home.quick_hidden.v1", JSON.stringify([]));
+    expect((AsyncStorage.setItem as jest.Mock).mock.calls.some((args) => String(args[0]).includes("quick_order"))).toBe(false);
+    expect(reactProps(findByTestId(container, "home-tiles-editor-slot-vehicles"))?.style?.opacity).toBe(1);
+
+    (AsyncStorage.removeItem as jest.Mock).mockClear();
+    await act(async () => { reactProps(findByTestId(container, "home-tiles-editor-reset"))?.onClick?.(); });
+    await flush();
+    expect(AsyncStorage.removeItem).toHaveBeenCalledWith("tamkobi.home.quick_order.v1:uid-1:cid-1");
+    expect(AsyncStorage.removeItem).not.toHaveBeenCalledWith("tamkobi.home.quick_hidden.v1");
+    expect(findByTestId(container, "home-tiles-editor")).toBeTruthy();
+    const slots = collectIds(container).filter((id) => id.startsWith("home-tiles-editor-slot-"));
+    expect(slots[0]).toBe("home-tiles-editor-slot-invoices");
+    expect(reactProps(findByTestId(container, "home-tiles-editor-reset"))?.disabled).toBe(true);
+  });
+
+  it("drops an unsaved tile draft on the Android back handler", async () => {
+    const { Alert } = require("react-native") as { Alert: { alert: jest.Mock } };
+    await show();
+    const page = findByTestId(container, "home-page-tiles");
+    await act(async () => { reactProps(findByTestId(page, "home-quick-contacts"))?.onLongPress?.(); });
+    const buttons = Alert.alert.mock.calls.at(-1)?.[2] as { onPress?: () => void }[];
+    await act(async () => { buttons[1].onPress?.(); });
+    expect(backHandlers).toHaveLength(1);
+    let handled = false;
+    await act(async () => { handled = backHandlers[0]() === true; });
+    expect(handled).toBe(true);
+    expect(findByTestId(container, "home-tiles-editor")).toBeNull();
+    expect((AsyncStorage.setItem as jest.Mock).mock.calls.some((args) => String(args[0]).includes("quick_order"))).toBe(false);
+  });
 });
+
+function quickIds(node: unknown): string[] {
+  return collectIds(node).filter((id) => /^home-quick-(?!menu$|refresh$)/.test(id) && !id.endsWith("-badge"));
+}
 
 function sectionIds(node: unknown): string[] {
   const out: string[] = [];

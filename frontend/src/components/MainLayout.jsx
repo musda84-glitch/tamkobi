@@ -21,6 +21,7 @@ import { BuildStamp } from "./BuildStamp";
 import AppSidebarNav from "./AppSidebarNav";
 import { DataExportIconButton } from "./DataExportPanel";
 import { SupportContactBar } from "./SupportContactBar";
+import OfflineStatusBar from "./OfflineStatusBar";
 import { PanelBoundary } from "./saas/PanelBoundary";
 import { useNavCounts } from "../hooks/useNavCounts";
 import { warmupPanelCache } from "../utils/dataSync";
@@ -217,7 +218,14 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   };
 
   const publicSite = isPublicPath(location.pathname);
-  if (publicSite) return <>{children}</>;
+  if (publicSite) {
+    return (
+      <>
+        {location.pathname === "/login" ? <OfflineStatusBar /> : null}
+        {children}
+      </>
+    );
+  }
 
   // Yalnızca bilinen ERP yolları — NotFound (bilinmeyen adres) "Panel | TamKobi" almasın.
   const panelTitle = requiresSession(location.pathname) ? (
@@ -420,6 +428,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           </div>
         </header>
 
+        <OfflineStatusBar />
         {activeCompany?.storage_write_lock ? (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-300 text-amber-950 text-sm font-semibold rounded-xl px-3 py-2" data-testid="maintenance-banner">Bakım yapılıyor, kayıt geçici olarak kapalı</div>
         ) : null}

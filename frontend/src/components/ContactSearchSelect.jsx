@@ -79,6 +79,8 @@ export const ContactSearchSelect = ({
   /** Örn. "customer" — masraf tedarikçisinde müşteri tipi gizlenir. */
   excludeType = "",
   leadingAction = null,
+  /** Fatura ekranı ticari ünvanı seçenek etiketi yapar. Varsayılan cari adıdır. */
+  optionLabel,
 }) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -227,7 +229,18 @@ export const ContactSearchSelect = ({
   const selected = items.find((o) => optionId(o) === value)
     || suggestions.find((o) => optionId(o) === value)
     || (picked && optionId(picked) === value ? picked : null);
-  const displayLabel = selected ? (selected.name || selected.company_title || "") : (value && valueLabel ? valueLabel : "");
+  const optionText = (o) => {
+    if (typeof optionLabel === "function") {
+      const custom = String(optionLabel(o) || "").trim();
+      if (custom) return custom;
+    }
+    return o?.name || o?.company_title || "Cari";
+  };
+  const displayLabel = selected
+    ? (typeof optionLabel === "function"
+      ? (String(optionLabel(selected) || "").trim() || selected.name || selected.company_title || "")
+      : (selected.name || selected.company_title || ""))
+    : (value && valueLabel ? valueLabel : "");
   const hasValue = Boolean(value);
   const clear = (e) => {
     e?.preventDefault?.();
@@ -298,7 +311,7 @@ export const ContactSearchSelect = ({
       >
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-slate-900 flex items-center gap-2 min-w-0">
-            <span className="truncate min-w-0">{o.name || o.company_title || "Cari"}</span>
+            <span className="truncate min-w-0">{optionText(o)}</span>
             {suggested ? <span className="shrink-0 text-[9px] font-bold uppercase text-violet-700">Öneri</span> : null}
             <BalanceMark contact={o} testId={testId ? `${testId}-balance-${id}` : undefined} />
           </div>

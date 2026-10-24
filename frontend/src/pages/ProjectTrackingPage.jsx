@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { Loader2, Building2, AlertTriangle, CheckCircle2, Circle, MapPin, CalendarClock, FileSignature, Ruler, ClipboardList, Camera, FileDown, ChevronDown, Factory } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PublicQuoteContents } from "../components/PublicQuoteContents";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { cardThumbUrl, listThumbUrl, resolveImageUrl } from "../utils/imageUrl";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { publicProjectQuoteUrl, publicQuoteStatusLabel } from "../utils/publicProjectQuote";
 
@@ -49,7 +49,7 @@ export default function ProjectTrackingPage() {
       <div className="max-w-3xl mx-auto space-y-4">
         <div className="bg-slate-900 text-white rounded-2xl p-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            {c.logo_url ? <img src={resolveImageUrl(c.logo_url)} alt="" className="h-12 bg-white rounded-lg p-1 object-contain" /> : <Building2 className="w-8 h-8 text-slate-400" />}
+            {c.logo_url ? <img src={listThumbUrl(c.logo_url)} alt="" width={48} height={48} decoding="async" className="h-12 bg-white rounded-lg p-1 object-contain" /> : <Building2 className="w-8 h-8 text-slate-400" />}
             <div>
               <div className="font-bold text-lg leading-tight">{c.name}</div>
               <div className="text-xs text-slate-400">{c.phone} {c.email && `• ${c.email}`}</div>
@@ -148,7 +148,7 @@ export default function ProjectTrackingPage() {
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {g.images.map((img) => (
                         <a key={img} href={resolveImageUrl(img)} target="_blank" rel="noreferrer" className="block">
-                          <img src={resolveImageUrl(img)} alt={g.label || ""} className="w-full h-28 object-cover rounded-lg border bg-white" onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }} />
+                          <img src={cardThumbUrl(img)} alt={g.label || ""} width={240} height={112} loading="lazy" decoding="async" className="w-full h-28 object-cover rounded-lg border bg-white" onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }} />
                         </a>
                       ))}
                     </div>

@@ -122,7 +122,12 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     c.setFillColor(colors.HexColor("#0f172a")); c.setFont(PDF_FONT_B, 9); c.drawString(18 * mm, y, "ALICI")
     c.setFont(PDF_FONT, 9)
     buyer_tax = buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id") or "-"
-    buyer_name = buyer.get("name") or inv.get("contact_name") or ""
+    from buyer_tax import invoice_buyer_name
+    buyer_name = invoice_buyer_name(
+        buyer,
+        fallback=inv.get("contact_name") or "",
+        tax_id=buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id"),
+    )
     buyer_addr = (buyer.get("address") or inv.get("shipping_address") or inv.get("address") or "").strip()
     if buyer_addr == "-":
         buyer_addr = ""

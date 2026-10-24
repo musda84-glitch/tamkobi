@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
 import requests
 
@@ -151,6 +151,32 @@ def put_object(path: str, data: bytes, content_type: str) -> dict:
                 global _backend
                 _backend = "local"
     return _put_local(path, data, content_type)
+
+
+class ObjectStat(NamedTuple):
+    size: int
+    mtime: float
+    content_type: str
+
+
+def stat_object(path: str) -> Optional[ObjectStat]:
+    """Yerel nesnenin boyutu ve mtime'ı. Gövde okunmaz; uzak indirme yapılmaz."""
+    try:
+        key = _normalized_key(path)
+        target = _safe_local_path(key)
+    except ValueError:
+        return None
+    if not target.is_file():
+        return None
+    st = target.stat()
+    ctype = "application/octet-stream"
+    meta = _meta_path(target)
+    if meta.is_file():
+        try:
+            ctype = json.loads(meta.read_text(encoding="utf-8")).get("content_type") or ctype
+        except Exception:
+            pass
+    return ObjectStat(size=st.st_size, mtime=st.st_mtime, content_type=ctype)
 
 
 def get_object(path: str) -> Tuple[bytes, str]:

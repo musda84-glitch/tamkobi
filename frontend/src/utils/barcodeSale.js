@@ -1,4 +1,5 @@
 import { lineFromProduct } from "./documentLines";
+import { invoiceBuyerName } from "./invoiceBuyerName";
 
 export const RETAIL_CONTACT_NAME = "Perakende Müşteri";
 export const RETAIL_CONTACT_TAX = "11111111111";
@@ -32,7 +33,7 @@ export function barcodeSalePayload({ companyId, contact, product, quantity, mode
     status: "approved",
     gib_status: "Onaylandı",
     contact_id: contact.id || contact._id,
-    contact_name: contact.name,
+    contact_name: invoiceBuyerName(contact),
     contact_tax_id: contact.tax_number_or_id || contact.tax_id || "",
     issue_date: new Date().toISOString().slice(0, 10),
     due_date: new Date().toISOString().slice(0, 10),
@@ -105,7 +106,7 @@ export function invoiceFormPatchForRetail(contact, formData = {}) {
   const eType = formData.invoice_type === "sales" && !lockedE ? "e_archive" : formData.e_type;
   return {
     contact_id: id,
-    contact_name: contact?.name || RETAIL_CONTACT_NAME,
+    contact_name: invoiceBuyerName(contact, { fallback: RETAIL_CONTACT_NAME }) || RETAIL_CONTACT_NAME,
     contact_tax_id: contact?.tax_number_or_id || contact?.tax_id || RETAIL_CONTACT_TAX,
     contact_tax_office: contact?.tax_office || "Perakende",
     e_type: eType,

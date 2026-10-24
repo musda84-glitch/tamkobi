@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Inbox, Loader2, Paperclip, Send, X } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
-import { resolveImageUrl } from "../../utils/imageUrl";
+import { listThumbUrl, resolveImageUrl } from "../../utils/imageUrl";
 import { compressImageFile } from "../../utils/compressImage";
 import { StatusFlow } from "../../pages/SupportPage";
 import { fmtDate } from "./saasUi";
@@ -119,7 +119,7 @@ export const SupportTicketsPanel = ({ onOpenCompany }) => {
                 <div key={m.id} className={`rounded-xl p-3 ${m.is_internal ? "bg-amber-50 border border-amber-100" : m.is_staff ? "bg-indigo-50" : "bg-slate-50"}`}>
                   <div className="text-[10px] text-slate-500 flex justify-between"><span>{m.is_internal ? "İç not" : m.is_staff ? "Destek" : m.author_name}</span><span>{m.created_at ? new Date(m.created_at).toLocaleString("tr-TR") : ""}</span></div>
                   <div className="whitespace-pre-wrap text-slate-800 mt-1">{m.body}</div>
-                  <div className="flex flex-wrap gap-2 mt-2">{(m.attachments || []).map((a, i) => (a.content_type || "").startsWith("image/") ? <a key={i} href={resolveImageUrl(a.url)} target="_blank" rel="noreferrer"><img src={resolveImageUrl(a.url)} alt="" className="w-20 h-20 object-cover rounded-lg border" /></a> : <a key={i} href={resolveImageUrl(a.url)} className="text-[10px] underline" target="_blank" rel="noreferrer">{a.filename}</a>)}</div>
+                  <div className="flex flex-wrap gap-2 mt-2">{(m.attachments || []).map((a, i) => (a.content_type || "").startsWith("image/") ? <a key={i} href={resolveImageUrl(a.url)} target="_blank" rel="noreferrer"><img src={listThumbUrl(a.url)} alt="" width={80} height={80} loading="lazy" decoding="async" className="w-20 h-20 object-cover rounded-lg border" /></a> : <a key={i} href={resolveImageUrl(a.url)} className="text-[10px] underline" target="_blank" rel="noreferrer">{a.filename}</a>)}</div>
                 </div>
               ))}
             </div>

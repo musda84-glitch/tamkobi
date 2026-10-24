@@ -52,14 +52,118 @@ async def stash(collection: str, doc: dict, entity_type: str, label: str, relate
     return rec["_id"]
 
 
+def _company_id_of(doc: Optional[dict]) -> Optional[str]:
+    """Boş company_id yok sayılır; eski kayıtlarda sorguya eklenmez."""
+    if not isinstance(doc, dict):
+        return None
+    cid = doc.get("company_id")
+    if cid is None:
+        return None
+    text = str(cid).strip()
+    return text or None
+
+
+def _deleted_count(result) -> Optional[int]:
+    """0 gerçekten sıfır satırdır. Sonuç yoksa veya sayı değilse None (eski sahte sürücüler)."""
+    if result is None:
+        return None
+    count = getattr(result, "deleted_count", None)
+    if count is None and isinstance(result, dict):
+        count = result.get("deleted_count")
+    if isinstance(count, bool) or count is None:
+        return None
+    try:
+        return int(count)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _find_trash_for_original(collection: str, doc: dict):
+    """Aynı özgün _id için duran çöp kaydı. Varsa yenisi yazılmaz."""
+    original_id = doc.get("_id")
+    if not original_id:
+        return None
+    cid = _company_id_of(doc)
+    if cid:
+        return await _db.trash.find_one({"collection": collection, "doc._id": original_id, "company_id": cid})
+    # tenant-ok: company_id'siz eski kayıt çöpü paylaşılan katalogdadır
+    return await _db.trash.find_one({"collection": collection, "doc._id": original_id})
+
+
+async def _rollback_new_trash(trash_id: str, company_id: Optional[str]) -> None:
+    if not trash_id:
+        return
+    try:
+        if company_id:
+            await _db.trash.delete_one({"_id": trash_id, "company_id": company_id})
+        else:
+            # tenant-ok: company_id'siz çöp satırı paylaşılan katalogdadır
+            await _db.trash.delete_one({"_id": trash_id})
+    except Exception:
+        logging.getLogger(__name__).exception("Çöp kopyası geri alınamadı")
+
+
+async def _delete_ids(collection: str, ids: List[Any], company_id: Optional[str]):
+    """Dedicated yazma company_id ister. Yoksa eski _id sorgusu aynı kalır."""
+    clean = [item for item in ids if item is not None]
+    if not clean:
+        return None
+    if len(clean) == 1:
+        if company_id:
+            return await _db[collection].delete_one({"_id": clean[0], "company_id": company_id})
+        # tenant-ok: company_id'siz eski kayıt paylaşılan katalogdan silinir
+        return await _db[collection].delete_one({"_id": clean[0]})
+    if company_id:
+        return await _db[collection].delete_many({"_id": {"$in": clean}, "company_id": company_id})
+    # tenant-ok: company_id'siz eski kayıtlar paylaşılan katalogdan silinir
+    return await _db[collection].delete_many({"_id": {"$in": clean}})
+
+
+def _ids_by_company(docs: List[dict], fallback: Optional[str] = None) -> Dict[Optional[str], List[Any]]:
+    grouped: Dict[Optional[str], List[Any]] = {}
+    for doc in docs or []:
+        if not isinstance(doc, dict) or doc.get("_id") is None:
+            continue
+        grouped.setdefault(_company_id_of(doc) or fallback, []).append(doc["_id"])
+    return grouped
+
+
 async def soft_delete(collection: str, doc: dict, entity_type: str, label: str, related: Optional[List[dict]] = None, note: str = "", restore_group: Optional[str] = None) -> str:
-    """Belgeyi çöp kutusuna taşır ve koleksiyondan siler. related: [{"collection", "docs"}]."""
-    tid = await stash(collection, doc, entity_type, label, related, note, restore_group=restore_group)
-    await _db[collection].delete_one({"_id": doc["_id"]})
-    for r in related or []:
-        ids = [d["_id"] for d in r.get("docs") or []]
-        if ids:
-            await _db[r["collection"]].delete_many({"_id": {"$in": ids}})
+    """Belgeyi çöp kutusuna taşır ve koleksiyondan siler. related: [{"collection", "docs"}].
+
+    company_id varsa silme sorgusuna yazılır; dedicated depo ancak öyle seçilir.
+    Silinen satır 0 ise yeni çöp kopyası bırakılmaz ve 409 döner.
+    """
+    if not isinstance(doc, dict) or doc.get("_id") is None:
+        raise HTTPException(status_code=409, detail="Kayıt silinemedi; belge kimliği yok.")
+    cid = _company_id_of(doc)
+    existing = await _find_trash_for_original(collection, doc)
+    created = False
+    if existing and existing.get("_id"):
+        tid = existing["_id"]
+    else:
+        tid = await stash(collection, doc, entity_type, label, related, note, restore_group=restore_group)
+        created = True
+    try:
+        result = await _delete_ids(collection, [doc["_id"]], cid)
+    except Exception:
+        if created:
+            await _rollback_new_trash(tid, cid)
+        raise
+    if _deleted_count(result) == 0:
+        if created:
+            await _rollback_new_trash(tid, cid)
+        raise HTTPException(status_code=409, detail="Kayıt silinemedi. Çöp kutusuna taşınmadı.")
+    for block in related or []:
+        grouped = _ids_by_company(block.get("docs") or [], cid)
+        for rcid, ids in grouped.items():
+            try:
+                related_result = await _delete_ids(block["collection"], ids, rcid)
+            except Exception:
+                logging.getLogger(__name__).exception("Bağlı kayıt silinemedi")
+                continue
+            if _deleted_count(related_result) == 0:
+                logging.getLogger(__name__).warning("Bağlı kayıt silinemedi: %s", block.get("collection"))
     return tid
 
 
@@ -134,12 +238,28 @@ def _trash_company_id(rec: dict) -> Optional[str]:
     return str(cid) if cid is not None else None
 
 
+async def _live_doc(collection: str, doc_id, company_id: Optional[str]):
+    """Varlık kontrolü dedicated depoda company_id ile yapılır."""
+    if company_id:
+        return await _db[collection].find_one({"_id": doc_id, "company_id": company_id})
+    # tenant-ok: company_id'siz eski kayıt paylaşılan katalogda aranır
+    return await _db[collection].find_one({"_id": doc_id})
+
+
+def _stamp_company(doc: dict, fallback: Optional[str]) -> Optional[str]:
+    cid = _company_id_of(doc) or fallback
+    if cid and not doc.get("company_id"):
+        doc["company_id"] = cid
+    return cid
+
+
 async def _restore_one_trash_rec(rec: dict) -> tuple:
     """Tek çöp kaydını koleksiyona yazar. (inserted_doc, related_count, related_ids)."""
     coll, doc = rec["collection"], dict(rec["doc"] or {})
     if not doc.get("_id"):
         raise HTTPException(status_code=400, detail="Çöp kaydında belge kimliği yok; geri getirilemez.")
-    if await _db[coll].find_one({"_id": doc["_id"]}):
+    cid = _stamp_company(doc, _company_id_of(rec))
+    if await _live_doc(coll, doc["_id"], cid):
         raise HTTPException(status_code=409, detail="Aynı kimlikte bir kayıt zaten mevcut; geri getirilemez.")
     now = _now().isoformat()
     doc["restored_at"] = now
@@ -152,7 +272,8 @@ async def _restore_one_trash_rec(rec: dict) -> tuple:
             rd = dict(d)
             if not rd.get("_id"):
                 continue
-            if not await _db[r["collection"]].find_one({"_id": rd["_id"]}):
+            rcid = _stamp_company(rd, cid)
+            if not await _live_doc(r["collection"], rd["_id"], rcid):
                 rd["restored_at"] = now
                 rd["updated_at"] = now
                 await _db[r["collection"]].insert_one(rd)
@@ -197,9 +318,10 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
         try:
             await hook(doc, item.get("related") or [])
         except HTTPException as e:
-            await _db[item["collection"]].delete_one({"_id": doc["_id"]})
+            await _delete_ids(item["collection"], [doc["_id"]], _company_id_of(doc))
             for r in item.get("related") or []:
-                await _db[r["collection"]].delete_many({"_id": {"$in": [d["_id"] for d in r.get("docs") or []]}})
+                for rcid, ids in _ids_by_company(r.get("docs") or [], _company_id_of(doc)).items():
+                    await _delete_ids(r["collection"], ids, rcid)
             raise HTTPException(status_code=400, detail=f"Geri getirilemedi: {e.detail}")
     await _db.trash.delete_many({"_id": {"$in": [r["_id"] for r in records]}, "company_id": cid})
     label = TYPE_LABELS.get(rec["entity_type"], rec["entity_type"])

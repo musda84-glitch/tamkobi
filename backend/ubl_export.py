@@ -902,8 +902,13 @@ def build_invoice_ubl(
         "email": seller.get("email"),
         "district": seller.get("district"),
     }
+    from buyer_tax import invoice_buyer_name as _invoice_buyer_name
     buyer_party = {
-        "name": buyer.get("name") or inv.get("contact_name"),
+        "name": _invoice_buyer_name(
+            buyer,
+            fallback=inv.get("contact_name") or "",
+            tax_id=buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id"),
+        ) or buyer.get("name") or inv.get("contact_name"),
         "tax_id": buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id"),
         "tax_office": buyer.get("tax_office"),
         "address": buyer.get("address"),
@@ -1070,10 +1075,15 @@ def build_invoice_ubl(
 
 def _buyer_from(inv: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     c = contact or {}
-    from buyer_tax import buyer_tax_choice
+    from buyer_tax import buyer_tax_choice, invoice_buyer_name
+    choice = buyer_tax_choice(inv, c)
     return {
-        "name": c.get("name") or inv.get("contact_name") or "",
-        "tax_number_or_id": buyer_tax_choice(inv, c)["tax"],
+        "name": invoice_buyer_name(
+            c,
+            fallback=inv.get("contact_name") or "",
+            tax_id=choice["tax"],
+        ),
+        "tax_number_or_id": choice["tax"],
         "tax_office": c.get("tax_office") or "",
         "address": c.get("address") or inv.get("shipping_address") or "",
         "city": c.get("city") or inv.get("city") or "",
@@ -1162,8 +1172,13 @@ def build_despatch_ubl(
         "email": seller.get("email"),
         "district": seller.get("district"),
     }
+    from buyer_tax import invoice_buyer_name as _invoice_buyer_name
     buyer_party = {
-        "name": buyer.get("name") or inv.get("contact_name"),
+        "name": _invoice_buyer_name(
+            buyer,
+            fallback=inv.get("contact_name") or "",
+            tax_id=buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id"),
+        ) or buyer.get("name") or inv.get("contact_name"),
         "tax_id": buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id"),
         "tax_office": buyer.get("tax_office"),
         "address": buyer.get("address") or inv.get("shipping_address"),

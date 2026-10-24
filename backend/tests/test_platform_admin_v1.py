@@ -237,6 +237,9 @@ class FakeDB:
             self._extra[name] = coll
         return coll
 
+    def __getitem__(self, name):
+        return getattr(self, name)
+
 
 @pytest.fixture
 def db(monkeypatch):
@@ -264,6 +267,9 @@ def db(monkeypatch):
     support_tickets.init(fake, prev_tickets[1])
     event_notify.init(fake)
     storage_manager._db = fake
+    import storage_admin
+    prev_storage_admin = storage_admin._db
+    storage_admin.init(fake)
     public_sites.init(fake)
     platform_notices.init(fake)
     db_relocate.init(fake)
@@ -281,6 +287,7 @@ def db(monkeypatch):
     support_tickets.init(prev_tickets[0], prev_tickets[1])
     event_notify.init(prev_notify)
     storage_manager._db = prev_storage
+    storage_admin.init(prev_storage_admin)
     public_sites.init(prev_sites)
     platform_notices.init(prev_notices)
     db_relocate.init(prev_reloc)
@@ -313,7 +320,11 @@ def with_peer(app, ip: str):
 def _include_optional_admin(app):
     import platform_admin_v1_accounts
     app.include_router(platform_admin_v1_accounts.router)
-    for name in ("platform_admin_v1_integrations", "platform_admin_v1_content"):
+    for name in (
+        "platform_admin_v1_integrations",
+        "platform_admin_v1_content",
+        "platform_admin_v1_storage_move",
+    ):
         try:
             module = __import__(name)
         except ModuleNotFoundError:
@@ -1084,6 +1095,7 @@ def test_redact_strips_secrets_and_keeps_has_password(db, monkeypatch):
         ("/api/platform/admin-v1/ai", store.SCOPE_ADMIN_AI_READ),
         ("/api/platform/admin-v1/einvoice/isnet/egress", store.SCOPE_ADMIN_EINVOICE_READ),
         ("/api/platform/admin-v1/database", store.SCOPE_ADMIN_DB_READ),
+        ("/api/platform/admin-v1/storage-move", store.SCOPE_ADMIN_STORAGE_MOVE_READ),
     )
     mounted = {getattr(route, "path", "") for route in _app().routes}
     deferred = set()

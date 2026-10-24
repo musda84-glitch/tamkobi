@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ImagePlus, Star, Trash2, Loader2, ImageIcon, X, Tag } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { cardThumbUrl } from "../utils/imageUrl";
 import { compressProductImageFile } from "../utils/compressImage";
 import { productGalleryUrls, productIdOf, mediaRef, productLabelImageUrl } from "../utils/productImages";
 import { ImageCropModal } from "./ImageCropModal";
@@ -83,7 +83,7 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
         {images.map((img, i) => {
           const isCover = img === cover;
           const isLabel = img === labelImg;
-          const src = resolveImageUrl(img);
+          const src = cardThumbUrl(img);
           return (
             <div key={`${i}-${img}`} className={`relative group aspect-square rounded-xl overflow-hidden border-2 bg-slate-50 ${isCover ? "border-emerald-500" : isLabel ? "border-indigo-400" : "border-slate-200"}`} data-testid="product-image-item">
               {broken[img] || !src ? (
@@ -93,6 +93,10 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
                   <img
                     src={src}
                     alt={product.name || ""}
+                    width={200}
+                    height={200}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover"
                     onError={() => setBroken((b) => ({ ...b, [img]: true }))}
                   />
@@ -173,8 +177,11 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
             <X className="w-5 h-5" />
           </button>
           <img
-            src={resolveImageUrl(preview)}
+            src={cardThumbUrl(preview)}
             alt=""
+            width={600}
+            height={600}
+            decoding="async"
             className="max-h-[85vh] max-w-full object-contain rounded-lg bg-white shadow-2xl"
             onClick={(ev) => ev.stopPropagation()}
           />

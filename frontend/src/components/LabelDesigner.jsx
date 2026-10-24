@@ -6,7 +6,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Plus, Save, Trash2, Copy, Star, Printer, X, ArrowUp, ArrowDown, Type, Barcode as BarcodeIcon, QrCode, Image as ImageIcon, Minus, Square, Tag, Search } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { Barcode } from "./BarcodeLabelPrint";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { productLabelImageUrl } from "../utils/productImages";
 import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
@@ -150,8 +150,8 @@ const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
       : <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: el.w * PX, height: el.h * PX, display: "flex", alignItems: "center", justifyContent: "center" }}>{bar}</div>;
   }
   else if (el.type === "qr") body = <QRCodeSVG value={code} size={Math.min(el.w, el.h) * PX * scale} level="M" />;
-  else if (el.type === "logo") body = company?.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">LOGO</div>;
-  else if (el.type === "image") body = p?.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">GÖRSEL</div>;
+  else if (el.type === "logo") body = company?.logo_url ? <img src={listThumbUrl(company.logo_url)} alt="" width={120} height={120} decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">LOGO</div>;
+  else if (el.type === "image") body = p?.image_url ? <img src={listThumbUrl(p.image_url)} alt="" width={200} height={200} decoding="async" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">GÖRSEL</div>;
   else if (el.type === "line") body = <div data-label-line="1" style={{ width: "100%", height: "100%", background: "#000000", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }} />;
   else if (el.type === "box") body = <LabelBox el={el} scale={scale} />;
   else body = <div style={{ fontSize: (el.font || 10) * scale * 1.33, fontWeight: el.bold ? 700 : 400, fontStyle: el.italic ? "italic" : undefined, textAlign: el.align || "left", lineHeight: 1.1, fontFamily: el.mono ? "monospace" : "Arial, sans-serif", width: "100%", height: "100%", display: "flex", alignItems: el.valign === "middle" ? "center" : "flex-start", justifyContent: el.align === "center" ? "center" : el.align === "right" ? "flex-end" : "flex-start", whiteSpace: el.wrap === false ? "nowrap" : "normal", wordBreak: "break-word" }}>{valueOf(el, p, company)}</div>;

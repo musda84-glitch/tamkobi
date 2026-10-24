@@ -16,6 +16,8 @@ export type ActionTile = {
   disabled?: boolean;
   badge?: string;
   testID?: string;
+  /** Düzenle modunda gizli karo. Görünürlük sıradan ayrıdır. */
+  dimmed?: boolean;
 };
 
 export { TILE_SIZES, type TileSize };
@@ -25,15 +27,18 @@ export function ActionTiles({
   items,
   columns = 4,
   size = "sm",
+  embedded = false,
 }: {
   items: ActionTile[];
-  columns?: 3 | 4;
+  columns?: 1 | 3 | 4;
   size?: TileSize;
+  /** Düzenle ızgarasının hücresinde: dış negatif pay yok. */
+  embedded?: boolean;
 }) {
   const width = `${100 / columns}%` as const;
   const s = TILE_SIZES[size];
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", marginHorizontal: -4 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", marginHorizontal: embedded ? 0 : -4 }}>
       {items.map((item) => {
         const tone = QUICK_TONE_COLORS[item.tone || "slate"];
         return (

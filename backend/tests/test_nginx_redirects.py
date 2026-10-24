@@ -101,37 +101,57 @@ def test_subdomain_templates_have_required_listen_and_noindex():
     assert "proxy_set_header X-Forwarded-Host $host;" in ssl_ex
 
 
+def _parse_redirect_locations(conf: str) -> list[dict]:
+    """Read location blocks from tamkobi-site-redirects.conf (comments skipped)."""
+    text = "\n".join(ln for ln in conf.splitlines() if not ln.strip().startswith("#"))
+    locations = []
+    for m in re.finditer(
+        r"location\s+(?P<mod>=|\^~|~\*|~)?\s*(?P<pat>\S+)\s*\{(?P<body>.*?)\}",
+        text,
+        re.S,
+    ):
+        dest_m = re.search(r"return\s+301\s+(\S+)\s*;", m.group("body"))
+        if not dest_m:
+            continue
+        locations.append({
+            "mod": m.group("mod") or "",
+            "pat": m.group("pat"),
+            "dest": dest_m.group(1),
+        })
+    return locations
+
+
+_REDIRECT_LOCATIONS = _parse_redirect_locations(REDIRECTS)
+
+
 def _redirect_target(path: str) -> str | None:
-    """Approximate nginx location matching for tamkobi-site-redirects.conf."""
-    # Exact then prefix then regex — mirror file order (regex locations are evaluated
-    # among themselves by first-match in file for our ~ patterns).
+    """nginx location order against the real snippet: =, then ^~, then ~ in file order."""
     path_only = path.split("?", 1)[0]
-    exact = {
-        "/personelim": "https://ik.tamkobi.com" + path,
-        "/mesai": "https://ik.tamkobi.com" + path,
-        "/b2b": "https://b2b.tamkobi.com/b2b/giris",
-        "/portal": "https://b2b.tamkobi.com" + path,
-    }
-    if path_only in exact:
-        return exact[path_only]
 
-    if path.startswith("/b2b/"):
-        return "https://b2b.tamkobi.com" + path
-    if path.startswith("/portal/"):
-        return "https://b2b.tamkobi.com" + path
-    if path.startswith("/personelim/") or path.startswith("/mesai/"):
-        return "https://ik.tamkobi.com" + path
+    def apply(dest: str) -> str:
+        if "$request_uri" in dest:
+            return dest.replace("$request_uri", path)
+        return dest
 
-    app_res = [
-        r"^/(panel|login|invoices|dis-ticaret|contacts|banking|stock|hizli-satis|ecommerce|cargo)(/|$)",
-        r"^/(orders|purchase-orders|saha|warehouses|vehicles|production|personnel|mesajlar|ai-advisor|communication)(/|$)",
-        r"^/(hesap|settings|quotes|projects|surveys|support|accountant|installments|reports|dispatches)(/|$)",
-        r"^/(expenses|loans|cheques|trash|edoc-inbox|b2b-yonetim|atolye|sayim|sevk)(/|$)",
-        r"^/(teklif|proje|ekstre|davet|odeme|yenile|sifre)(/|$)",
-    ]
-    for pat in app_res:
-        if re.search(pat, path_only):
-            return "https://app.tamkobi.com" + path
+    for loc in _REDIRECT_LOCATIONS:
+        if loc["mod"] == "=" and path_only == loc["pat"]:
+            return apply(loc["dest"])
+
+    best = None
+    for loc in _REDIRECT_LOCATIONS:
+        if loc["mod"] != "^~":
+            continue
+        if path_only.startswith(loc["pat"]) and (best is None or len(loc["pat"]) > len(best["pat"])):
+            best = loc
+    if best is not None:
+        return apply(best["dest"])
+
+    for loc in _REDIRECT_LOCATIONS:
+        if loc["mod"] not in ("~", "~*"):
+            continue
+        flags = re.I if loc["mod"] == "~*" else 0
+        if re.search(loc["pat"], path_only, flags):
+            return apply(loc["dest"])
     return None
 
 
@@ -141,7 +161,10 @@ def _redirect_target(path: str) -> str | None:
         ("/panel?x=1", "https://app.tamkobi.com/panel?x=1"),
         ("/invoices/abc", "https://app.tamkobi.com/invoices/abc"),
         ("/mesajlar", "https://app.tamkobi.com/mesajlar"),
+        ("/mesajlar/", "https://app.tamkobi.com/mesajlar/"),
         ("/mesajlar?yeni=1", "https://app.tamkobi.com/mesajlar?yeni=1"),
+        ("/mesajlar/sohbet", "https://app.tamkobi.com/mesajlar/sohbet"),
+        ("/mesajlar/sohbet?c=m%3Au2", "https://app.tamkobi.com/mesajlar/sohbet?c=m%3Au2"),
         ("/portal/T", "https://b2b.tamkobi.com/portal/T"),
         ("/portal", "https://b2b.tamkobi.com/portal"),
         ("/b2b", "https://b2b.tamkobi.com/b2b/giris"),
@@ -616,6 +639,18 @@ def test_live_redirects_and_robots_header(tmp_path: Path):
         h = curl(f"http://127.0.0.1:{port_site}/invoices/abc", "tamkobi.com")
         assert "Location: https://app.tamkobi.com/invoices/abc" in h
 
+        h = curl(f"http://127.0.0.1:{port_site}/mesajlar", "tamkobi.com")
+        assert "301" in h.splitlines()[0]
+        assert "Location: https://app.tamkobi.com/mesajlar" in h
+
+        h = curl(f"http://127.0.0.1:{port_site}/mesajlar?yeni=1", "tamkobi.com")
+        assert "301" in h.splitlines()[0]
+        assert "Location: https://app.tamkobi.com/mesajlar?yeni=1" in h
+
+        h = curl(f"http://127.0.0.1:{port_site}/mesajlar/sohbet?c=1", "tamkobi.com")
+        assert "301" in h.splitlines()[0]
+        assert "Location: https://app.tamkobi.com/mesajlar/sohbet?c=1" in h
+
         h = curl(f"http://127.0.0.1:{port_site}/portal/T", "tamkobi.com")
         assert "Location: https://b2b.tamkobi.com/portal/T" in h
 
@@ -641,3 +676,142 @@ def test_live_redirects_and_robots_header(tmp_path: Path):
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def _wait_nginx(proc: subprocess.Popen, port: int, tmp_path: Path) -> None:
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+            if proc.poll() is not None:
+                err = ""
+                if proc.stderr:
+                    err = proc.stderr.read().decode()
+                log = tmp_path / "e.log"
+                extra = log.read_text(encoding="utf-8") if log.exists() else ""
+                pytest.fail(f"nginx exited early: {err}\n{extra}")
+    pytest.fail("nginx did not start")
+
+
+def _stop_proc(proc: subprocess.Popen) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+@pytest.mark.skipif(not _have_nginx(), reason="nginx binary required")
+def test_mesajlar_apex_301_beats_spa_404(tmp_path: Path):
+    """Apex /mesajlar is 301 (query and subpaths kept), not the SPA map's HTTP 404.
+
+    app.tamkobi.com still serves index.html for the same path via spa-routes.map.conf.
+    Marketing paths stay on the apex host.
+    """
+    port_site = _free_port()
+    port_app = _free_port()
+    conf_root = tmp_path / "ngx"
+    snippets = conf_root / "snippets"
+    conf_d = conf_root / "conf.d"
+    html = tmp_path / "www"
+    for d in (snippets, conf_d, html):
+        d.mkdir(parents=True)
+    shutil.copy(NGINX_DIR / "tamkobi-site-redirects.conf", snippets / "tamkobi-site-redirects.conf")
+    shutil.copy(NGINX_DIR / "spa-routes.map.conf", conf_d / "tamkobi-spa-routes.map.conf")
+    (html / "index.html").write_text("<!doctype html><title>mesajlar-ok</title>", encoding="utf-8")
+    (html / "404.html").write_text("missing", encoding="utf-8")
+    for sub in ("body", "proxy", "fastcgi", "uwsgi", "scgi"):
+        (conf_root / sub).mkdir(exist_ok=True)
+
+    spa_fallback = textwrap.dedent(
+        """
+        location / {
+            try_files $uri $uri/ @spa_or_404;
+        }
+        location @spa_or_404 {
+            if ($tamkobi_spa = 0) { return 404; }
+            rewrite ^ /index.html last;
+        }
+        """
+    )
+    conf = textwrap.dedent(
+        f"""
+        worker_processes 1;
+        error_log {tmp_path}/e.log;
+        pid {tmp_path}/n.pid;
+        events {{ worker_connections 32; }}
+        http {{
+            access_log {tmp_path}/access.log;
+            client_body_temp_path {conf_root}/body;
+            proxy_temp_path {conf_root}/proxy;
+            fastcgi_temp_path {conf_root}/fastcgi;
+            uwsgi_temp_path {conf_root}/uwsgi;
+            scgi_temp_path {conf_root}/scgi;
+            include {conf_d}/tamkobi-spa-routes.map.conf;
+            server {{
+                listen 127.0.0.1:{port_site};
+                server_name tamkobi.com;
+                root {html};
+                include {snippets}/tamkobi-site-redirects.conf;
+                error_page 404 /404.html;
+                {spa_fallback}
+            }}
+            server {{
+                listen 127.0.0.1:{port_app};
+                server_name app.tamkobi.com;
+                root {html};
+                {spa_fallback}
+            }}
+        }}
+        """
+    )
+    conf_path = conf_root / "nginx.conf"
+    conf_path.write_text(conf, encoding="utf-8")
+    proc = subprocess.Popen(
+        ["nginx", "-c", str(conf_path), "-p", str(conf_root), "-g", "daemon off;"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        _wait_nginx(proc, port_site, tmp_path)
+
+        def curl(url: str, host: str) -> tuple[str, str]:
+            headers = subprocess.check_output(
+                ["curl", "-sS", "-D", "-", "-o", str(tmp_path / "body.txt"), "--max-redirs", "0",
+                 "-H", f"Host: {host}", url],
+                text=True,
+            )
+            body = (tmp_path / "body.txt").read_text(encoding="utf-8")
+            return headers, body
+
+        cases = [
+            ("/mesajlar", "https://app.tamkobi.com/mesajlar"),
+            ("/mesajlar/", "https://app.tamkobi.com/mesajlar/"),
+            ("/mesajlar?yeni=1", "https://app.tamkobi.com/mesajlar?yeni=1"),
+            ("/mesajlar/sohbet?c=m%3Au2", "https://app.tamkobi.com/mesajlar/sohbet?c=m%3Au2"),
+        ]
+        for path, location in cases:
+            headers, _body = curl(f"http://127.0.0.1:{port_site}{path}", "tamkobi.com")
+            status = headers.splitlines()[0]
+            assert "301" in status, path
+            assert f"Location: {location}" in headers, path
+
+        headers, body = curl(f"http://127.0.0.1:{port_site}/hakkimizda", "tamkobi.com")
+        assert "200" in headers.splitlines()[0]
+        assert "Location:" not in headers
+        assert "mesajlar-ok" in body
+
+        headers, _body = curl(f"http://127.0.0.1:{port_site}/bu-yol-yok", "tamkobi.com")
+        assert "404" in headers.splitlines()[0]
+        assert "Location:" not in headers
+
+        for path in ("/mesajlar", "/mesajlar?yeni=1", "/mesajlar/sohbet"):
+            headers, body = curl(f"http://127.0.0.1:{port_app}{path}", "app.tamkobi.com")
+            assert "200" in headers.splitlines()[0], path
+            assert "Location:" not in headers
+            assert "mesajlar-ok" in body
+    finally:
+        _stop_proc(proc)

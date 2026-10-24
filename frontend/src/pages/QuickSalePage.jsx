@@ -35,12 +35,14 @@ import { ScanButton } from "../components/CameraScanner";
 import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { fmtMoney } from "../utils/money";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { parseBarcodeWithQty, parseScanQtyInput } from "../utils/scanQty";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
+import { safeReadProducts, safeRememberProducts } from "../offline/db";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
@@ -101,7 +103,7 @@ const PAYMENT_OPTIONS = [
 ];
 
 function ShortcutTile({ product, onClick, tablet }) {
-  const img = resolveImageUrl(productListImageUrl(product));
+  const img = listThumbUrl(productListImageUrl(product));
   return (
     <button
       type="button"
@@ -110,7 +112,7 @@ function ShortcutTile({ product, onClick, tablet }) {
       data-testid={`pos-shortcut-${productKey(product)}`}
     >
       <div className={`bg-slate-50 flex items-center justify-center overflow-hidden ${tablet ? "aspect-[4/3]" : "aspect-square"}`}>
-        {img ? <img src={img} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-8 h-8 text-slate-300" />}
+        {img ? <img src={img} alt="" width={200} height={200} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-8 h-8 text-slate-300" />}
       </div>
       <div className="p-2.5">
         <div className={`font-semibold text-slate-900 line-clamp-2 ${tablet ? "text-sm" : "text-xs"}`}>{product.name}</div>
@@ -186,15 +188,24 @@ export default function QuickSalePage() {
     setLoading(true);
     try {
       const { data } = await axios.get(`${API_URL}/products`, { params: { company_id: companyId } });
-      setProducts(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setProducts(list);
+      safeRememberProducts(companyId, list);
     } catch {
-      toast.error("Ürünler yüklenemedi");
+      const cached = await safeReadProducts(companyId);
+      if (cached.length) setProducts(cached);
+      else toast.error("Ürünler yüklenemedi");
     } finally {
       setLoading(false);
     }
   }, [companyId]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  useEffect(() => {
+    const onReject = () => { loadProducts(); };
+    window.addEventListener("tamkobi:offline-rejected", onReject);
+    return () => window.removeEventListener("tamkobi:offline-rejected", onReject);
+  }, [loadProducts]);
 
   useEffect(() => {
     const next = loadSections(companyId);
@@ -705,29 +716,56 @@ export default function QuickSalePage() {
         return;
       }
       const mix = mixedChange(totals.total, Number(mixCash) || 0, 0, Number(tenderedCash) || 0);
-      const { data } = await axios.post(`${API_URL}/pos/checkout`, {
-        company_id: companyId,
-        customer_name: customerName || "Perakende Müşteri",
-        payment_method: pay,
-        sector: "retail",
-        terminal_id: pos.terminalId,
-        cash_amount: pay === "mixed" ? Number(mixCash) || mix.cash : (pay === "cash" ? totals.total : 0),
-        card_amount: pay === "mixed" ? Math.max(0, totals.total - (Number(mixCash) || 0)) : (pay === "card" ? totals.total : 0),
-        tendered_cash: Number(tenderedCash) || 0,
-        items: cart.map((l) => ({
-          product_id: l.product_id,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          vat_rate: l.vat_rate,
-          unit: l.unit,
-          lot_id: l.lot_id,
-          lot_number: l.lot_number,
-          serial_number: l.serial_number,
-          production_date: l.production_date,
-          expiry_date: l.expiry_date,
-          weighed: l.weighed,
-        })),
-      }, { headers: pos.headers });
+      const items = cart.map((l) => ({
+        product_id: l.product_id,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        vat_rate: l.vat_rate,
+        unit: l.unit,
+        lot_id: l.lot_id,
+        lot_number: l.lot_number,
+        serial_number: l.serial_number,
+        production_date: l.production_date,
+        expiry_date: l.expiry_date,
+        weighed: l.weighed,
+      }));
+      const expectedStock = {};
+      items.forEach((line) => {
+        const product = products.find((p) => (p.id || p._id) === line.product_id);
+        if (product) expectedStock[line.product_id] = Number(product.stock_quantity || 0);
+      });
+      const { data } = await postOrQueue(axios, {
+        url: `${API_URL}/pos/checkout`,
+        body: {
+          company_id: companyId,
+          customer_name: customerName || "Perakende Müşteri",
+          payment_method: pay,
+          sector: "retail",
+          terminal_id: pos.terminalId,
+          cash_amount: pay === "mixed" ? Number(mixCash) || mix.cash : (pay === "cash" ? totals.total : 0),
+          card_amount: pay === "mixed" ? Math.max(0, totals.total - (Number(mixCash) || 0)) : (pay === "card" ? totals.total : 0),
+          tendered_cash: Number(tenderedCash) || 0,
+          items,
+        },
+        config: { headers: pos.headers },
+        companyId,
+        kind: "pos_checkout",
+        critical: true,
+        expected: { stock: expectedStock, grandTotal: totals.total, rollback: { items } },
+      });
+      if (data?.queued) {
+        setProducts((prev) => prev.map((p) => {
+          const line = items.find((it) => it.product_id === (p.id || p._id));
+          if (!line) return p;
+          return { ...p, stock_quantity: Number(p.stock_quantity || 0) - Number(line.quantity || 0) };
+        }));
+        toast.success(data.message);
+        setCart([]);
+        setTenderedCash("");
+        setMixCash("");
+        setBusy(false);
+        return;
+      }
       const receipt = {
         ...(data.receipt || {}),
         company_name: data.receipt?.company_name || activeCompany?.name || "İşletme",
@@ -746,7 +784,8 @@ export default function QuickSalePage() {
       await loadProducts();
       focusBarcode();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Satış tamamlanamadı");
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : detail?.message || err?.message || "Satış tamamlanamadı");
     } finally {
       setBusy(false);
     }
@@ -953,7 +992,7 @@ export default function QuickSalePage() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex gap-2">
                       <div className="w-10 h-10 rounded-md bg-white border overflow-hidden shrink-0 flex items-center justify-center">
-                        {l.image_url ? <img src={resolveImageUrl(l.image_url)} alt="" className="w-full h-full object-cover" /> : <Package className="w-4 h-4 text-slate-300" />}
+                        {l.image_url ? <img src={listThumbUrl(l.image_url)} alt="" width={40} height={40} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-4 h-4 text-slate-300" />}
                       </div>
                       <div className="min-w-0">
                         <div className="font-medium text-sm text-slate-900 truncate">{l.name}</div>
@@ -1114,11 +1153,11 @@ export default function QuickSalePage() {
               {editorProducts.map((p) => {
                 const id = productKey(p);
                 const checked = editorSection.productIds.includes(id);
-                const img = resolveImageUrl(productListImageUrl(p));
+                const img = listThumbUrl(productListImageUrl(p));
                 return (
                   <button key={id} type="button" onClick={() => toggleProductInSection(editorSection.id, id)} className={`flex items-center gap-3 text-left border rounded-xl p-2.5 min-h-16 ${checked ? "border-emerald-500 bg-emerald-50" : "border-slate-200 hover:bg-slate-50"}`} data-testid={`pos-section-product-${id}`}>
                     <div className="w-14 h-14 rounded-lg bg-slate-100 border overflow-hidden shrink-0 flex items-center justify-center">
-                      {img ? <img src={img} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-5 h-5 text-slate-300" />}
+                      {img ? <img src={img} alt="" width={56} height={56} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-5 h-5 text-slate-300" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-sm text-slate-900 truncate">{p.name}</div>

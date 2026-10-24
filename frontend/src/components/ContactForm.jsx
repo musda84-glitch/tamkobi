@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNote, Upload, Image as ImageIcon, ShieldCheck, RefreshCw, FlaskConical, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { GibContactLookup } from "./GibContactLookup";
@@ -287,7 +287,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
             {gibBlock}
             <div className="sm:col-span-2 flex items-center gap-4">
               <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0" data-testid="cf-logo-preview">
-                {f.logo_url ? <img src={resolveImageUrl(f.logo_url)} alt="cari logo" className="w-full h-full object-contain" /> : <ImageIcon className="w-8 h-8 text-slate-300" />}
+                {f.logo_url ? <img src={listThumbUrl(f.logo_url)} alt="cari logo" width={80} height={80} decoding="async" className="w-full h-full object-contain" /> : <ImageIcon className="w-8 h-8 text-slate-300" />}
               </div>
               <div className="space-y-1.5">
                 <label className="inline-flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold">

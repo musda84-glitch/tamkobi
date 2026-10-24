@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { X, Printer } from "lucide-react";
 import { fmtMoney, fmtDate } from "../utils/money";
 import { printPageCss } from "../utils/printPageCss";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { amountInWords } from "../utils/amountInWords";
 import {
   measureReceiptProbe,
@@ -94,7 +94,10 @@ function ReceiptBody({ tx, contact, company, items, copyIndex }) {
         <div className="flex items-start gap-2 min-w-0">
           {company?.logo_url && (
             <img
-              src={resolveImageUrl(company.logo_url)}
+              src={listThumbUrl(company.logo_url)}
+              width={48}
+              height={48}
+              decoding="async"
               alt=""
               className="receipt-logo h-12 w-auto object-contain shrink-0"
               data-testid={copyIndex === 0 ? "receipt-logo" : undefined}

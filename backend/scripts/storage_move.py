@@ -773,13 +773,75 @@ def _count_and_bytes(docs, company_id: str, name: str = "") -> tuple:
 
 
 async def _measure_docs(docs, company_id: str, name: str = "") -> tuple:
-    """Kayıt sayısı ve kanonik bayt. Büyük küme döngünün dışında dondurulur."""
+    """Kayıt sayısı ve kanonik bayt. Büyük küme döngünün dışında dondurulur.
+
+    Taşıma ve checksum bu fonksiyonu tam belge listesiyle çağırır.
+    Periyodik ölçüm measure_collection kullanır; burası satır çekmeye devam eder.
+    """
     rows = [doc for doc in docs or [] if isinstance(doc, dict) and doc.get("_id")]
     if len(rows) < _PREPARE_OFFLOAD_AT:
         return _count_and_bytes(rows, company_id, name)
     import platform_lease
 
     return await platform_lease.call_blocking(_count_and_bytes, rows, company_id, name)
+
+
+async def measure_collection(db, mode: str, company_id: str, name: str, company: dict, *, with_bytes: bool = True):
+    """Periyodik hacim. SQL sayımı varsa (adet, bayt), yoksa None.
+
+    Legacy kip None döner. companies _id, users company_ids ve platform/token
+    koleksiyonları _belongs ile tam okunur; docs.company_id sütunu bu türleri kaçırır.
+    None bellek kataloğu için de geçerlidir; çağıran o zaman tam okur.
+    SQL hatası yukarı çıkar. Dedicated ve shared_v2 tam okumaya düşmez.
+    with_bytes False ise yalnız COUNT(*). Belge gövdesi okunmaz.
+    """
+    if storage_router.normalize_mode(mode) == storage_router.LEGACY:
+        return None
+    _finish_private_reads()
+    try:
+        coll = _open(db, mode, company_id, name, company)
+        fn = getattr(coll, "measure_volume", None)
+        if fn is None:
+            return None
+        result = fn(company_id, with_bytes=with_bytes)
+        if inspect.isawaitable(result):
+            result = await result
+        if not isinstance(result, tuple) or len(result) != 2:
+            return None
+        return int(result[0] or 0), int(result[1] or 0)
+    finally:
+        _finish_private_reads()
+
+
+async def _shared_volume_names(company_id: str) -> list[str]:
+    if _shared_kind() == "mysql":
+        import platform_lease
+
+        names = await platform_lease.call_blocking(
+            storage_shared_v2.list_company_collections, company_id,
+        )
+    else:
+        names = storage_shared_v2.list_company_collections(company_id)
+    return _public_names(names)
+
+
+async def volume_names(db, mode: str, company_id: str, company: dict) -> list[str]:
+    """Ölçümün koleksiyon listesi.
+
+    Dedicated ve shared_v2 belge satırı çekmez. Legacy eski _names yoludur:
+    company, membership, platform ve token _belongs ile eşlenir.
+    """
+    kind = storage_router.normalize_mode(mode)
+    if kind == storage_router.DEDICATED:
+        import storage_dedicated
+
+        names = await storage_dedicated.list_collections_async(
+            company_id, _dedicated_dsn(company),
+        )
+        return _public_names(names)
+    if kind == storage_router.SHARED_V2:
+        return await _shared_volume_names(company_id)
+    return await _names(db, kind, company_id, company, kind)
 
 
 def _prepare_with_stats_sync(docs, company_id: str, name: str = ""):

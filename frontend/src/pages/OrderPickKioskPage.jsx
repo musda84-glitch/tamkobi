@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { notifyDataChanged } from "../utils/dataRefresh";
 
 import { PickLabelPrintHost } from "../components/PickLabelPrintHost";
@@ -18,6 +18,7 @@ import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
 
@@ -80,9 +81,9 @@ const isLineComplete = (it) =>
   it && Number(it.picked_qty) >= Number(it.ordered_qty) - 1e-9;
 
 function PickThumb({ imageUrl }) {
-  const img = resolveImageUrl(imageUrl);
+  const img = listThumbUrl(imageUrl);
   if (img) {
-    return <img src={img} alt="" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" />;
+    return <img src={img} alt="" width={56} height={56} loading="lazy" decoding="async" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" />;
   }
   return (
     <div className="w-14 h-14 rounded-xl border bg-slate-50 flex items-center justify-center text-slate-300 shrink-0">
@@ -237,7 +238,27 @@ export default function OrderPickKioskPage() {
 
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: qty });
+      const r = await postOrQueue(axios, {
+        url: `${API_URL}/order-picks/${ses.order_id}/scan`,
+        body: { barcode: c, quantity: qty },
+        companyId,
+        kind: "pick_scan",
+        critical: false,
+      });
+      if (r.data?.queued) {
+        setSes((prev) => {
+          if (!prev) return prev;
+          const items = (prev.items || []).map((it) => {
+            if (it !== localLine && it.line_index !== localLine?.line_index) return it;
+            return { ...it, picked_qty: Number(it.picked_qty || 0) + qty };
+          });
+          return { ...prev, items, message: r.data.message, queued: true };
+        });
+        setCode("");
+        toast.success(r.data.message);
+        setBusy(false);
+        return;
+      }
       setSes(r.data);
       setCode("");
       setOverscanFlash(null);

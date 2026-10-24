@@ -56,7 +56,13 @@ _SECRET_KEYS = frozenset({
     "dedicated_dsn_ref", "dsn", "password", "password_hash", "secret",
     "token", "totp_secret", "db_password", "app_dsn", "admin_dsn",
     "ssl_ca", "merchant_key", "merchant_salt",
+    "iban", "iban_no", "vkn", "tax_number", "tax_id", "tckn", "tc_no",
+    "national_id", "vergi_no",
 })
+_IBAN_RE = re.compile(r"\bTR\d{24}\b", re.IGNORECASE)
+_LABELED_SECRET_RE = re.compile(
+    r"(?i)\b(?:vkn|tckn|iban)\b\s*[:=]?\s*[A-Za-z0-9]{6,34}",
+)
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _IDENT = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _ACTIVE = frozenset({"queued", "running"})
@@ -149,20 +155,30 @@ def fmt_mb(value: float) -> str:
     return f"{number:.1f}".replace(".", ",")
 
 
-def public_copy(value):
-    """Yanıttan gizli anahtarları ve URL benzeri dizgeleri çıkarır."""
+def _hidden_key(key: str) -> bool:
+    return str(key).lower() in _SECRET_KEYS
+
+
+def _scrub_public_text(value: str) -> str:
     from storage_migrations.masking import scrub
 
+    text = scrub(value)
+    text = _IBAN_RE.sub("***", text)
+    return _LABELED_SECRET_RE.sub("***", text)
+
+
+def public_copy(value):
+    """Yanıttan gizli anahtarları, DSN, IBAN ve etiketli kimlikleri çıkarır."""
     if isinstance(value, dict):
         return {
             key: public_copy(item)
             for key, item in value.items()
-            if key not in _SECRET_KEYS
+            if not _hidden_key(key)
         }
     if isinstance(value, list):
         return [public_copy(item) for item in value]
     if isinstance(value, str):
-        return scrub(value)
+        return _scrub_public_text(value)
     return value
 
 
@@ -185,6 +201,123 @@ def measure_seconds() -> float:
     except (TypeError, ValueError):
         value = 6 * 3600
     return value if value >= 30 else 6 * 3600
+
+
+def measure_start_delay() -> float:
+    """İlk açılışta ölçüm gecikmesi. 0 testlerde beklemeyi kapatır."""
+    try:
+        value = float(os.environ.get("STORAGE_ADMIN_MEASURE_START_DELAY_SECONDS") or "600")
+    except (TypeError, ValueError):
+        value = 600.0
+    return value if value >= 0 else 600.0
+
+
+def byte_refresh_seconds() -> float:
+    """Aynı sayıda büyüyen belgeler için SUM(LENGTH(doc)) yenileme süresi."""
+    try:
+        value = float(os.environ.get("STORAGE_ADMIN_BYTE_REFRESH_SECONDS") or str(24 * 3600))
+    except (TypeError, ValueError):
+        value = 24 * 3600
+    return value if value >= 60 else 24 * 3600
+
+
+def measure_retry_seconds() -> float:
+    """Başarısız ölçümün yeniden deneme aralığı. Başarı damgası bu kadar bekletmez."""
+    try:
+        value = float(os.environ.get("STORAGE_ADMIN_MEASURE_RETRY_SECONDS") or "900")
+    except (TypeError, ValueError):
+        value = 900.0
+    return value if value >= 30 else 900.0
+
+
+# Küçük değişim: mutlak ve oransal sınır birlikte. Bayt taraması ancak damga yeniyse atlanır.
+_REUSE_ABS = 50
+_REUSE_RATIO = 0.01
+_measure_not_before: Optional[datetime] = None
+_measure_guard = False
+
+
+def arm_measure_delay(now: Optional[datetime] = None) -> None:
+    """Zamanlayıcı açılınca ilk ölçümü geciktirir. Elle ölçüm bu saate bakmaz."""
+    global _measure_not_before
+    moment = now or _now()
+    delay = measure_start_delay()
+    _measure_not_before = moment if delay <= 0 else moment + timedelta(seconds=delay)
+
+
+def _summary_fresh(summary, moment: datetime) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    stamp = _parse(summary.get("measured_at"))
+    if stamp is None:
+        return False
+    return (moment - stamp).total_seconds() < measure_seconds()
+
+
+def _bytes_reusable(old, new) -> bool:
+    try:
+        previous = int(old or 0)
+        current = int(new or 0)
+    except (TypeError, ValueError):
+        return False
+    delta = abs(current - previous)
+    if delta == 0:
+        return True
+    base = max(previous, 1)
+    return delta <= _REUSE_ABS and (delta / base) <= _REUSE_RATIO
+
+
+def _bytes_fresh(previous, moment: datetime) -> bool:
+    """Bayt önbelleği yoksa veya 24 saati geçtiyse SUM(LENGTH(doc)) gerekir."""
+    if not isinstance(previous, dict):
+        return False
+    stamp = _parse(previous.get("bytes_measured_at"))
+    if stamp is None:
+        return False
+    return (moment - stamp).total_seconds() < byte_refresh_seconds()
+
+
+def _try_begin_measure() -> bool:
+    """Aynı süreçte ikinci ölçümü açmaz. Bayrak ilk await'ten önce kurulur."""
+    global _measure_guard
+    if _measure_guard:
+        return False
+    _measure_guard = True
+    return True
+
+
+def _end_measure() -> None:
+    global _measure_guard
+    _measure_guard = False
+
+
+def _can_reuse_bytes(previous: dict, probe: dict) -> bool:
+    old_rows = [row for row in (previous or {}).get("collections") or [] if isinstance(row, dict)]
+    new_rows = [row for row in (probe or {}).get("collections") or [] if isinstance(row, dict)]
+    old_map = {str(row.get("name") or ""): int(row.get("count") or 0) for row in old_rows}
+    new_map = {str(row.get("name") or ""): int(row.get("count") or 0) for row in new_rows}
+    if not old_map or set(old_map) != set(new_map):
+        return False
+    return all(_bytes_reusable(old_map[name], new_map[name]) for name in new_map)
+
+
+def _with_cached_bytes(probe: dict, previous: dict) -> dict:
+    old = {
+        str(row.get("name") or ""): int(row.get("bytes") or 0)
+        for row in (previous or {}).get("collections") or []
+        if isinstance(row, dict)
+    }
+    rows = []
+    for row in probe.get("collections") or []:
+        name = str(row.get("name") or "")
+        rows.append({
+            "name": name,
+            "count": int(row.get("count") or 0),
+            "bytes": old.get(name, 0),
+        })
+    merged = dict(probe)
+    merged["collections"] = rows
+    return merged
 
 
 async def _find_one(db, name: str, query: dict):
@@ -339,13 +472,18 @@ async def _files(db, company_id: str) -> dict:
     return {"files": count, "file_bytes": size}
 
 
-async def read_volume(db, company: dict) -> dict:
-    """Kayıt ve bayt, firmanın güncel kipinden. Yönlendirici kapalıysa legacy."""
+async def read_volume(db, company: dict, *, with_bytes: bool = True) -> dict:
+    """Kayıt ve bayt, firmanın güncel kipinden. Yönlendirici kapalıysa legacy.
+
+    Dedicated ve shared_v2 SQL sayımı belge çekmez. Legacy tam okur:
+    company, membership, platform ve token _belongs ile eşlenir.
+    SQL hatası tam okumaya düşmez. with_bytes False yalnız COUNT(*) çalıştırır.
+    """
     cid = str(company.get("_id") or "")
     mode = storage_router.public_mode(company.get(storage_router.MODE_FIELD))
     read_mode = mode if storage_router.enabled() else storage_router.LEGACY
     try:
-        names = await storage_move._names(db, read_mode, cid, company, read_mode)
+        names = await storage_move.volume_names(db, read_mode, cid, company)
     except Exception as exc:
         return {"collections": [], "error": storage_router.public_store_error(exc), "read_mode": read_mode}
     collections = []
@@ -353,14 +491,24 @@ async def read_volume(db, company: dict) -> dict:
         if name in SKIP_VOLUME:
             continue
         try:
-            docs = await storage_move._read(db, read_mode, cid, name, company)
+            measured = await storage_move.measure_collection(
+                db, read_mode, cid, name, company, with_bytes=with_bytes,
+            )
+            if measured is None:
+                docs = await storage_move._read(db, read_mode, cid, name, company)
+                if with_bytes:
+                    count, nbytes = await storage_move._measure_docs(docs, cid, name)
+                else:
+                    count = sum(1 for doc in docs if isinstance(doc, dict) and doc.get("_id"))
+                    nbytes = 0
+            else:
+                count, nbytes = measured
         except Exception as exc:
             return {
                 "collections": collections,
                 "error": storage_router.public_store_error(exc),
                 "read_mode": read_mode,
             }
-        count, nbytes = await storage_move._measure_docs(docs, cid, name)
         collections.append({
             "name": name,
             "count": count,
@@ -405,10 +553,43 @@ async def _prune_snapshots(db, today: str) -> None:
             await db[SNAPSHOTS].delete_one({"_id": row.get("_id")})
 
 
-async def measure_company(db, company: dict, thresholds: dict, *, today: Optional[str] = None) -> dict:
+async def _volume_for(db, company: dict, previous, *, force: bool, now: Optional[datetime] = None) -> dict:
+    """Taze özet, küçük sayım farkı veya tam hacim.
+
+    Sayım durgun olsa da bayt damgası yoksa ya da 24 saati geçtiyse SUM(LENGTH(doc)).
+    """
+    moment = now or _now()
+    if (
+        not force
+        and isinstance(previous, dict)
+        and not previous.get("measure_error")
+        and _bytes_fresh(previous, moment)
+    ):
+        probe = await read_volume(db, company, with_bytes=False)
+        if probe.get("error"):
+            return probe
+        if _can_reuse_bytes(previous, probe):
+            reused = _with_cached_bytes(probe, previous)
+            reused["bytes_refreshed"] = False
+            return reused
+    volume = await read_volume(db, company, with_bytes=True)
+    volume["bytes_refreshed"] = not bool(volume.get("error"))
+    return volume
+
+
+async def measure_company(
+    db, company: dict, thresholds: dict, *, today: Optional[str] = None,
+    force: bool = False, now: Optional[datetime] = None,
+) -> dict:
     cid = str(company.get("_id") or "")
-    day = today or _now().date().isoformat()
-    volume = await read_volume(db, company)
+    moment = now or _now()
+    day = today or moment.date().isoformat()
+    previous = await _find_one(db, SUMMARIES, {"_id": cid})
+    if not force and _summary_fresh(previous, moment):
+        return previous
+    volume = await _volume_for(db, company, previous, force=force, now=moment)
+    refreshed = bool(volume.get("bytes_refreshed"))
+    prior_bytes_at = str(previous.get("bytes_measured_at") or "") if isinstance(previous, dict) else ""
     people = await _people(db, cid)
     files = await _files(db, cid)
     records = sum(int(row.get("count") or 0) for row in volume["collections"])
@@ -424,10 +605,11 @@ async def measure_company(db, company: dict, thresholds: dict, *, today: Optiona
     for row in volume["collections"]:
         if largest is None or int(row.get("bytes") or 0) > int(largest.get("bytes") or 0):
             largest = {"name": row.get("name"), "bytes": int(row.get("bytes") or 0)}
-    measured_at = _iso()
+    measured_at = _iso(moment)
     summary = {
         "company_id": cid,
         "measured_at": measured_at,
+        "bytes_measured_at": measured_at if refreshed else prior_bytes_at,
         "records": records,
         "bytes": nbytes,
         "collections": volume["collections"],
@@ -460,19 +642,66 @@ async def measure_company(db, company: dict, thresholds: dict, *, today: Optiona
     return summary
 
 
-async def measure_all(db, *, today: Optional[str] = None) -> dict:
+async def measure_all(
+    db, *, today: Optional[str] = None, force: bool = False, now: Optional[datetime] = None,
+) -> dict:
     thresholds = await load_thresholds(db)
+    moment = now or _now()
     rows = []
     for company in await _all(db, "companies"):
         if not company.get("_id"):
             continue
-        rows.append(await measure_company(db, company, thresholds, today=today))
-    day = today or _now().date().isoformat()
+        try:
+            rows.append(await measure_company(
+                db, company, thresholds, today=today or moment.date().isoformat(),
+                force=force, now=moment,
+            ))
+        except Exception as exc:
+            _logger().info(
+                "ölçüm firma=%s: %s",
+                storage_router._safe_company(str(company.get("_id") or "")),
+                storage_router.public_store_error(exc) or type(exc).__name__,
+            )
+    day = today or moment.date().isoformat()
     await _prune_snapshots(db, day)
-    stamp = _iso()
-    await _save(db, SETTINGS, META_ID, {"measured_at": stamp, "companies": len(rows)})
+    stamp = _iso(moment)
+    await _save(db, SETTINGS, META_ID, {
+        "measured_at": stamp,
+        "measure_failed_at": "",
+        "companies": len(rows),
+    })
     _logger().info("ölçüm firma=%s", len(rows))
     return {"measured_at": stamp, "companies": len(rows)}
+
+
+async def measure_now(db, *, company_id: str = "", now: Optional[datetime] = None) -> dict:
+    """Elle ölçüm. Aralık, açılış gecikmesi ve küçük değişim önbelleği uygulanmaz.
+
+    Ölçüm zaten çalışıyorsa yenisi başlamaz.
+    """
+    if not _try_begin_measure():
+        raise StorageAdminError("Ölçüm zaten çalışıyor.", status=409)
+    try:
+        moment = now or _now()
+        if str(company_id or "").strip():
+            cid = _company_id(company_id)
+            company = await _require_company(db, cid)
+            thresholds = await load_thresholds(db)
+            summary = await measure_company(
+                db, company, thresholds, today=moment.date().isoformat(), force=True, now=moment,
+            )
+            await _save(db, SETTINGS, META_ID, {
+                "measured_at": summary.get("measured_at") or _iso(moment),
+                "measure_failed_at": "",
+            })
+            return {
+                "measured_at": summary.get("measured_at") or "",
+                "companies": 1,
+                "company_id": storage_router._safe_company(cid),
+            }
+        return await measure_all(db, today=moment.date().isoformat(), force=True, now=moment)
+    finally:
+        _end_measure()
 
 
 def maintenance_window(now: Optional[datetime] = None) -> dict:
@@ -913,7 +1142,11 @@ async def overview(db) -> dict:
     }
 
 
-async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str = "", move_id: str = "", when: str = "now") -> dict:
+async def describe_enqueue(db, *, kind: str, company_id: str, to_mode: str = "", move_id: str = "", when: str = "now") -> dict:
+    """İşin doğrulanmış planı. Koleksiyona yazmaz.
+
+    Deneme zorunluluğu, yönlendirici ve tek taşıma kontrolleri enqueue ile aynıdır.
+    """
     cid = str(company_id or "").strip()
     move_id = str(move_id or "").strip()
     if kind in ("rollback", "recover") and not cid:
@@ -928,6 +1161,7 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
     mode = ""
     scheduled_for = ""
     status = "queued"
+    normalized_when = ""
     if kind in ("dry_run", "apply"):
         mode = _mode(to_mode)
         if kind == "apply":
@@ -937,9 +1171,11 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
             dry = summary.get("last_dry_run") if isinstance(summary.get("last_dry_run"), dict) else {}
             if not dry.get("ok") or dry.get("to_mode") != mode:
                 raise StorageAdminError("Önce deneme çalıştırın. Deneme sonucu yok.")
+            normalized_when = "now"
         if kind == "apply" and when == "maintenance":
             scheduled_for = maintenance_window()["start"]
             status = "scheduled"
+            normalized_when = "maintenance"
         elif kind == "apply" and when not in ("", "now"):
             parsed = _parse(when)
             if parsed is None:
@@ -947,24 +1183,46 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
             if parsed > _now():
                 scheduled_for = parsed.isoformat()
                 status = "scheduled"
+            normalized_when = str(when)
     if kind in ("rollback", "recover"):
         if not storage_router.enabled():
             raise StorageAdminError("Depolama yönlendiricisi kapalı. Taşıma yazılmaz.")
         if not move_id:
             raise StorageAdminError("move_id gerekli.")
+    if status == "queued" and await _busy(db):
+        raise StorageAdminError("Aynı anda tek taşıma yapılabilir.", status=409)
+    return {
+        "company_id": cid,
+        "company_name": str(company.get("name") or cid),
+        "kind": kind,
+        "from_mode": storage_router.public_mode(company.get(storage_router.MODE_FIELD)),
+        "to_mode": mode,
+        "move_id": move_id,
+        "status": status,
+        "scheduled_for": scheduled_for,
+        "when": normalized_when,
+    }
+
+
+async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str = "", move_id: str = "", when: str = "now") -> dict:
+    plan = await describe_enqueue(
+        db, kind=kind, company_id=company_id, to_mode=to_mode, move_id=move_id, when=when,
+    )
+    cid = plan["company_id"]
+    mode = plan["to_mode"]
     summary = await _find_one(db, SUMMARIES, {"_id": cid}) or {}
     dry = summary.get("last_dry_run") if isinstance(summary.get("last_dry_run"), dict) else {}
     total = int(dry.get("collections") or 0) if dry.get("to_mode") == mode else 0
     job_id = uuid.uuid4().hex
     doc = {
         "_id": job_id,
-        "kind": kind,
+        "kind": plan["kind"],
         "company_id": cid,
-        "from_mode": storage_router.public_mode(company.get(storage_router.MODE_FIELD)),
+        "from_mode": plan["from_mode"],
         "to_mode": mode,
-        "move_id": move_id,
-        "status": status,
-        "scheduled_for": scheduled_for,
+        "move_id": plan["move_id"],
+        "status": plan["status"],
+        "scheduled_for": plan["scheduled_for"],
         "created_at": _iso(),
         "started_at": "",
         "finished_at": "",
@@ -974,13 +1232,148 @@ async def enqueue(db, *, kind: str, company_id: str, actor: dict, to_mode: str =
         "result": {},
         "error": "",
     }
-    if status == "queued" and await _busy(db):
-        raise StorageAdminError("Aynı anda tek taşıma yapılabilir.", status=409)
     await db[JOBS].insert_one(doc)
-    await _audit(db, actor, cid, kind, status)
-    if status == "queued":
+    await _audit(db, actor, cid, plan["kind"], plan["status"])
+    if plan["status"] == "queued":
         kick(db)
-    return {"job_id": job_id, "status": status, "company_id": storage_router._safe_company(cid), "scheduled_for": scheduled_for}
+    return {
+        "job_id": job_id,
+        "status": plan["status"],
+        "company_id": storage_router._safe_company(cid),
+        "scheduled_for": plan["scheduled_for"],
+    }
+
+
+async def require_move(db, move_id: str, company_id: str) -> dict:
+    """Taşıma kaydı bu firmaya ait değilse 404. DSN döndürmez."""
+    found = await _find_one(db, MOVES, {"_id": str(move_id or "").strip()})
+    if not found or str(found.get("company_id") or "") != str(company_id or ""):
+        raise StorageAdminError("Taşıma kaydı yok.", status=404)
+    return {
+        "move_id": str(found.get("_id") or ""),
+        "company_id": storage_router._safe_company(str(found.get("company_id") or "")),
+        "status": found.get("status") or "",
+        "from_mode": storage_router.public_mode(found.get("from_mode")),
+        "to_mode": storage_router.public_mode(found.get("to_mode")),
+    }
+
+
+def _progress_fields(job: Optional[dict]) -> dict:
+    progress = job.get("progress") if isinstance(job, dict) and isinstance(job.get("progress"), dict) else {}
+
+    def _int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "collection": str(progress.get("collection") or ""),
+        "done": _int(progress.get("done")),
+        "total": _int(progress.get("total")),
+        "records": _int(progress.get("records")),
+    }
+
+
+async def job_status(db, job_id: str) -> dict:
+    raw = str(job_id or "").strip()
+    job = await _find_one(db, JOBS, {"_id": raw}) if raw else None
+    if not job:
+        raise StorageAdminError("İş bulunamadı.", status=404)
+    move = None
+    mid = str(job.get("move_id") or "")
+    if mid:
+        move = await _find_one(db, MOVES, {"_id": mid})
+    progress = _progress(job, move)
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    source = result if result else (move or {})
+    check = _checksum_view(source.get("checksums"), source.get("counts"))
+    if job.get("status") in _ACTIVE or job.get("status") == "scheduled":
+        check = {"label": "bekleniyor", "ok": None}
+    fields = _progress_fields(job)
+    return {
+        "job_id": job.get("_id") or "",
+        "kind": job.get("kind") or "",
+        "company_id": storage_router._safe_company(str(job.get("company_id") or "")),
+        "from_mode": storage_router.public_mode(job.get("from_mode")),
+        "to_mode": storage_router.public_mode(job.get("to_mode") or ""),
+        "move_id": mid,
+        "status": job.get("status") or "",
+        "scheduled_for": job.get("scheduled_for") or "",
+        "created_at": job.get("created_at") or "",
+        "started_at": job.get("started_at") or "",
+        "finished_at": job.get("finished_at") or "",
+        "progress_pct": progress["pct"],
+        "progress_label": progress["label"],
+        "progress": {"pct": progress["pct"], "label": progress["label"], **fields},
+        "error": str(job.get("error") or ""),
+        "checksum_label": check["label"],
+        "checksum_ok": check["ok"],
+    }
+
+
+async def move_status(db, move_id: str) -> dict:
+    raw = str(move_id or "").strip()
+    move = await _find_one(db, MOVES, {"_id": raw}) if raw else None
+    if not move:
+        raise StorageAdminError("Taşıma kaydı yok.", status=404)
+    cid = str(move.get("company_id") or "")
+    company = await _find_one(db, "companies", {"_id": cid}) or {}
+    catalog = {
+        cid: {
+            "name": company.get("name") or cid,
+            "test": is_test_company(company) if company else False,
+        },
+    }
+    rows = _history(catalog, [move], await _all(db, JOBS))
+    if not rows:
+        raise StorageAdminError("Taşıma kaydı yok.", status=404)
+    return rows[0]
+
+
+async def company_metrics(db, company_id: str) -> dict:
+    cid = _company_id(company_id)
+    await _require_company(db, cid)
+    data = await overview(db)
+    row = next((item for item in data["companies"] if item["id"] == cid), None)
+    if row is None:
+        raise StorageAdminError("Firma bulunamadı.", status=404)
+    return {
+        "company": row,
+        "thresholds": data["thresholds"],
+        "maintenance": data["maintenance"],
+        "router_enabled": data["router_enabled"],
+        "measured_at": data["measured_at"],
+    }
+
+
+async def move_history(db, *, company_id: str = "", limit: int = 50, offset: int = 0) -> dict:
+    data = await overview(db)
+    rows = list(data["moves"])
+    if str(company_id or "").strip():
+        cid = _company_id(company_id)
+        await _require_company(db, cid)
+        rows = [row for row in rows if row.get("company_id") == cid]
+    total = len(rows)
+    return {
+        "items": rows[offset:offset + limit],
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+    }
+
+
+async def describe_prepare_dedicated(db, company_id: str) -> dict:
+    """Dedicated hazırlığın önizlemesi. Veritabanı oluşturmaz, DSN döndürmez."""
+    cid = _company_id(company_id)
+    company = await _require_company(db, cid)
+    has = bool(str(company.get(storage_router.DSN_FIELD) or "").strip())
+    return {
+        "company_id": storage_router._safe_company(cid),
+        "company_name": str(company.get("name") or cid),
+        "has_dedicated_dsn": has,
+        "will_create": not has,
+    }
 
 
 async def cancel_job(db, job_id: str, actor: dict) -> dict:
@@ -1211,14 +1604,33 @@ def kick(db) -> None:
     loop.create_task(worker(db))
 
 
-async def maybe_measure(db, *, now: Optional[datetime] = None) -> bool:
+async def maybe_measure(db, *, now: Optional[datetime] = None, force: bool = False) -> bool:
+    moment = now or _now()
+    if not force and _measure_not_before is not None and moment < _measure_not_before:
+        return False
     meta = await _find_one(db, SETTINGS, {"_id": META_ID}) or {}
     stamp = _parse(meta.get("measured_at"))
-    moment = now or _now()
-    if stamp is not None and (moment - stamp).total_seconds() < measure_seconds():
+    if not force and stamp is not None and (moment - stamp).total_seconds() < measure_seconds():
         return False
-    await measure_all(db, today=moment.date().isoformat())
-    return True
+    failed = _parse(meta.get("measure_failed_at"))
+    if not force and failed is not None and (moment - failed).total_seconds() < measure_retry_seconds():
+        return False
+    if not _try_begin_measure():
+        return False
+    try:
+        try:
+            await measure_all(db, today=moment.date().isoformat(), force=force, now=moment)
+        except Exception as exc:
+            _logger().info("ölçüm: %s", storage_router.public_store_error(exc) or type(exc).__name__)
+            await _save(db, SETTINGS, META_ID, {"measure_failed_at": _iso(moment)})
+            return False
+        await _save(db, SETTINGS, META_ID, {
+            "measured_at": _iso(moment),
+            "measure_failed_at": "",
+        })
+        return True
+    finally:
+        _end_measure()
 
 
 async def tick(db, *, now: Optional[datetime] = None) -> dict:
@@ -1229,6 +1641,7 @@ async def tick(db, *, now: Optional[datetime] = None) -> dict:
 
 async def scheduler_loop(db=None) -> None:
     target = db or _database()
+    arm_measure_delay()
     while True:
         try:
             with unscoped("veritabanı yönetimi ölçüm ve taşıma kuyruğu"):
@@ -1415,6 +1828,15 @@ async def _run(fn, *args, **kwargs):
 @router.get("/system/storage-admin")
 async def storage_admin_overview(admin: dict = Depends(saas.require_super_admin)):
     return await _run(overview, _database())
+
+
+@router.post("/system/storage-admin/measure")
+async def storage_admin_measure(admin: dict = Depends(saas.require_super_admin)):
+    """Paneldeki elle yeniden ölç. Aralık ve önbellek uygulanmaz.
+
+    Ölçüm sürüyorsa 409. İkinci tarama açılmaz.
+    """
+    return await _run(measure_now, _database())
 
 
 @router.put("/system/storage-admin/thresholds")
