@@ -2702,6 +2702,27 @@ class MySQLCollection:
             return int((row or [0])[0] or 0)
         return len(await self._load_filtered(query))
 
+    async def measure_volume(self, company_id: str, *, with_bytes: bool = True):
+        """Periyodik hacim. docs gövdesi okunmaz; havuz zaten async.
+
+        Taşıma ve checksum bu metodu kullanmaz.
+        """
+        cid = str(company_id or "")
+        _guard(self.name, "count_documents", query={"company_id": cid})
+        if with_bytes:
+            sql = (
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(doc)), 0) "
+                "FROM docs WHERE collection=%s AND company_id=%s"
+            )
+        else:
+            sql = "SELECT COUNT(*) FROM docs WHERE collection=%s AND company_id=%s"
+        rows = await self._fetch_rows(sql, [self.name, cid])
+        if not rows:
+            return (0, 0)
+        count = int(rows[0][0] or 0)
+        nbytes = int(rows[0][1] or 0) if with_bytes else 0
+        return (count, nbytes)
+
     def aggregate(self, pipeline):
         """Motor ile aynı: aggregate() senkron, to_list() async. $match + $group."""
         _guard(self.name, "aggregate", pipeline=pipeline)
