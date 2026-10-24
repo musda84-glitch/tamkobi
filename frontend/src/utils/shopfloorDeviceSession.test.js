@@ -53,7 +53,8 @@ test("cihaz atölye dışına çıkamaz, geçersiz oturum eşleştirmeye döner"
 });
 
 test("kod düz altı karakterdir, adres ve QR bağlantı taşımaz", () => {
-  expect(normalizePairingCode(" ab23cd ")).toBe("");
+  expect(normalizePairingCode(" ab10cd ")).toBe("");
+  expect(normalizePairingCode(" ab23cd ")).toBe("AB23CD");
   expect(normalizePairingCode("k4m7np")).toBe("K4M7NP");
   expect(normalizePairingCode("K4M7NP")).toBe("K4M7NP");
   expect(normalizePairingCode("https://app.tamkobi.com/atolye-eslestir?code=K4M7NP")).toBe("");

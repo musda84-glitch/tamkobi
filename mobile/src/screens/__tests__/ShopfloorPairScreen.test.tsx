@@ -68,7 +68,7 @@ describe("ShopfloorPairScreen", () => {
 
   afterEach(async () => {
     await act(async () => { root.unmount(); });
-    container.remove();
+    container.parentNode?.removeChild(container);
   });
 
   async function show() {
@@ -76,6 +76,7 @@ describe("ShopfloorPairScreen", () => {
   }
 
   it("sends a typed code and does not keep it in the address", async () => {
+    (window as unknown as { location: { href: string } }).location = { href: "tamkobi://login" };
     await show();
     const input = findByTestId(container, "shopfloor-pair-code");
     await act(async () => {
@@ -85,7 +86,8 @@ describe("ShopfloorPairScreen", () => {
       await reactProps(findByTestId(container, "shopfloor-pair-submit"))?.onClick?.();
     });
     expect(auth.pairShopfloorDevice).toHaveBeenCalledWith("K4M7NP", undefined);
-    expect(window.location.href).not.toContain("K4M7NP");
+    expect(window.location.href).toBe("tamkobi://login");
+    expect(JSON.stringify(auth.pairShopfloorDevice.mock.calls)).not.toContain("/");
   });
 
   it("reads a QR payload as a plain code", async () => {
