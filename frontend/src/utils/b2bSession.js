@@ -1,6 +1,7 @@
 import axios from "axios";
 import { toast } from "sonner";
 import { API_URL } from "../api/client";
+import { logoutEverywhere } from "../auth/sessionLogout";
 import { parseHeldCarts, parseStoredCart } from "./b2bCart";
 
 /** sessionStorage anahtarı. Değer ham select_token; adreste ve çerezde durmaz. */
@@ -81,24 +82,24 @@ function hasStoredB2BCart() {
   return false;
 }
 
-/** Oturumu kapatır. Sepet anahtarlarına ve panel oturumuna dokunmaz. */
+/** Panel, İK ve B2B aynı çıkışı kullanır. Sepet anahtarları korunur. */
 export function logoutB2B() {
-  const token = readB2BSession();
   const keepCartNotice = hasStoredB2BCart();
-  if (token) {
-    try {
-      const pending = axios.post(`${API_URL}/public/b2b/logout`, { select_token: token }, {
-        headers: { Authorization: `B2BSession ${token}` },
-      });
-      if (pending && typeof pending.then === "function") pending.catch(() => {});
-    } catch { /* uç hata verse de yerel çıkış sürer */ }
-  }
-  clearB2BSession();
-  try { localStorage.removeItem(B2B_PORTAL_MAP_KEY); } catch { /* gizli mod */ }
-  if (keepCartNotice) {
-    try { toast.message("Sepetiniz bu cihazda saklandı."); } catch { /* toast yok */ }
-  }
-  b2bNav.go("/b2b/giris");
+  return logoutEverywhere({
+    apiUrl: API_URL,
+    to: "/b2b/giris",
+    readB2BSession,
+    navigate: (href) => b2bNav.go(href),
+    request: (url, body, extra) => axios.post(url, body || {}, {
+      withCredentials: true,
+      headers: extra?.headers,
+    }),
+    onCleared: () => {
+      if (keepCartNotice) {
+        try { toast.message("Sepetiniz bu cihazda saklandı."); } catch { /* toast yok */ }
+      }
+    },
+  });
 }
 
 export function portalTokenFromPath(path) {

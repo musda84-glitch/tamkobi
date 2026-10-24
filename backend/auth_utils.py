@@ -1,4 +1,5 @@
 import os
+import secrets
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
@@ -68,6 +69,33 @@ SUPERADMIN_ACCESS_SECONDS = 4 * 3600
 SUPERADMIN_REFRESH_SECONDS = 4 * 3600
 
 
+def token_version_of(user: Optional[dict]) -> int:
+    """Kullanıcı belgesindeki oturum kuşağı. Yoksa 0 (eski JWT'ler tv=0 sayılır)."""
+    if not user:
+        return 0
+    try:
+        value = int(user.get("token_version") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
+def session_claims(token_version: int = 0) -> dict:
+    """Her oturum JWT'sine kuşağı ve tekil jti yazar. jti loglanmaz."""
+    return {"tv": token_version_of({"token_version": token_version}), "jti": secrets.token_urlsafe(16)}
+
+
+def session_generation_current(payload: Optional[dict], user: Optional[dict]) -> bool:
+    """Access ve refresh aynı kuşağı taşır. Çıkış token_version artırınca ikisi de düşer."""
+    claimed = 0
+    if payload is not None:
+        try:
+            claimed = int(payload.get("tv") or 0)
+        except (TypeError, ValueError):
+            return False
+    return claimed == token_version_of(user)
+
+
 def create_access_token(
     user_id: str,
     email: str,
@@ -77,6 +105,7 @@ def create_access_token(
     is_super_admin: bool = False,
     mfa: bool = False,
     aud: Optional[str] = None,
+    token_version: int = 0,
 ) -> str:
     if expires_delta is None:
         seconds = SUPERADMIN_ACCESS_SECONDS if is_super_admin else TENANT_ACCESS_SECONDS
@@ -90,6 +119,7 @@ def create_access_token(
         "exp": now + expires_delta,
         "type": "access",
     }
+    payload.update(session_claims(token_version))
     if is_super_admin:
         payload["sa"] = True
     if mfa:
@@ -99,13 +129,14 @@ def create_access_token(
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str, *, is_super_admin: bool = False) -> str:
+def create_refresh_token(user_id: str, *, is_super_admin: bool = False, token_version: int = 0) -> str:
     seconds = SUPERADMIN_REFRESH_SECONDS if is_super_admin else TENANT_REFRESH_SECONDS
     payload = {
         "sub": user_id,
         "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds),
         "type": "refresh",
     }
+    payload.update(session_claims(token_version))
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -120,6 +151,28 @@ def cookie_secure_flag(request: Any) -> bool:
     headers = getattr(request, "headers", None) or {}
     proto = (headers.get("x-forwarded-proto") or headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
     return proto == "https"
+
+
+AUTH_COOKIE_NAMES = ("access_token", "refresh_token", "sa_return")
+
+
+def clear_auth_cookies(response: Any, request: Any) -> None:
+    """Oturum çerezini yazıldığı bayraklarla siler.
+
+    Secure çerez, Secure'suz Set-Cookie ile düşmez. Domain yine yazılmaz.
+    """
+    kw = auth_cookie_kwargs(request)
+    path = kw.get("path") or "/"
+    secure = bool(kw.get("secure"))
+    samesite = kw.get("samesite") or "lax"
+    for name in AUTH_COOKIE_NAMES:
+        response.delete_cookie(
+            key=name,
+            path=path,
+            secure=secure,
+            httponly=True,
+            samesite=samesite,
+        )
 
 
 def auth_cookie_kwargs(request: Any, *, max_age: Optional[int] = None) -> dict:
@@ -256,6 +309,9 @@ async def get_user_from_token(token: str, db: Any, *, request: Any = None, path:
                 revoked_ts = None
             if revoked_ts is not None and (iat is None or int(float(iat)) < int(float(revoked_ts))):
                 raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
+        # Çıkış token_version artırır. Eski access ve refresh (tv yok = 0) reddedilir.
+        if not session_generation_current(payload, user):
+            raise HTTPException(status_code=401, detail="Oturum sonlandırıldı. Tekrar giriş yapın.")
         # Süper admin + TOTP açık: MFA onaylı oturum zorunlu (impersonation hariç)
         if user.get("is_super_admin") and user.get("totp_enabled") and user.get("totp_secret") and not payload.get("imp_by"):
             if not payload.get("mfa"):
@@ -294,3 +350,96 @@ async def _shopfloor_device_principal(token: str, db: Any) -> Optional[dict]:
     if not shopfloor_devices.looks_like_device_token(token):
         return None
     return await shopfloor_devices.principal_from_token(token, db)
+
+
+def _decode_any_session(token: str) -> Optional[dict]:
+    """İmza doğruysa süresi dolmuş access/refresh de okunur. Değer loglanmaz."""
+    text = (token or "").strip()
+    if not text or text.count(".") != 2:
+        return None
+    try:
+        payload = jwt.decode(
+            text,
+            get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_aud": False, "verify_exp": False},
+        )
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("type") not in ("access", "refresh"):
+        return None
+    return payload
+
+
+def _request_cookie(request: Any, name: str) -> str:
+    cookies = getattr(request, "cookies", None) or {}
+    try:
+        return str(cookies.get(name) or "").strip()
+    except Exception:
+        return ""
+
+
+async def revoke_open_qr_sessions(db: Any, user_ids: list) -> None:
+    """Onaylanmış veya bekleyen QR web girişini düşürür. Koleksiyon yoksa sessiz.
+
+    Eski QR kodu çıkıştan sonra yeni access üretemez. Ham kod yazılmaz.
+    """
+    ids = [str(item) for item in (user_ids or []) if str(item or "").strip()]
+    if not ids or db is None:
+        return
+    col = getattr(db, "web_login_qr", None)
+    if col is None or not hasattr(col, "find"):
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        cursor = col.find({"user_id": {"$in": ids}})
+        rows = await cursor.to_list(200) if hasattr(cursor, "to_list") else []
+    except Exception:
+        return
+    for row in rows or []:
+        if str((row or {}).get("status") or "") not in ("pending", "approved"):
+            continue
+        try:
+            await col.update_one(
+                {"_id": row.get("_id")},
+                {"$set": {"status": "revoked", "revoked_at": now}},
+            )
+        except Exception:
+            return
+
+
+async def revoke_login_sessions(db: Any, request: Any) -> list:
+    """Bu istekteki access ve refresh öznelerinin kuşak numarasını bir artırır.
+
+    Atölye cihaz token'ı JWT değildir; dokunulmaz (yalnız Cihazdan çık kapatır).
+    sa_return çerezi silinir ama yönetici JWT'si burada düşürülmez.
+    Dönüş kullanıcı kimlikleridir, token değildir.
+    """
+    if db is None or request is None:
+        return []
+    raws = [session_token(request) or "", _request_cookie(request, "refresh_token")]
+    subjects = []
+    for raw in raws:
+        payload = _decode_any_session(raw)
+        if not payload:
+            continue
+        sub = str(payload.get("sub") or "").strip()
+        if sub and sub not in subjects:
+            subjects.append(sub)
+    bumped = []
+    for sub in subjects:
+        try:
+            user = await db.users.find_one({"_id": sub})
+        except Exception:
+            continue
+        if not user or str(user.get("account_type") or "") == "atolye_device":
+            continue
+        try:
+            await db.users.update_one({"_id": sub}, {"$inc": {"token_version": 1}})
+            bumped.append(sub)
+        except Exception:
+            continue
+    await revoke_open_qr_sessions(db, bumped)
+    return bumped
