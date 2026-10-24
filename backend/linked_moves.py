@@ -232,8 +232,12 @@ async def _soft_delete_move(collection: str, doc: dict, entity_type: str, note: 
         return await trash.soft_delete(collection, doc, entity_type, label, note=note)
     except Exception:
         logger.exception("soft_delete %s %s", collection, doc.get("_id"))
-        # Fallback: hard delete so orphan kalmasın
-        await _db[collection].delete_one({"_id": doc["_id"]})
+        # Fallback: hard delete so orphan kalmasın. Dedicated satır company_id ister.
+        q = {"_id": doc["_id"]}
+        cid = str((doc or {}).get("company_id") or "").strip()
+        if cid:
+            q["company_id"] = cid
+        await _db[collection].delete_one(q)
         return None
 
 

@@ -5,6 +5,7 @@ from setup_state import apply_saved_secrets
 apply_saved_secrets()
 
 import os
+import copy
 import uuid
 import re
 import json
@@ -13725,6 +13726,164 @@ def _assert_editable_tx(tx: Dict[str, Any], *, allow_simulated_bank_sync: bool =
         raise HTTPException(status_code=400, detail="Banka entegrasyonu, ortaklar hesabı veya çek/senet kaynaklı hareketler buradan düzenlenemez veya silinemez. Çek için Çek/Senet modülünü kullanın.")
 
 
+def _tx_balance_ids(tx: Dict[str, Any]):
+    """_reverse_tx_effects'in dokunabileceği hesap, cari ve fatura kimlikleri."""
+    accounts: List[Any] = []
+    contacts: List[Any] = []
+    invoice_id = None
+    if tx.get("type") == "transfer":
+        accounts = [tx.get("account_id"), tx.get("target_account_id")]
+        if tx.get("owner_contact_id"):
+            contacts.append(tx["owner_contact_id"])
+    else:
+        if tx.get("account_id"):
+            accounts.append(tx.get("account_id"))
+        if tx.get("source") not in ("virman_card_mirror", "expense") and tx.get("contact_id"):
+            contacts.append(tx.get("contact_id"))
+        if tx.get("owner_contact_id"):
+            contacts.append(tx.get("owner_contact_id"))
+        invoice_id = tx.get("related_invoice_id")
+    return accounts, contacts, invoice_id
+
+
+async def _copy_company_doc(collection: str, doc_id, company_id: str):
+    cid = str(company_id or "").strip()
+    if not doc_id or not cid:
+        return None
+    row = await db[collection].find_one({"_id": doc_id, "company_id": cid})
+    return copy.deepcopy(row) if isinstance(row, dict) else None
+
+
+async def _snapshot_tx_balances(txs: List[Optional[Dict[str, Any]]]) -> Dict[str, List[dict]]:
+    """Bakiye ters kaydından önceki hesap, cari ve fatura kopyası."""
+    accounts: Dict[Any, dict] = {}
+    contacts: Dict[Any, dict] = {}
+    invoices: Dict[Any, dict] = {}
+    for tx in txs or []:
+        if not tx:
+            continue
+        cid = str(tx.get("company_id") or "").strip()
+        if not cid:
+            continue
+        acc_ids, contact_ids, invoice_id = _tx_balance_ids(tx)
+        for aid in acc_ids:
+            if aid and aid not in accounts:
+                row = await _copy_company_doc("bank_accounts", aid, cid)
+                if row:
+                    accounts[aid] = row
+        for coid in contact_ids:
+            if coid and coid not in contacts:
+                row = await _copy_company_doc("contacts", coid, cid)
+                if row:
+                    contacts[coid] = row
+        if invoice_id and invoice_id not in invoices:
+            row = await _copy_company_doc("invoices", invoice_id, cid)
+            if row:
+                invoices[invoice_id] = row
+    return {"accounts": list(accounts.values()), "contacts": list(contacts.values()), "invoices": list(invoices.values())}
+
+
+async def _ensure_company_doc(collection: str, doc: Optional[dict]) -> None:
+    """Anlık görüntüdeki belgeyi dedicated depoya geri yazar."""
+    if not isinstance(doc, dict) or doc.get("_id") is None:
+        return
+    cid = str(doc.get("company_id") or "").strip()
+    payload = dict(doc)
+    if cid:
+        payload["company_id"] = cid
+        current = await db[collection].find_one({"_id": payload["_id"], "company_id": cid})
+        if current:
+            body = {k: v for k, v in payload.items() if k != "_id"}
+            await db[collection].update_one({"_id": payload["_id"], "company_id": cid}, {"$set": body})
+            return
+        await db[collection].insert_one(payload)
+        return
+    # tenant-ok: company_id'siz eski kayıt paylaşılan katalogda durur
+    current = await db[collection].find_one({"_id": payload["_id"]})
+    if not current:
+        await db[collection].insert_one(payload)
+
+
+async def _drop_trash_row(trash_id, company_id) -> None:
+    if not trash_id:
+        return
+    cid = str(company_id or "").strip()
+    if cid:
+        await db.trash.delete_one({"_id": trash_id, "company_id": cid})
+        return
+    # tenant-ok: company_id'siz çöp satırı paylaşılan katalogdadır
+    await db.trash.delete_one({"_id": trash_id})
+
+
+async def _restore_balance_snapshot(snap: Optional[dict]) -> None:
+    if not snap:
+        return
+    for row in snap.get("accounts") or []:
+        await _ensure_company_doc("bank_accounts", row)
+    for row in snap.get("contacts") or []:
+        await _ensure_company_doc("contacts", row)
+    for row in snap.get("invoices") or []:
+        await _ensure_company_doc("invoices", row)
+    for row in snap.get("partners") or []:
+        await _ensure_company_doc("partners", row)
+    for row in snap.get("bank_txs") or []:
+        await _ensure_company_doc("bank_transactions", row)
+
+
+async def _rewind_delete(rows: List[tuple], snap: Optional[dict]) -> None:
+    """Silinen satırları ve bakiye anlık görüntüsünü geri yazar."""
+    try:
+        await _restore_balance_snapshot(snap)
+    except Exception:
+        logger.exception("Bakiye anlık görüntüsü yazılamadı")
+    for collection, doc, trash_id in rows:
+        try:
+            await _ensure_company_doc(collection, doc)
+        except Exception:
+            logger.exception("Silinen kayıt geri yazılamadı")
+        try:
+            await _drop_trash_row(trash_id, (doc or {}).get("company_id") if isinstance(doc, dict) else None)
+        except Exception:
+            logger.exception("Çöp kaydı kaldırılamadı")
+
+
+async def _abort_failed_effect(rows: List[tuple], snap: Optional[dict], exc: BaseException) -> None:
+    """Silme oldu, bakiye yazması patladı: bakiyeyi ve satırı eski haline getir."""
+    logger.exception("Silinen kaydın bakiyesi geri alınamadı")
+    await _rewind_delete(rows, snap)
+    raise HTTPException(status_code=500, detail="Bakiye geri alınamadı; kayıt eski haline getirildi.") from exc
+
+
+async def _snapshot_partner_delete(tx: Dict[str, Any]) -> Dict[str, List[dict]]:
+    """Ortak hareketi silindikten, bakiye tersinden hemen önceki kopyalar."""
+    cid = str(tx.get("company_id") or "").strip()
+    snap: Dict[str, List[dict]] = {"partners": [], "contacts": [], "accounts": [], "bank_txs": []}
+    if not cid:
+        return snap
+    if tx.get("partner_id"):
+        row = await _copy_company_doc("partners", tx.get("partner_id"), cid)
+        if row:
+            snap["partners"].append(row)
+    if tx.get("contact_id"):
+        row = await _copy_company_doc("contacts", tx.get("contact_id"), cid)
+        if row:
+            snap["contacts"].append(row)
+    if _partner_tx_touches_cash(tx) and tx.get("account_id"):
+        acc = await _copy_company_doc("bank_accounts", tx.get("account_id"), cid)
+        if acc:
+            snap["accounts"].append(acc)
+        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"], "company_id": cid})
+        if isinstance(bt, dict):
+            snap["bank_txs"].append(copy.deepcopy(bt))
+    from bank_match_target import resolve_bank_tx_id_for_partner_tx
+    match_id = await resolve_bank_tx_id_for_partner_tx(db, tx)
+    if match_id and all(item.get("_id") != match_id for item in snap["bank_txs"]):
+        match = await _copy_company_doc("bank_transactions", match_id, cid)
+        if match:
+            snap["bank_txs"].append(match)
+    return snap
+
+
 @api_router.delete("/banking/transactions/simulated")
 async def delete_simulated_bank_transactions(company_id: Optional[str] = Query(None), account_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Demo/simüle banka senkron hareketlerini toplu sil (bakiyeleri geri al)."""
@@ -13735,17 +13894,18 @@ async def delete_simulated_bank_transactions(company_id: Optional[str] = Query(N
     txs = await db.bank_transactions.find(q).to_list(5000)
     removed = 0
     for tx in txs:
-        try:
-            await _reverse_tx_effects(tx, -1)
-        except Exception:
-            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
-        await trash.soft_delete(
+        tid = await trash.soft_delete(
             "bank_transactions",
             tx,
             "bank_transaction",
             f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺",
             note=f"simüle · {tx.get('account_name')} · {tx.get('date')}",
         )
+        snap = await _snapshot_tx_balances([tx])
+        try:
+            await _reverse_tx_effects(tx, -1)
+        except Exception as exc:
+            await _abort_failed_effect([("bank_transactions", tx, tid)], snap, exc)
         removed += 1
     return {
         "status": "success",
@@ -13805,10 +13965,7 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 _assert_editable_tx(pair)
             except HTTPException:
                 pair = None
-    await _reverse_tx_effects(tx, -1)
-    if pair:
-        await _reverse_tx_effects(pair, -1)
-    await trash.soft_delete(
+    tid = await trash.soft_delete(
         "bank_transactions",
         tx,
         "bank_transaction",
@@ -13816,29 +13973,51 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
         related=related,
         note=f"{tx.get('account_name')} · {tx.get('date')}" + (" · bağlı masraf" if related else ""),
     )
+    pair_tid = None
     if pair:
-        await trash.soft_delete(
-            "bank_transactions",
-            pair,
-            "bank_transaction",
-            f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
-            note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
-        )
-    # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
-    cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
-    cash_accs = []
-    for aid in cash_ids:
-        if not aid:
-            continue
-        acc = await db.bank_accounts.find_one({"_id": aid, "company_id": tx["company_id"]})
-        if acc and str(acc.get("type") or "") == "cash_box":
-            cash_accs.append(acc)
-    if cash_accs:
-        await account_balance.sync_cash_box_balances(db, cash_accs)
-    sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
-    for cid in sync_ids:
-        if cid:
-            await contact_balance.sync_contact_balance(db, cid, company_id=tx.get("company_id") or "")
+        try:
+            pair_tid = await trash.soft_delete(
+                "bank_transactions",
+                pair,
+                "bank_transaction",
+                f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
+                note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
+            )
+        except Exception as exc:
+            rows = [("bank_transactions", tx, tid)]
+            for block in related or []:
+                for rel in block.get("docs") or []:
+                    rows.append((block.get("collection") or "expenses", rel, None))
+            await _rewind_delete(rows, None)
+            raise
+    snap = await _snapshot_tx_balances([tx, pair])
+    try:
+        await _reverse_tx_effects(tx, -1)
+        if pair:
+            await _reverse_tx_effects(pair, -1)
+        # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
+        cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
+        cash_accs = []
+        for aid in cash_ids:
+            if not aid:
+                continue
+            acc = await db.bank_accounts.find_one({"_id": aid, "company_id": tx["company_id"]})
+            if acc and str(acc.get("type") or "") == "cash_box":
+                cash_accs.append(acc)
+        if cash_accs:
+            await account_balance.sync_cash_box_balances(db, cash_accs)
+        sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
+        for cid in sync_ids:
+            if cid:
+                await contact_balance.sync_contact_balance(db, cid, company_id=tx.get("company_id") or "")
+    except Exception as exc:
+        rows = [("bank_transactions", tx, tid)]
+        if pair:
+            rows.append(("bank_transactions", pair, pair_tid))
+        for block in related or []:
+            for rel in block.get("docs") or []:
+                rows.append((block.get("collection") or "expenses", rel, None))
+        await _abort_failed_effect(rows, snap, exc)
     msg = "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."
     if pair and related:
         msg = "Hareket, eş virman satırı ve bağlı masraf çöp kutusuna taşındı; bakiyeler geri alındı."
@@ -14652,17 +14831,11 @@ async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_curren
     tx = await tenant_access.get_tenant_doc(db, "partner_transactions", tx_id, user, not_found="Hareket bulunamadı.")
     linked_moves.assert_not_source_linked(tx)
     related = await _linked_expense_related(tx)
-    # Banka eşleşmesini önce iptal et (partner reverse sonrası orphan match kalmasın)
-    from bank_match_target import clear_bank_match_for_partner_tx
-    bank_unmatched = await clear_bank_match_for_partner_tx(db, tx)
-    await _reverse_partner_tx(tx)
     label = partner_pay.tx_display_label(tx)
     note_bits = [tx.get("date") or ""]
     if related:
         note_bits.append("bağlı masraf")
-    if bank_unmatched:
-        note_bits.append("banka eşleşmesi iptal")
-    await trash.soft_delete(
+    tid = await trash.soft_delete(
         "partner_transactions",
         tx,
         "partner_transaction",
@@ -14670,6 +14843,18 @@ async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_curren
         related=related,
         note=" · ".join(b for b in note_bits if b),
     )
+    snap = await _snapshot_partner_delete(tx)
+    try:
+        # Banka eşleşmesi silme tutunca iptal edilir (partner reverse sonrası orphan match kalmasın)
+        from bank_match_target import clear_bank_match_for_partner_tx
+        bank_unmatched = await clear_bank_match_for_partner_tx(db, tx)
+        await _reverse_partner_tx(tx)
+    except Exception as exc:
+        rows = [("partner_transactions", tx, tid)]
+        for block in related or []:
+            for rel in block.get("docs") or []:
+                rows.append((block.get("collection") or "expenses", rel, None))
+        await _abort_failed_effect(rows, snap, exc)
     msg = "Hareket çöp kutusuna taşındı; ortak"
     if tx.get("contact_id"):
         msg += ", cari"
