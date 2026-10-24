@@ -3,6 +3,7 @@ import { get, post, put, type ApiClient } from "../api/client";
 import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
 import { forgotErpPayload, type ForgotChannel } from "../utils/forgotPassword";
+import { requestDevicePair } from "../utils/shopfloorDevice";
 import { setPriceDecimals } from "../utils/money";
 import { parseB2bToken } from "../utils/b2bToken";
 import { can as canPerm, feature as featurePerm, moduleOn as moduleOnPerm } from "../utils/permissions";
@@ -41,6 +42,7 @@ type AuthContextValue = AuthState & {
   client: ApiClient;
   companyId: string;
   login: (email: string, password: string, serverUrl?: string, remember?: boolean) => Promise<void>;
+  pairShopfloorDevice: (code: string, serverUrl?: string) => Promise<void>;
   loginB2b: (email: string, password: string, serverUrl?: string) => Promise<void>;
   enterB2bToken: (tokenOrLink: string, serverUrl?: string) => Promise<void>;
   forgotB2b: (email: string) => Promise<B2BForgotResult>;
@@ -234,6 +236,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applySession(baseUrl, res.token, res);
   }, [applySession, state.baseUrl]);
 
+  const pairShopfloorDevice = useCallback(async (code: string, serverUrl?: string) => {
+    const baseUrl = serverUrl ? await saveApiBase(serverUrl) : state.baseUrl;
+    if (serverUrl) setState((s) => ({ ...s, baseUrl }));
+    const token = await requestDevicePair(
+      (path, body) => post<{ token?: string }>({ baseUrl, token: null }, path, body),
+      code,
+    );
+    const me = await get<SessionPayload>({ baseUrl, token }, "/auth/me");
+    if (!me?.authenticated || !me.user) throw new Error("Cihaz oturumu açılamadı.");
+    await clearB2bSession();
+    await saveToken(token);
+    await saveSessionKind("erp");
+    await saveSessionCache(me);
+    await applySession(baseUrl, token, me);
+  }, [applySession, state.baseUrl]);
+
   const loginB2b = useCallback(async (email: string, password: string, serverUrl?: string) => {
     const baseUrl = serverUrl ? await saveApiBase(serverUrl) : state.baseUrl;
     if (serverUrl) setState((s) => ({ ...s, baseUrl }));
@@ -424,6 +442,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       client,
       companyId,
       login,
+      pairShopfloorDevice,
       loginB2b,
       enterB2bToken,
       forgotB2b,
@@ -445,7 +464,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return addons[key] !== false;
       },
     }),
-    [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, resetB2b, resetErp, setServer, state, switchCompany, updateProfile]
+    [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, pairShopfloorDevice, resetB2b, resetErp, setServer, state, switchCompany, updateProfile]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

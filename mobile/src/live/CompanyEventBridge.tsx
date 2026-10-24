@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 import { useAuth } from "@/auth/AuthContext";
 import { API_BASE_HEADER, requestTarget } from "@/api/url";
+import { isShopfloorDevice } from "@/utils/shopfloorDevice";
 import {
   companyEventStreamEnabled,
   emitLiveRefresh,
@@ -24,7 +25,7 @@ export function CompanyEventBridge() {
   const streamEnabled = companyEventStreamEnabled(client?.baseUrl);
 
   useEffect(() => {
-    if (!streamEnabled || !user || !companyId || !client?.baseUrl) return undefined;
+    if (!streamEnabled || !user || isShopfloorDevice(user) || !companyId || !client?.baseUrl) return undefined;
     let closed = false;
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;

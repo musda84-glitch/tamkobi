@@ -116,6 +116,7 @@ const auth = {
   },
   baseUrl: "https://api.test",
   can: () => true,
+  logout: jest.fn(),
   addonOn: () => false,
   feature: () => false,
 };
@@ -519,5 +520,21 @@ describe("AtolyeScreen operator PIN", () => {
       warn.mockRestore();
       error.mockRestore();
     }
+  });
+
+  it("device session stays on the shop floor and can sign out", async () => {
+    auth.user = {
+      id: "dev-1",
+      name: "Kesim tableti",
+      role: "atolye_device",
+      account_type: "atolye_device",
+      shopfloor_stations: ["CNC"],
+    };
+    (auth.logout as jest.Mock).mockClear();
+    await renderScreen();
+    expect(textOf(findByTestId(container, "shopfloor-atolye-account"))).toContain("Kesim tableti · Atölye cihazı");
+    expect(findByTestId(container, "shopfloor-operators")).toBeTruthy();
+    await clickId("shopfloor-device-logout");
+    expect(auth.logout).toHaveBeenCalled();
   });
 });
