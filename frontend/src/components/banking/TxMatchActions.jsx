@@ -3,21 +3,31 @@ import { BankMatchModal } from "../BankMatchModal";
 import { formatTrAmount } from "../../utils/money";
 import { confirmAndUnmatch, freshMatchSession, replaceMatchSession } from "./txMatchSession";
 
+function posExpenseLineVisible(tx) {
+  if (!tx) return false;
+  if (tx.expense_number || tx.expense_id) return true;
+  if (tx.pos_commission === 0 || tx.pos_commission === "0") return true;
+  return Boolean(tx.pos_commission);
+}
+
 export function PosSettlementRowMark({ tx }) {
   if (tx?.match_kind !== "pos_settlement") return null;
   const txId = tx.id || tx._id;
   const name = tx.target_account_name || "";
   const number = tx.expense_number || "";
   const amount = formatTrAmount(tx.pos_commission || 0);
+  const showExpense = posExpenseLineVisible(tx);
   return (
     <div className="mt-0.5 space-y-0.5" data-testid={`tx-pos-settlement-${txId}`}>
       <div className="flex flex-wrap items-center gap-1">
         <span className="text-[9px] px-1 rounded font-bold bg-amber-100 text-amber-800" data-testid={`tx-pos-chip-${txId}`}>POS bloke</span>
         {name ? <span className="text-[10px] text-slate-500" data-testid={`tx-pos-from-${txId}`}>← {name}</span> : null}
       </div>
-      <div className="text-[10px] text-slate-500" data-testid={`tx-pos-expense-${txId}`}>
-        ↳ Masraf · POS komisyonu{number ? ` (${number})` : ""}{"  "}{amount}
-      </div>
+      {showExpense ? (
+        <div className="text-[10px] text-slate-500" data-testid={`tx-pos-expense-${txId}`}>
+          ↳ Masraf · POS komisyonu{number ? ` (${number})` : ""}{"  "}{amount}
+        </div>
+      ) : null}
     </div>
   );
 }

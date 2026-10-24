@@ -6,7 +6,7 @@ mevcut _unmatch çağrılır, hareket yeniden okunur, mevcut _apply_match çağr
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,154 @@ logger = logging.getLogger("TamKobiERP")
 IST = ZoneInfo("Europe/Istanbul")
 
 _TRUE = {"1", "true", "yes", "on", "evet"}
+LOCK_TTL_SECONDS = 120
+_BUSY = ("matched", "matching", "rematching", "unmatching")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _lock_moment(tx: Optional[dict]):
+    raw = (tx or {}).get("match_lock_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def lock_is_stale(tx: Optional[dict], *, now: Optional[datetime] = None) -> bool:
+    """match_lock_at yoksa bayat sayılmaz; zamanı olmayan rematching 409 kalır."""
+    moment = _lock_moment(tx)
+    if moment is None:
+        return False
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return (current - moment).total_seconds() >= LOCK_TTL_SECONDS
+
+
+def claim_taken(result) -> bool:
+    if result is None:
+        return False
+    matched = getattr(result, "matched_count", None)
+    if matched is not None:
+        return int(matched or 0) >= 1
+    return int(getattr(result, "modified_count", 0) or 0) >= 1
+
+
+async def _write_status(db, tx_id, company_id, query_extra, update):
+    """Koşullu durum yazımı. Sorgu her zaman company_id taşır."""
+    cid = str(company_id or "").strip()
+    query = {**(query_extra or {}), "_id": tx_id, "company_id": cid}
+    coll = db.bank_transactions
+    atomic = getattr(coll, "update_one_atomic", None)
+    if atomic is not None:
+        return await atomic(query, update)
+    return await coll.update_one(query, update)
+
+
+async def claim_matching(db, tx: dict) -> None:
+    """Banka satırını matching yap. Eşzamanlı ikinci istek 409."""
+    cid = str((tx or {}).get("company_id") or "").strip()
+    tx_id = (tx or {}).get("_id")
+    if not cid or not tx_id:
+        raise HTTPException(status_code=400, detail="Şirket bilgisi eksik.")
+    result = await _write_status(
+        db, tx_id, cid,
+        {"match_status": {"$nin": list(_BUSY)}},
+        {"$set": {"match_status": "matching", "match_lock_at": _now_iso()}},
+    )
+    if claim_taken(result):
+        return
+    current = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+    status = str((current or {}).get("match_status") or "")
+    if status == "matched":
+        raise HTTPException(status_code=409, detail="Bu hareket zaten eşleştirilmiş.")
+    if (
+        status in _BUSY
+        and lock_is_stale(current)
+        and current.get("match_lock_at")
+    ):
+        stolen = await _write_status(
+            db, tx_id, cid,
+            {"match_status": status, "match_lock_at": current.get("match_lock_at")},
+            {"$set": {"match_status": "matching", "match_lock_at": _now_iso()}},
+        )
+        if claim_taken(stolen):
+            return
+    raise HTTPException(status_code=409, detail="Bu hareket eşleştiriliyor.")
+
+
+async def release_match_lock(db, tx: dict) -> None:
+    """matching kilidini unmatched'e bırakır. matched satıra dokunmaz."""
+    cid = str((tx or {}).get("company_id") or "").strip()
+    tx_id = (tx or {}).get("_id")
+    if not cid or not tx_id:
+        return
+    await db.bank_transactions.update_one(
+        {"_id": tx_id, "company_id": cid, "match_status": "matching"},
+        {"$set": {"match_status": "unmatched"}, "$unset": {"match_lock_at": ""}},
+    )
+
+
+async def _steal_unmatch(db, current: Optional[dict]):
+    if not current:
+        return None
+    status = str(current.get("match_status") or "")
+    if status in ("", "unmatched"):
+        return None
+    cid = str(current.get("company_id") or "").strip()
+    if status == "rematching" and not lock_is_stale(current):
+        return current
+    if not lock_is_stale(current) or not current.get("match_lock_at"):
+        raise HTTPException(status_code=409, detail="Bu hareket eşleştiriliyor.")
+    stolen = await _write_status(
+        db, current["_id"], cid,
+        {"match_status": status, "match_lock_at": current.get("match_lock_at")},
+        {"$set": {"match_status": "unmatching", "match_lock_at": _now_iso()}},
+    )
+    if not claim_taken(stolen):
+        raise HTTPException(status_code=409, detail="Bu hareket eşleştiriliyor.")
+    fresh = await db.bank_transactions.find_one({"_id": current["_id"], "company_id": cid})
+    return fresh or current
+
+
+async def lock_for_unmatch(db, tx: dict):
+    """matched → unmatching. rematching (replace) olduğu gibi devam eder.
+
+    Dönüş None: satır zaten unmatched, bakiye yazılmamalı.
+    """
+    cid = str((tx or {}).get("company_id") or "").strip()
+    tx_id = (tx or {}).get("_id")
+    status = str((tx or {}).get("match_status") or "")
+    if not cid or not tx_id:
+        return tx
+    if status == "rematching":
+        fresh = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+        return fresh or tx
+    if status == "matched":
+        result = await _write_status(
+            db, tx_id, cid,
+            {"match_status": "matched"},
+            {"$set": {"match_status": "unmatching", "match_lock_at": _now_iso()}},
+        )
+        if claim_taken(result):
+            fresh = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+            return fresh or tx
+        current = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+        return await _steal_unmatch(db, current)
+    current = await db.bank_transactions.find_one({"_id": tx_id, "company_id": cid})
+    if not current or str(current.get("match_status") or "") in ("", "unmatched"):
+        return None
+    if str(current.get("match_status") or "") == "rematching" and not lock_is_stale(current):
+        return current
+    return await _steal_unmatch(db, current)
 
 # (gövde alanı, koleksiyon, geçersiz hedef mesajı)
 _SAME_COMPANY = (
@@ -123,7 +271,7 @@ async def _clear_rematching(db, tx_id: str, *, company_id: str) -> None:
     try:
         await db.bank_transactions.update_one(
             {"_id": tx_id, "company_id": company_id, "match_status": "rematching"},
-            {"$set": {"match_status": "unmatched"}},
+            {"$set": {"match_status": "unmatched"}, "$unset": {"match_lock_at": ""}},
         )
     except Exception:
         logger.exception("bank rematch lock clear failed tx=%s", tx_id)
@@ -154,12 +302,27 @@ async def replace_matched_transaction(
     if not company_id:
         raise HTTPException(status_code=400, detail="Hareketin şirketi yok.")
     await validate_replace_target(db, company_id, body or {})
-    locked = await db.bank_transactions.update_one(
-        {"_id": tx["_id"], "company_id": company_id, "match_status": "matched"},
-        {"$set": {"match_status": "rematching"}},
+    locked = await _write_status(
+        db, tx["_id"], company_id,
+        {"match_status": "matched"},
+        {"$set": {"match_status": "rematching", "match_lock_at": _now_iso()}},
     )
-    if int(getattr(locked, "modified_count", 0) or 0) == 0:
-        raise HTTPException(status_code=409, detail="Bu hareket yeniden eşleştiriliyor.")
+    if not claim_taken(locked):
+        current = await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": company_id})
+        stale = (
+            str((current or {}).get("match_status") or "") == "rematching"
+            and lock_is_stale(current)
+            and (current or {}).get("match_lock_at")
+        )
+        if not stale:
+            raise HTTPException(status_code=409, detail="Bu hareket yeniden eşleştiriliyor.")
+        stolen = await _write_status(
+            db, tx["_id"], company_id,
+            {"match_status": "rematching", "match_lock_at": current.get("match_lock_at")},
+            {"$set": {"match_status": "rematching", "match_lock_at": _now_iso()}},
+        )
+        if not claim_taken(stolen):
+            raise HTTPException(status_code=409, detail="Bu hareket yeniden eşleştiriliyor.")
     try:
         locked_tx = await db.bank_transactions.find_one({"_id": tx["_id"], "company_id": company_id})
         if not locked_tx:

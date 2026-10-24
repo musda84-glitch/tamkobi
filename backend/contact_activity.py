@@ -48,11 +48,15 @@ def contact_is_active(contact: Dict[str, Any] | None) -> bool:
     return contact.get("is_active") is not False
 
 
-async def contact_activity_counts(db, contact_id: str) -> Dict[str, int]:
+async def contact_activity_counts(db, contact_id: str, company_id: str | None = None) -> Dict[str, int]:
+    cid = str(company_id or "").strip()
     out: Dict[str, int] = {}
     for coll, field, _label in ACTIVITY_SOURCES:
+        query: Dict[str, Any] = {field: contact_id}
+        if cid:
+            query["company_id"] = cid
         try:
-            n = await db[coll].count_documents({field: contact_id})
+            n = await db[coll].count_documents(query)
         except Exception:
             n = 0
         if n:

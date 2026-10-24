@@ -92,11 +92,25 @@ async def assert_manual_allowed(db, account_id, company_id=None):
 
 
 async def assert_collection_allowed(db, account_id, company_id=None):
-    """Company credit cards are spend accounts, not cash-in (tahsilat) targets."""
+    """Company credit cards are spend accounts, not cash-in (tahsilat) targets.
+
+    Çağıran company_id verdiyse sorgu her zaman şirket kapsamındadır.
+    Verilmediyse dedicated depoda kapsam oturumdan gelir; router kapalı
+    veya legacy ise eski _id sorgusu durur.
+    """
     if not account_id:
         return None
-    cid = str(company_id or "").strip()
-    if cid:
+    passed = str(company_id or "").strip()
+    cid = passed
+    if not cid:
+        try:
+            import tenant_scope
+            scope = tenant_scope.current()
+            cid = str(getattr(scope, "company_id", "") or "").strip()
+        except Exception:
+            cid = ""
+    from account_balance import uses_private_store
+    if passed or (cid and uses_private_store(db, cid)):
         acc = await db.bank_accounts.find_one({"_id": account_id, "company_id": cid})
     else:
         acc = await db.bank_accounts.find_one({"_id": account_id})

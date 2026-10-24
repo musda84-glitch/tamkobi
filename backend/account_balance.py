@@ -171,6 +171,59 @@ async def apply_balance_delta(db, account_id: str, delta: float, *, company_id: 
     return "posted"
 
 
+async def apply_capped_balance_delta(
+    db,
+    account_id: str,
+    delta: float,
+    *,
+    company_id: str,
+    floor: Optional[float] = None,
+    match: Optional[dict] = None,
+) -> str:
+    """Entegre hesapta yazma. floor verilirse bakiye bu değerin altına $inc ile inmez.
+
+    Dönüş: integrated / rejected / posted / skipped.
+    """
+    cid = str(company_id or "").strip()
+    if not account_id or not cid or abs(_num(delta)) < 0.0000001:
+        return "skipped"
+    if await account_is_integrated(db, account_id, company_id=cid):
+        return "integrated"
+    query: Dict[str, Any] = {"_id": account_id, "company_id": cid}
+    if match:
+        query.update(match)
+    if floor is not None:
+        query["current_balance"] = {"$gte": float(floor)}
+    updated = await db.bank_accounts.update_one(query, {"$inc": {"current_balance": float(delta)}})
+    matched = getattr(updated, "matched_count", None)
+    if matched is None:
+        matched = getattr(updated, "modified_count", 0)
+    if int(matched or 0) < 1:
+        return "rejected"
+    return "posted"
+
+
+def uses_private_store(db, company_id: Optional[str]) -> bool:
+    """Dedicated kip. Router kapalı, legacy veya karar okunamazsa False.
+
+    Legacy _id okumaları durur; dedicated okuma ayrı company_id sorgusu açar.
+    """
+    cid = str(company_id or "").strip()
+    if not cid or db is None:
+        return False
+    try:
+        import storage_router
+    except Exception:
+        return False
+    if not storage_router.enabled():
+        return False
+    try:
+        mode, _epoch, _locked = storage_router.storage_decision_sync(db, cid)
+    except Exception:
+        return False
+    return mode == storage_router.DEDICATED
+
+
 # Bakiye işareti için yeterli alanlar. Tam belge (ekstre metni vb.) çekilmez.
 # _id kasa→kasa virmanın iki sorguda tekilleştirilmesi için durur.
 BANK_TX_BALANCE_PROJECTION = {
@@ -301,8 +354,31 @@ async def fetch_cash_box_txs(db, company_id: str, cash_ids: Iterable[str]) -> Li
     return rows
 
 
-async def _lookup_company_id(db, account_id: str) -> str:
+async def _lookup_company_id(db, account_id: str, company_id: Optional[str] = None) -> str:
     if not account_id:
+        return ""
+    hint = str(company_id or "").strip()
+    if not hint:
+        try:
+            import tenant_scope
+            scope = tenant_scope.current()
+            hint = str(getattr(scope, "company_id", "") or "").strip()
+        except Exception:
+            hint = ""
+    if hint and uses_private_store(db, hint):
+        try:
+            doc = await db.bank_accounts.find_one(
+                {"_id": account_id, "company_id": hint}, {"company_id": 1},
+            )
+        except TypeError:
+            try:
+                doc = await db.bank_accounts.find_one({"_id": account_id, "company_id": hint})
+            except Exception:
+                return ""
+        except Exception:
+            return ""
+        if isinstance(doc, dict) and doc.get("company_id"):
+            return str(doc["company_id"])
         return ""
     try:
         doc = await db.bank_accounts.find_one({"_id": account_id}, {"company_id": 1})
@@ -569,6 +645,57 @@ async def sync_cash_box_balances(
                     {"$set": {"current_balance": moved}},
                 )
     return accounts
+
+
+def _write_matched(result) -> int:
+    matched = getattr(result, "matched_count", None)
+    if matched is None and isinstance(result, dict):
+        matched = result.get("matched_count")
+    if matched is None:
+        matched = getattr(result, "modified_count", 0)
+    try:
+        return int(matched or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def reconcile_account_balance(db, account_id: str, *, company_id: str) -> str:
+    """Karşı hesabın bakiyesini hareket toplamına çeker.
+
+    Silinen hareketin kendi hesabına uygulanmaz: açılış hareketi yoksa
+    movement_balance kasayı sıfırlar. Entegre hesap ve kasa dışı tür yazılmaz.
+    Yazma yalnız gerçek farkta ve okunan bakiyenin hâlâ durduğu koşulla olur;
+    eşzamanlı $inc ezilmez. Liste tavanı doluysa bakiye değiştirilmez.
+    """
+    cid = str(company_id or "").strip()
+    aid = str(account_id or "").strip()
+    if not cid or not aid:
+        return "skipped"
+    acc = await db.bank_accounts.find_one({"_id": aid, "company_id": cid})
+    if not isinstance(acc, dict) or not recalc_balance_eligible(acc):
+        return "skipped"
+    if await account_is_integrated(db, aid, company_id=cid):
+        return "integrated"
+    txs, truncated = await fetch_balance_txs_capped(db, cid, [aid])
+    if truncated:
+        return "skipped"
+    moved = movement_balance(txs, aid, acc)
+    stored = round(_num(acc.get("current_balance")), 2)
+    if abs(moved - stored) < 0.01:
+        return "ok"
+    if await account_is_integrated(db, aid, company_id=cid):
+        return "integrated"
+    if "current_balance" in acc:
+        balance_match: Any = acc.get("current_balance")
+    else:
+        balance_match = {"$exists": False}
+    updated = await db.bank_accounts.update_one(
+        {"_id": aid, "company_id": cid, "current_balance": balance_match},
+        {"$set": {"current_balance": moved}},
+    )
+    if _write_matched(updated) < 1:
+        return "skipped"
+    return "posted"
 
 
 # Kayıtlı bakiye onarımı. Kredi kartı opening_eligible içinde kalır; bu küme onu içermez.
