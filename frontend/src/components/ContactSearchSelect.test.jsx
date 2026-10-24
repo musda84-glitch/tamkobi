@@ -168,3 +168,38 @@ test("each row shows Turkish balance beside the name", async () => {
   expect(fx.textContent).toBe("100,00 USD A");
   expect(document.querySelector('[data-testid="cs-option-c1"]').textContent).toContain("Borçlu Cari");
 });
+
+test("optionLabel fatura seçicisinde ticari ünvanı gösterir", async () => {
+  axios.get.mockResolvedValue({
+    data: {
+      items: [{
+        id: "c1",
+        name: "Cüneyt Atman",
+        company_title: "Yılmaz Desing Alüminyum Cam İnşaat Gıda San. Ve Tic. Ltd.",
+        type: "customer",
+        tax_number_or_id: "1234567890",
+      }],
+      suggestions: [],
+      total: 1,
+      page: 1,
+      limit: 20,
+      has_more: false,
+    },
+  });
+  await render(
+    <ContactSearchSelect
+      companyId="c1"
+      value=""
+      onChange={() => {}}
+      testId="cs"
+      optionLabel={(c) => c.company_title || c.name || "Cari"}
+    />,
+  );
+  await act(async () => {
+    host.querySelector('[data-testid="cs-trigger"]').click();
+  });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const row = document.querySelector('[data-testid="cs-option-c1"]');
+  expect(row.textContent).toContain("Yılmaz Desing Alüminyum Cam İnşaat Gıda San. Ve Tic. Ltd.");
+  expect(row.querySelector("span").textContent).not.toContain("Cüneyt");
+});

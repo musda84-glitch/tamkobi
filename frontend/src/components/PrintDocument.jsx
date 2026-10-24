@@ -7,6 +7,7 @@ import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 import { resolvePrintPartyAddress, resolvePrintPartyCity, resolvePrintPartyPhone } from "../utils/printPartyAddress";
+import { invoiceBuyerName } from "../utils/invoiceBuyerName";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 import { printPageCss } from "../utils/printPageCss";
 
@@ -386,7 +387,14 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     } catch { /* keep */ }
   };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
-  const customer = doc.contact_name || doc.customer_name || "";
+  const storedCustomer = doc.contact_name || doc.customer_name || "";
+  const customer = (docType === "invoice" || docType === "dispatch")
+    ? (invoiceBuyerName(partyContact, {
+      gibTitle: doc.gib_title,
+      fallback: storedCustomer,
+      taxId: doc.contact_tax_id,
+    }) || storedCustomer)
+    : storedCustomer;
   const partyAddress = resolvePrintPartyAddress(doc, partyContact);
   const partyCityShown = resolvePrintPartyCity(doc, partyContact, partyAddress);
   const partyPhone = resolvePrintPartyPhone(doc, partyContact);

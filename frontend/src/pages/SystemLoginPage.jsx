@@ -10,7 +10,7 @@ import { isYntHost } from "../utils/platformBrand";
 import { REMEMBER_SYS_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 
 export default function SystemLoginPage() {
-  const { user, authenticated, loading, refreshLicense } = useAuth();
+  const { user, authenticated, loading, refreshLicense, logout } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "", phone: "" });
   const [busy, setBusy] = useState(false);
@@ -65,7 +65,7 @@ export default function SystemLoginPage() {
         return;
       }
       if (!r.data.user?.is_super_admin) {
-        await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {});
+        await logout?.("", { force: true, dropQueue: false });
         setErr("Bu hesap platform yöneticisi değil. Sistem paneline yalnızca süper admin girebilir.");
         return;
       }
@@ -86,7 +86,7 @@ export default function SystemLoginPage() {
         { withCredentials: true },
       );
       if (!r.data.user?.is_super_admin) {
-        await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true }).catch(() => {});
+        await logout?.("", { force: true, dropQueue: false });
         setErr("Bu hesap platform yöneticisi değil.");
         setMode("login");
         return;
@@ -166,8 +166,8 @@ export default function SystemLoginPage() {
         <form onSubmit={submit} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="system-login-page">
           <PlatformBrandLockup testId="sys-login-brand" variant="login" />
           <p className="text-xs text-slate-400">Bu alan müşteri ERP'sinden bağımsızdır; yalnızca platform yöneticileri giriş yapabilir.</p>
-          <div><label className="block text-xs font-semibold mb-1 text-slate-300">E-posta</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-email" /></div>
-          <div><label className="block text-xs font-semibold mb-1 text-slate-300">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-password" /></div>
+          <div><label className="block text-xs font-semibold mb-1 text-slate-300">E-posta</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-email" autoComplete="username" /></div>
+          <div><label className="block text-xs font-semibold mb-1 text-slate-300">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-password" autoComplete="current-password" /></div>
           <div className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2" data-testid="sys-remember-row">
             <label className="flex items-center gap-2 text-xs font-medium text-slate-200 cursor-pointer select-none">
               <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="w-4 h-4 rounded border-white/20 text-amber-400 focus:ring-amber-400" data-testid="sys-remember" />

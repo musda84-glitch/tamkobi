@@ -5,6 +5,7 @@ from setup_state import apply_saved_secrets
 apply_saved_secrets()
 
 import os
+import copy
 import uuid
 import re
 import json
@@ -55,7 +56,7 @@ from b2b_catalog import b2b_catalog_mongo_filter
 from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
 from contact_match import order_identity_ors, pick_bank_contact
 from contact_tax import contact_tax_patch
-from buyer_tax import buyer_tax_choice, invoice_contact_tax_id
+from buyer_tax import buyer_tax_choice, invoice_contact_tax_id, stamp_invoice_buyer
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -104,6 +105,8 @@ from auth_utils import (
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
     require_secure_jwt_secret, session_token,
     auth_cookie_kwargs, access_cookie_max_age, refresh_cookie_max_age,
+    clear_auth_cookies, client_token_version, request_client_kind, new_session_id,
+    revoke_login_sessions,
 )
 import superadmin_2fa
 import google_auth
@@ -757,7 +760,7 @@ async def _maintenance_write_locked(_request: Request, exc):
 class LoginRequest(BaseModel):
     email: str
     password: str
-    remember: bool = True
+    remember: bool = False
 
 class RegisterRequest(BaseModel):
     name: str
@@ -963,12 +966,16 @@ async def _issue_session_for_user(
     else:
         aud = _ha.audience_for_request(request) or _ha.AUD_APP
 
-    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
+    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi).
+    # Web çıkışı mobile kuşağını, mobil çıkış web kuşağını düşürmez.
+    cli = request_client_kind(request)
+    tv = client_token_version(user, cli)
+    sid = new_session_id()
     token = create_access_token(
         user_id, email, user.get("role", "admin"),
-        is_super_admin=is_sa, mfa=is_sa, aud=aud,
+        is_super_admin=is_sa, mfa=is_sa, aud=aud, token_version=tv, client=cli, sid=sid,
     )
-    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa)
+    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa, token_version=tv, client=cli, sid=sid)
     access_age = access_cookie_max_age(is_super_admin=is_sa, remember=remember)
     refresh_age = refresh_cookie_max_age(is_super_admin=is_sa, remember=remember)
     response.set_cookie(key="access_token", value=token, **auth_cookie_kwargs(request, max_age=access_age))
@@ -3130,6 +3137,7 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None, us
     if q.get("invoice_id"):
         raise HTTPException(status_code=400, detail="Bu teklif zaten faturaya dönüştürülmüş.")
     req = req or {}
+    contact = None
     if q.get("contact_id"):
         contact = await tenant_access.get_tenant_doc(db, "contacts", q["contact_id"], user, not_found="Cari hesap bulunamadı.")
         tenant_access.assert_same_company(user, q, contact)
@@ -3145,6 +3153,7 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None, us
            "grand_total": q["grand_total"], "currency": "TRY", "status": "draft", "gib_status": None, "payment_status": "unpaid", "paid_amount": 0,
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "due_date": req.get("due_date"), "notes": f"{q['quote_number']} numaralı tekliften oluşturuldu.",
            "quote_id": quote_id, "project_id": q.get("project_id"), "created_at": datetime.now(timezone.utc).isoformat()}
+    stamp_invoice_buyer(inv, contact)
     await db.invoices.insert_one(inv)
     if q.get("payment_plan"):
         await _create_invoice_installments(inv, q["payment_plan"].get("config", {}))
@@ -4068,7 +4077,7 @@ async def _google_create_company_user(
         email=email, user_email=email, user_id=uid, company_id=cid,
     )
     if kind == _ha.KIND_APP:
-        session = await _issue_session_for_user(user, request, response, remember=bool(req.get("remember", True)))
+        session = await _issue_session_for_user(user, request, response, remember=bool(req.get("remember", False)))
         session["status"] = "success"
         session["company_id"] = cid
         session["message"] = msg
@@ -4103,7 +4112,7 @@ async def auth_google(req: Dict[str, Any], request: Request, response: Response)
     client_ip = request_ip(request)
     await google_auth.enforce_google_ip_rate(db, client_ip)
 
-    remember = bool(req.get("remember", True))
+    remember = bool(req.get("remember", False))
     company_name = (req.get("company_name") or "").strip()
     phone = (req.get("phone") or "").strip()
     pending = (req.get("pending_token") or "").strip()
@@ -4247,15 +4256,19 @@ async def logout(request: Request, response: Response):
     email = None
     uid = None
     try:
-        token = request.cookies.get("access_token") or (
-            request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None
-        )
+        token = session_token(request)
         if token:
             u = await get_user_from_token(token, db)
             email = u.get("email")
             uid = u.get("id") or u.get("_id")
+    except HTTPException:
+        email = None
     except Exception:
-        logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
+        logging.getLogger(__name__).exception("Çıkışta oturum okunamadı")
+    try:
+        await revoke_login_sessions(db, request)
+    except Exception:
+        logging.getLogger(__name__).exception("Çıkışta oturum iptal edilemedi")
     applog.log_auth("logout", f"{email or 'session'} signed out", email=email, user_email=email, user_id=str(uid) if uid else None, ip=applog.client_ip(request))
     if uid:
         try:
@@ -4263,8 +4276,7 @@ async def logout(request: Request, response: Response):
             await company_audit.record_auth(db, u, request, "logout", "Çıkış yapıldı")
         except Exception:
             logging.getLogger(__name__).exception("İşlem geçmişine çıkış yazılamadı")
-    response.delete_cookie("access_token")
-    response.delete_cookie("refresh_token")
+    clear_auth_cookies(response, request)
     return {"status": "success", "message": "Çıkış yapıldı."}
 
 class ChangePasswordRequest(BaseModel):
@@ -8922,6 +8934,7 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
 
     await offline_sync.assert_stock_available(db, company_id, lines, req.get("expected_stock"))
     amount_note = offline_sync.amount_decision(req.get("expected_grand_total"), grand)
+    stamp_invoice_buyer(invoice, contact)
     await _apply_invoice_effects(invoice)
     await db.invoices.insert_one(invoice)
 
@@ -10095,6 +10108,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
            "despatch_carrier_name": defaults.get("carrier_name") or "",
            "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    stamp_invoice_buyer(doc, contact)
     await db.invoices.insert_one(doc)
     await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     sent = await _send_dispatch_to_isnet_if_configured(doc)
@@ -10489,6 +10503,8 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     _contact_row = None
     if invoice.contact_id:
         _contact_row = await db.contacts.find_one({"_id": invoice.contact_id, "company_id": invoice.company_id})
+    if _contact_row:
+        stamp_invoice_buyer(invoice, _contact_row)
     if _contact_row and invoice.invoice_type == "sales":
         await _sync_contact_tax_from_sales_invoice(
             invoice.invoice_type,
@@ -13757,6 +13773,164 @@ def _assert_editable_tx(tx: Dict[str, Any], *, allow_simulated_bank_sync: bool =
         raise HTTPException(status_code=400, detail="Banka entegrasyonu, ortaklar hesabı veya çek/senet kaynaklı hareketler buradan düzenlenemez veya silinemez. Çek için Çek/Senet modülünü kullanın.")
 
 
+def _tx_balance_ids(tx: Dict[str, Any]):
+    """_reverse_tx_effects'in dokunabileceği hesap, cari ve fatura kimlikleri."""
+    accounts: List[Any] = []
+    contacts: List[Any] = []
+    invoice_id = None
+    if tx.get("type") == "transfer":
+        accounts = [tx.get("account_id"), tx.get("target_account_id")]
+        if tx.get("owner_contact_id"):
+            contacts.append(tx["owner_contact_id"])
+    else:
+        if tx.get("account_id"):
+            accounts.append(tx.get("account_id"))
+        if tx.get("source") not in ("virman_card_mirror", "expense") and tx.get("contact_id"):
+            contacts.append(tx.get("contact_id"))
+        if tx.get("owner_contact_id"):
+            contacts.append(tx.get("owner_contact_id"))
+        invoice_id = tx.get("related_invoice_id")
+    return accounts, contacts, invoice_id
+
+
+async def _copy_company_doc(collection: str, doc_id, company_id: str):
+    cid = str(company_id or "").strip()
+    if not doc_id or not cid:
+        return None
+    row = await db[collection].find_one({"_id": doc_id, "company_id": cid})
+    return copy.deepcopy(row) if isinstance(row, dict) else None
+
+
+async def _snapshot_tx_balances(txs: List[Optional[Dict[str, Any]]]) -> Dict[str, List[dict]]:
+    """Bakiye ters kaydından önceki hesap, cari ve fatura kopyası."""
+    accounts: Dict[Any, dict] = {}
+    contacts: Dict[Any, dict] = {}
+    invoices: Dict[Any, dict] = {}
+    for tx in txs or []:
+        if not tx:
+            continue
+        cid = str(tx.get("company_id") or "").strip()
+        if not cid:
+            continue
+        acc_ids, contact_ids, invoice_id = _tx_balance_ids(tx)
+        for aid in acc_ids:
+            if aid and aid not in accounts:
+                row = await _copy_company_doc("bank_accounts", aid, cid)
+                if row:
+                    accounts[aid] = row
+        for coid in contact_ids:
+            if coid and coid not in contacts:
+                row = await _copy_company_doc("contacts", coid, cid)
+                if row:
+                    contacts[coid] = row
+        if invoice_id and invoice_id not in invoices:
+            row = await _copy_company_doc("invoices", invoice_id, cid)
+            if row:
+                invoices[invoice_id] = row
+    return {"accounts": list(accounts.values()), "contacts": list(contacts.values()), "invoices": list(invoices.values())}
+
+
+async def _ensure_company_doc(collection: str, doc: Optional[dict]) -> None:
+    """Anlık görüntüdeki belgeyi dedicated depoya geri yazar."""
+    if not isinstance(doc, dict) or doc.get("_id") is None:
+        return
+    cid = str(doc.get("company_id") or "").strip()
+    payload = dict(doc)
+    if cid:
+        payload["company_id"] = cid
+        current = await db[collection].find_one({"_id": payload["_id"], "company_id": cid})
+        if current:
+            body = {k: v for k, v in payload.items() if k != "_id"}
+            await db[collection].update_one({"_id": payload["_id"], "company_id": cid}, {"$set": body})
+            return
+        await db[collection].insert_one(payload)
+        return
+    # tenant-ok: company_id'siz eski kayıt paylaşılan katalogda durur
+    current = await db[collection].find_one({"_id": payload["_id"]})
+    if not current:
+        await db[collection].insert_one(payload)
+
+
+async def _drop_trash_row(trash_id, company_id) -> None:
+    if not trash_id:
+        return
+    cid = str(company_id or "").strip()
+    if cid:
+        await db.trash.delete_one({"_id": trash_id, "company_id": cid})
+        return
+    # tenant-ok: company_id'siz çöp satırı paylaşılan katalogdadır
+    await db.trash.delete_one({"_id": trash_id})
+
+
+async def _restore_balance_snapshot(snap: Optional[dict]) -> None:
+    if not snap:
+        return
+    for row in snap.get("accounts") or []:
+        await _ensure_company_doc("bank_accounts", row)
+    for row in snap.get("contacts") or []:
+        await _ensure_company_doc("contacts", row)
+    for row in snap.get("invoices") or []:
+        await _ensure_company_doc("invoices", row)
+    for row in snap.get("partners") or []:
+        await _ensure_company_doc("partners", row)
+    for row in snap.get("bank_txs") or []:
+        await _ensure_company_doc("bank_transactions", row)
+
+
+async def _rewind_delete(rows: List[tuple], snap: Optional[dict]) -> None:
+    """Silinen satırları ve bakiye anlık görüntüsünü geri yazar."""
+    try:
+        await _restore_balance_snapshot(snap)
+    except Exception:
+        logger.exception("Bakiye anlık görüntüsü yazılamadı")
+    for collection, doc, trash_id in rows:
+        try:
+            await _ensure_company_doc(collection, doc)
+        except Exception:
+            logger.exception("Silinen kayıt geri yazılamadı")
+        try:
+            await _drop_trash_row(trash_id, (doc or {}).get("company_id") if isinstance(doc, dict) else None)
+        except Exception:
+            logger.exception("Çöp kaydı kaldırılamadı")
+
+
+async def _abort_failed_effect(rows: List[tuple], snap: Optional[dict], exc: BaseException) -> None:
+    """Silme oldu, bakiye yazması patladı: bakiyeyi ve satırı eski haline getir."""
+    logger.exception("Silinen kaydın bakiyesi geri alınamadı")
+    await _rewind_delete(rows, snap)
+    raise HTTPException(status_code=500, detail="Bakiye geri alınamadı; kayıt eski haline getirildi.") from exc
+
+
+async def _snapshot_partner_delete(tx: Dict[str, Any]) -> Dict[str, List[dict]]:
+    """Ortak hareketi silindikten, bakiye tersinden hemen önceki kopyalar."""
+    cid = str(tx.get("company_id") or "").strip()
+    snap: Dict[str, List[dict]] = {"partners": [], "contacts": [], "accounts": [], "bank_txs": []}
+    if not cid:
+        return snap
+    if tx.get("partner_id"):
+        row = await _copy_company_doc("partners", tx.get("partner_id"), cid)
+        if row:
+            snap["partners"].append(row)
+    if tx.get("contact_id"):
+        row = await _copy_company_doc("contacts", tx.get("contact_id"), cid)
+        if row:
+            snap["contacts"].append(row)
+    if _partner_tx_touches_cash(tx) and tx.get("account_id"):
+        acc = await _copy_company_doc("bank_accounts", tx.get("account_id"), cid)
+        if acc:
+            snap["accounts"].append(acc)
+        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"], "company_id": cid})
+        if isinstance(bt, dict):
+            snap["bank_txs"].append(copy.deepcopy(bt))
+    from bank_match_target import resolve_bank_tx_id_for_partner_tx
+    match_id = await resolve_bank_tx_id_for_partner_tx(db, tx)
+    if match_id and all(item.get("_id") != match_id for item in snap["bank_txs"]):
+        match = await _copy_company_doc("bank_transactions", match_id, cid)
+        if match:
+            snap["bank_txs"].append(match)
+    return snap
+
+
 @api_router.delete("/banking/transactions/simulated")
 async def delete_simulated_bank_transactions(company_id: Optional[str] = Query(None), account_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     """Demo/simüle banka senkron hareketlerini toplu sil (bakiyeleri geri al)."""
@@ -13767,17 +13941,18 @@ async def delete_simulated_bank_transactions(company_id: Optional[str] = Query(N
     txs = await db.bank_transactions.find(q).to_list(5000)
     removed = 0
     for tx in txs:
-        try:
-            await _reverse_tx_effects(tx, -1)
-        except Exception:
-            logging.getLogger(__name__).exception("Beklenmeyen hata (server.py)")
-        await trash.soft_delete(
+        tid = await trash.soft_delete(
             "bank_transactions",
             tx,
             "bank_transaction",
             f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺",
             note=f"simüle · {tx.get('account_name')} · {tx.get('date')}",
         )
+        snap = await _snapshot_tx_balances([tx])
+        try:
+            await _reverse_tx_effects(tx, -1)
+        except Exception as exc:
+            await _abort_failed_effect([("bank_transactions", tx, tid)], snap, exc)
         removed += 1
     return {
         "status": "success",
@@ -13837,10 +14012,7 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 _assert_editable_tx(pair)
             except HTTPException:
                 pair = None
-    await _reverse_tx_effects(tx, -1)
-    if pair:
-        await _reverse_tx_effects(pair, -1)
-    await trash.soft_delete(
+    tid = await trash.soft_delete(
         "bank_transactions",
         tx,
         "bank_transaction",
@@ -13848,29 +14020,51 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
         related=related,
         note=f"{tx.get('account_name')} · {tx.get('date')}" + (" · bağlı masraf" if related else ""),
     )
+    pair_tid = None
     if pair:
-        await trash.soft_delete(
-            "bank_transactions",
-            pair,
-            "bank_transaction",
-            f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
-            note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
-        )
-    # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
-    cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
-    cash_accs = []
-    for aid in cash_ids:
-        if not aid:
-            continue
-        acc = await db.bank_accounts.find_one({"_id": aid, "company_id": tx["company_id"]})
-        if acc and str(acc.get("type") or "") == "cash_box":
-            cash_accs.append(acc)
-    if cash_accs:
-        await account_balance.sync_cash_box_balances(db, cash_accs)
-    sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
-    for cid in sync_ids:
-        if cid:
-            await contact_balance.sync_contact_balance(db, cid, company_id=tx.get("company_id") or "")
+        try:
+            pair_tid = await trash.soft_delete(
+                "bank_transactions",
+                pair,
+                "bank_transaction",
+                f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
+                note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
+            )
+        except Exception as exc:
+            rows = [("bank_transactions", tx, tid)]
+            for block in related or []:
+                for rel in block.get("docs") or []:
+                    rows.append((block.get("collection") or "expenses", rel, None))
+            await _rewind_delete(rows, None)
+            raise
+    snap = await _snapshot_tx_balances([tx, pair])
+    try:
+        await _reverse_tx_effects(tx, -1)
+        if pair:
+            await _reverse_tx_effects(pair, -1)
+        # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
+        cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
+        cash_accs = []
+        for aid in cash_ids:
+            if not aid:
+                continue
+            acc = await db.bank_accounts.find_one({"_id": aid, "company_id": tx["company_id"]})
+            if acc and str(acc.get("type") or "") == "cash_box":
+                cash_accs.append(acc)
+        if cash_accs:
+            await account_balance.sync_cash_box_balances(db, cash_accs)
+        sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
+        for cid in sync_ids:
+            if cid:
+                await contact_balance.sync_contact_balance(db, cid, company_id=tx.get("company_id") or "")
+    except Exception as exc:
+        rows = [("bank_transactions", tx, tid)]
+        if pair:
+            rows.append(("bank_transactions", pair, pair_tid))
+        for block in related or []:
+            for rel in block.get("docs") or []:
+                rows.append((block.get("collection") or "expenses", rel, None))
+        await _abort_failed_effect(rows, snap, exc)
     msg = "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."
     if pair and related:
         msg = "Hareket, eş virman satırı ve bağlı masraf çöp kutusuna taşındı; bakiyeler geri alındı."
@@ -14684,17 +14878,11 @@ async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_curren
     tx = await tenant_access.get_tenant_doc(db, "partner_transactions", tx_id, user, not_found="Hareket bulunamadı.")
     linked_moves.assert_not_source_linked(tx)
     related = await _linked_expense_related(tx)
-    # Banka eşleşmesini önce iptal et (partner reverse sonrası orphan match kalmasın)
-    from bank_match_target import clear_bank_match_for_partner_tx
-    bank_unmatched = await clear_bank_match_for_partner_tx(db, tx)
-    await _reverse_partner_tx(tx)
     label = partner_pay.tx_display_label(tx)
     note_bits = [tx.get("date") or ""]
     if related:
         note_bits.append("bağlı masraf")
-    if bank_unmatched:
-        note_bits.append("banka eşleşmesi iptal")
-    await trash.soft_delete(
+    tid = await trash.soft_delete(
         "partner_transactions",
         tx,
         "partner_transaction",
@@ -14702,6 +14890,18 @@ async def delete_partner_transaction(tx_id: str, user: dict = Depends(get_curren
         related=related,
         note=" · ".join(b for b in note_bits if b),
     )
+    snap = await _snapshot_partner_delete(tx)
+    try:
+        # Banka eşleşmesi silme tutunca iptal edilir (partner reverse sonrası orphan match kalmasın)
+        from bank_match_target import clear_bank_match_for_partner_tx
+        bank_unmatched = await clear_bank_match_for_partner_tx(db, tx)
+        await _reverse_partner_tx(tx)
+    except Exception as exc:
+        rows = [("partner_transactions", tx, tid)]
+        for block in related or []:
+            for rel in block.get("docs") or []:
+                rows.append((block.get("collection") or "expenses", rel, None))
+        await _abort_failed_effect(rows, snap, exc)
     msg = "Hareket çöp kutusuna taşındı; ortak"
     if tx.get("contact_id"):
         msg += ", cari"
@@ -18448,6 +18648,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         doc["payment_method"] = pay_method
     if pay_kind:
         doc["payment_type"] = pay_kind
+    stamp_invoice_buyer(doc, contact)
     await db.invoices.insert_one(doc)
     await db.orders.update_one(
         {"_id": order["_id"]},
@@ -19255,6 +19456,7 @@ async def create_dispatch(order_id: str, user: dict = Depends(get_current_user))
            "despatch_carrier_name": defaults.get("carrier_name") or o.get("cargo_carrier") or "",
            "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    stamp_invoice_buyer(doc, contact)
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
@@ -22949,12 +23151,16 @@ async def update_order_status(order_id: str, req: Dict[str, str], user: dict = D
     ops: Dict[str, Any] = {"$set": update}
     if unset:
         ops["$unset"] = unset
-    await db.orders.update_one({"_id": order_id}, ops)
+    # company_id'siz update dedicated siparişi paylaşılan kataloğa yazar ya da kaçırır.
+    order_q: Dict[str, Any] = {"_id": order_id}
+    if order.get("company_id"):
+        order_q["company_id"] = order["company_id"]
+    await db.orders.update_one(order_q, ops)
     settlement_rev = None
     if should_reverse_settlement_on_status(new_status):
-        fresh = await db.orders.find_one({"_id": order_id})
+        fresh = await db.orders.find_one(order_q)
         settlement_rev = await _reverse_marketplace_settlement(fresh or {**order, "order_status": new_status})
-    await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="status")
+    await _push_order_to_shopphp(await db.orders.find_one(order_q) or order, reason="status")
     out = {"status": "success", "order_status": new_status, "draft_invoice_cleared": draft_cleared}
     if draft_cleared:
         out["message"] = "Sipariş beklemeye alındı; bağlı taslak fatura silindi."
@@ -23062,6 +23268,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         new_invoice["payment_method"] = pay_method
     if pay_kind:
         new_invoice["payment_type"] = pay_kind
+    stamp_invoice_buyer(new_invoice, _oc)
     if draft_inv and draft_inv.get("status") == "draft":
         inv_id = draft_inv["_id"]
         invoice_number = draft_inv.get("invoice_number") or invoice_number
