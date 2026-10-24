@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
 
@@ -941,6 +941,148 @@ def changed_since_sql(collection: str, since: Optional[str], company_id: Optiona
     sql += " ORDER BY updated_at ASC, id ASC LIMIT %s"
     args.append(cap + 1)
     return sql, args, parsed, cap
+
+
+# Uygulama saati ile docs.updated_at arasındaki kısa kayma. Aralık indekslidir;
+# deleted_at karşılaştırması Python'da kalır.
+_TOMBSTONE_CLOCK_SLACK = timedelta(seconds=15)
+
+
+def _sync_cap(limit: int) -> int:
+    try:
+        cap = int(limit)
+    except (TypeError, ValueError):
+        cap = 3000
+    if cap < 1:
+        cap = 1
+    if cap > 5000:
+        cap = 5000
+    return cap
+
+
+def deleted_since_sql(
+    entity: str,
+    company_id: str,
+    since: Optional[str],
+    limit: int,
+    after_id: str = "",
+):
+    """sync_tombstones sayfası. idx_docs_coll_company_upd (collection, company_id, updated_at).
+
+    İç koleksiyon JSON'dadır; LIMIT bu süzgeçten sonra uygulanır.
+    İlk sayfanın alt sınırı since'den 15 sn geridedir. Devam sayfası
+    (updated_at, id) anahtar kümesidir. Yeni indeks eklenmez.
+    """
+    cap = _sync_cap(limit)
+    sql = (
+        "SELECT doc, updated_at, id FROM docs "
+        "WHERE collection=%s AND company_id=%s "
+        "AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.collection'))=%s"
+    )
+    args: List[Any] = ["sync_tombstones", str(company_id or ""), str(entity or "")]
+    if len(str(company_id or "")) > 64:
+        sql = (
+            "SELECT doc, updated_at, id FROM docs "
+            "WHERE collection=%s "
+            "AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.company_id'))=%s "
+            "AND JSON_UNQUOTE(JSON_EXTRACT(doc, '$.collection'))=%s"
+        )
+    parsed = parse_ts(since)
+    if after_id and parsed is not None:
+        sql += " AND (updated_at > %s OR (updated_at = %s AND id > %s))"
+        args.extend([parsed, parsed, str(after_id)])
+    elif parsed is not None:
+        sql += " AND updated_at >= %s"
+        args.append(parsed - _TOMBSTONE_CLOCK_SLACK)
+    sql += " ORDER BY updated_at ASC, id ASC LIMIT %s"
+    args.append(cap + 1)
+    return sql, args, cap
+
+
+def _tombstone_row(row) -> Tuple[dict, str, str]:
+    doc = loads(row[0]) if not isinstance(row[0], dict) else row[0]
+    stamp = iso_ts(row[1])
+    row_id = str(row[2] if len(row) > 2 else doc.get("_id") or "")
+    return doc, stamp, row_id
+
+
+def _tombstone_keep(doc: dict, since: str) -> bool:
+    deleted = doc.get("deleted_at") if isinstance(doc, dict) else None
+    if not isinstance(deleted, str) or not deleted:
+        return False
+    if not since:
+        return True
+    return _cmp(deleted, since) >= 0
+
+
+def _doc_ids(docs) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for doc in docs or []:
+        ident = doc.get("doc_id") if isinstance(doc, dict) else None
+        if not ident:
+            continue
+        text = str(ident)
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def walk_tombstones(fetch, since: str, cap: int, hops: int = 8):
+    """fetch(after_stamp, after_id) -> en fazla cap+1 satır.
+
+    after_id boşsa ilk pencere. Doluysa anahtar kümesiyle devam.
+    Eksik sayfa KeyError((stamp, after_id)) fırlatır.
+    Aynı updated_at grubu bölünmez. İmleç bir sonraki damgadır.
+    """
+    cap = _sync_cap(cap)
+    since_text = str(since or "")
+    collected: List[dict] = []
+    seen_docs = set()
+    after_stamp = since_text
+    after_id = ""
+    last_kept = ""
+    for _ in range(hops):
+        loaded = [_tombstone_row(row) for row in (fetch(after_stamp, after_id) or [])]
+        if not loaded:
+            return _doc_ids(collected), False, None
+        for doc, stamp, row_id in loaded:
+            after_stamp = stamp
+            after_id = row_id
+            if not _tombstone_keep(doc, since_text):
+                continue
+            ident = str(doc.get("doc_id") or "")
+            if not ident or ident in seen_docs:
+                continue
+            if len(collected) >= cap and stamp != last_kept:
+                return _doc_ids(collected), True, stamp
+            seen_docs.add(ident)
+            collected.append(doc)
+            last_kept = stamp
+        if len(loaded) <= cap:
+            return _doc_ids(collected), False, None
+    if last_kept and after_stamp == last_kept:
+        return _doc_ids(collected), False, None
+    if after_stamp and after_stamp != since_text:
+        return _doc_ids(collected), True, after_stamp
+    return _doc_ids(collected), False, None
+
+
+def _tombstone_ids(rows) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for doc, _stamp, _row_id in rows or []:
+        ident = doc.get("doc_id")
+        if not ident:
+            continue
+        text = str(ident)
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
 
 
 def _materialize_changed(rows, since, limit: int, parsed):
@@ -2672,6 +2814,62 @@ class MySQLCollection:
         )
         _emit_sql_slot(0)
         return docs, cursor, more
+
+    async def deleted_since(self, collection_name, company_id, since, limit: int = 3000):
+        """Silinen kayıtlar. Paylaşılan docs: updated_at aralığı, JSON koleksiyon, LIMIT.
+
+        Dedicated ve shared_v2 kendi deleted_since / find yoluna gider.
+        Dönüş: (doc_id listesi, devam var mı, sonraki since).
+        """
+        entity = str(collection_name or "")
+        cid = str(company_id or "")
+        _guard(self.name, "find", query={"company_id": cid, "collection": entity})
+        if cid:
+            routed = await _route_read(self, {"company_id": cid})
+            if routed is not None:
+                reader = getattr(routed, "deleted_since", None)
+                if reader is not None:
+                    result = reader(entity, cid, since, limit)
+                    if hasattr(result, "__await__"):
+                        result = await result
+                    return result
+                tombs = await routed.find({
+                    "collection": entity,
+                    "company_id": cid,
+                    "deleted_at": {"$gte": since},
+                }).to_list(limit)
+                return _tombstone_ids([
+                    (tomb if isinstance(tomb, dict) else {}, "", "") for tomb in (tombs or [])
+                ]), False, None
+            await _block_shared_copy(self, query={"company_id": cid}, write=False)
+        if not cid:
+            return [], False, None
+        return await self._deleted_since_indexed(entity, cid, since, limit)
+
+    async def _deleted_since_indexed(self, entity: str, company_id: str, since, limit: int):
+        cap = _sync_cap(limit)
+        store: Dict[tuple, list] = {}
+
+        async def ensure(stamp: str, after_id: str) -> None:
+            key = (stamp, after_id)
+            if key in store:
+                return
+            sql, args, _cap = deleted_since_sql(entity, company_id, stamp, cap, after_id=after_id)
+            store[key] = await self._fetch_rows(sql, args)
+
+        for _ in range(8):
+            try:
+                return walk_tombstones(lambda stamp, after_id: store[(stamp, after_id)], since, cap)
+            except KeyError as exc:
+                missing = exc.args[0] if exc.args else (str(since or ""), "")
+                if isinstance(missing, tuple) and len(missing) == 2:
+                    stamp, after_id = str(missing[0]), str(missing[1])
+                else:
+                    stamp, after_id = str(missing), ""
+                if (stamp, after_id) in store:
+                    break
+                await ensure(stamp, after_id)
+        return [], False, None
 
     async def count_documents(self, query: Optional[dict] = None):
         _guard(self.name, "count_documents", query=query)
