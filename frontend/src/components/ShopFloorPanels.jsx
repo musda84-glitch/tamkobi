@@ -118,7 +118,7 @@ export function DrawingViewer({ title, filename, expiresIn, url, contentType, on
       <div className="flex flex-1 items-center justify-center overflow-auto p-4">
         {url ? (
           image ? (
-            <img src={url} alt={filename || "Teknik çizim"} style={{ transform: `scale(${zoom})`, maxWidth: "100%", maxHeight: "100%" }} data-testid="shopfloor-drawing-image" />
+            <img src={url} alt={filename || "Teknik çizim"} width={1280} height={1280} decoding="async" style={{ transform: `scale(${zoom})`, maxWidth: "100%", maxHeight: "100%" }} data-testid="shopfloor-drawing-image" />
           ) : (
             <iframe title={filename || "Teknik çizim"} src={url} className="h-full w-full bg-white" style={{ transform: `scale(${zoom})` }} data-testid="shopfloor-drawing-frame" />
           )

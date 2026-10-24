@@ -258,6 +258,20 @@ def list_collections(company_id: str, dsn: str) -> list[str]:
     return sorted({str(row[0]) for row in rows if row and row[0]})
 
 
+def _mysql_dsn(dsn: str) -> bool:
+    text = str(dsn or "").lower()
+    return text.startswith("mysql") or text.startswith("mariadb")
+
+
+async def list_collections_async(company_id: str, dsn: str) -> list[str]:
+    """Koleksiyon adları. MySQL döngünün dışında. Belge gövdesi okunmaz."""
+    if not _mysql_dsn(dsn):
+        return list_collections(company_id, dsn)
+    import platform_lease
+
+    return await platform_lease.call_blocking(list_collections, company_id, dsn)
+
+
 def checkout(company_id: str, dsn: str) -> _Pool:
     cid = str(company_id or "").strip()
     add_secret(dsn)
@@ -976,8 +990,7 @@ class DedicatedCollection(StorageCollection):
         return self._fetch_sql(session, plan.sql, plan.args)
 
     def _use_thread(self) -> bool:
-        text = str(self._dsn or "").lower()
-        return text.startswith("mysql") or text.startswith("mariadb")
+        return _mysql_dsn(self._dsn)
 
     async def _run_async(self, fn):
         """MySQL okuması döngünün dışında. SQLite testi aynı iş parçacığında kalır.
@@ -1276,6 +1289,37 @@ class DedicatedCollection(StorageCollection):
             return payload
         docs = await materialize_docs_async(payload, query)
         return len(docs)
+
+    async def measure_volume(self, company_id: str, *, with_bytes: bool = True):
+        """Periyodik hacim. COUNT ve gerekirse LENGTH toplamı. Satır dönmez.
+
+        Taşıma ve checksum bu metodu kullanmaz; onlar belgeyi olduğu gibi okur.
+        MySQL çağrısı _run_async ile döngünün dışındadır.
+        """
+        cid = str(company_id or "")
+        self._guard("count_documents", query={"company_id": cid})
+        if storage_router.canonical_company_id(cid) != self.company_id:
+            return (0, 0)
+        if with_bytes:
+            sql = (
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(doc)), 0) "
+                "FROM storage_records WHERE collection = ? AND company_id = ?"
+            )
+        else:
+            sql = (
+                "SELECT COUNT(*) FROM storage_records "
+                "WHERE collection = ? AND company_id = ?"
+            )
+
+        def work(session):
+            rows = self._fetch_sql(session, sql, [self.name, self.company_id])
+            if not rows:
+                return (0, 0)
+            count = int(rows[0][0] or 0)
+            nbytes = int(rows[0][1] or 0) if with_bytes else 0
+            return (count, nbytes)
+
+        return await self._run_async(work)
 
     async def distinct(self, key, query=None):
         self._guard("distinct", query=query)

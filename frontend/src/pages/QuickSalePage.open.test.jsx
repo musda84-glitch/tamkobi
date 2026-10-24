@@ -38,8 +38,15 @@ jest.mock("../components/CameraScanner", () => ({
 }));
 jest.mock("../components/ScalePromptModal", () => ({ ScalePromptModal: () => null }));
 jest.mock("../utils/thermalReceipt", () => ({ printThermalReceipt: jest.fn() }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
-jest.mock("../utils/productImages", () => ({ productListImageUrl: () => "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
+jest.mock("../utils/productImages", () => ({
+  productListImageUrl: () => "",
+  productCardImageUrl: (p) => (p && p.image_url) || "",
+}));
 jest.mock("react-router-dom", () => ({
   useSearchParams: () => {
     const bag = globalThis.__qs || { params: new URLSearchParams(), set: jest.fn() };

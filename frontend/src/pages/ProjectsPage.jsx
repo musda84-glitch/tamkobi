@@ -374,13 +374,19 @@ export default function ProjectsPage({ section } = {}) {
     }
   }, [companyId, contacts]);
 
-  const openPrintQuote = async (q) => {
-    try {
-      const r = await axios.get(`${API_URL}/quotes/${q.id || q._id}`);
-      setPrintDoc({ type: "quote", doc: r.data });
-    } catch {
-      setPrintDoc({ type: "quote", doc: q });
-    }
+  const openPrintQuote = (q) => {
+    if (!q) return;
+    const id = q.id || q._id;
+    setPrintDoc({ type: "quote", doc: q });
+    if (!id) return;
+    axios.get(`${API_URL}/quotes/${id}`).then((r) => {
+      setPrintDoc((cur) => {
+        if (!cur || cur.type !== "quote") return cur;
+        const curId = cur.doc?.id || cur.doc?._id;
+        if (curId !== id) return cur;
+        return { type: "quote", doc: r.data || q };
+      });
+    }).catch(() => {});
   };
   const quotesForProject = (project) => {
     const pid = project?.id || project?._id;

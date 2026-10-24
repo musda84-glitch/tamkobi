@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { listImageUrl, resolveImageUrl } from "./imageUrl";
+import { cardThumbUrl, listImageUrl, listThumbUrl, resolveImageUrl } from "./imageUrl";
 
 jest.mock("../api/client", () => ({
   BACKEND_URL: "",
@@ -44,6 +44,21 @@ describe("resolveImageUrl", () => {
     );
     expect(listImageUrl("/api/files/tamkobi/products/a.w64.webp", 64)).toBe(
       "/api/files/tamkobi/products/a.w64.webp",
+    );
+  });
+
+  test("list and card thumbs request 200 and 600", () => {
+    expect(listThumbUrl("/api/files/tamkobi/products/a.webp")).toBe(
+      "/api/files/tamkobi/products/a.webp?w=200",
+    );
+    expect(cardThumbUrl("/api/files/tamkobi/products/a.webp")).toBe(
+      "/api/files/tamkobi/products/a.webp?w=600",
+    );
+    expect(listThumbUrl("/api/files/tamkobi/products/a.w200.webp")).toBe(
+      "/api/files/tamkobi/products/a.w200.webp",
+    );
+    expect(listThumbUrl("/api/files/tamkobi/accounts/a/products/p.jpg?t=tok")).toBe(
+      "/api/files/tamkobi/accounts/a/products/p.jpg?t=tok&w=200",
     );
   });
 });

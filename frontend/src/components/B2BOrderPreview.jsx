@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { Eye, Printer, X, Package } from "lucide-react";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { Barcode } from "./BarcodeLabelPrint";
 import { statusTr } from "../utils/labels";
@@ -81,7 +81,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
               return (
                 <div key={it.product_id || i} className="p-3 flex gap-3 items-start bg-white" data-testid={`b2b-preview-line-${i}`}>
                   <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg border bg-slate-50 overflow-hidden shrink-0 flex items-center justify-center">
-                    {img ? <img src={resolveImageUrl(img)} alt="" className="w-full h-full object-contain" /> : <Package className="w-6 h-6 text-slate-300" />}
+                    {img ? <img src={listThumbUrl(img)} alt="" width={80} height={80} loading="lazy" decoding="async" className="w-full h-full object-contain" /> : <Package className="w-6 h-6 text-slate-300" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>

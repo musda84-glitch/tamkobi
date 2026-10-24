@@ -27,7 +27,11 @@ jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
   useAuth: () => ({ activeCompany: { id: "c1" } }),
 }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/modalBackdrop", () => ({ backdropDismissProps: () => ({}) }));
 jest.mock("./ProductDetailModal", () => ({
   ProductDetailModal: ({ product }) => <div data-testid="product-detail-modal">{product.name}</div>,
