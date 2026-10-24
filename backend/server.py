@@ -237,6 +237,7 @@ import ubl_export
 import dispatch_invoice
 import edoc_backup
 import data_sync
+import json_offload
 import setup_install
 import db_admin
 
@@ -749,6 +750,9 @@ class _MaintenanceWriteGuard(BaseHTTPMiddleware):
 
 
 app.user_middleware.append(Middleware(_MaintenanceWriteGuard))
+# En iç katman: BaseHTTPMiddleware görevine girildikten sonra HTTP işareti yazılır.
+# add_middleware bunu CORS'un dışına alırdı.
+app.user_middleware.append(Middleware(json_offload.OffloadJSONMark))
 
 
 @app.exception_handler(__import__("storage_router").StorageWriteLocked)
@@ -4701,7 +4705,7 @@ async def dashboard_overview_payload(company_id: str):
 @api_router.get("/dashboard/overview")
 async def dashboard_overview(company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     cid = tenant_access.resolve_company_id(user, company_id)
-    return await dashboard_overview_payload(cid)
+    return await json_offload.maybe_offload(await dashboard_overview_payload(cid))
 
 
 def _stock_alert_min(p: dict) -> float:
@@ -5392,7 +5396,7 @@ async def search_contacts_api(
     rates = await _latest_fx_rates(company_id, fx_codes)
     contact_balance.stamp_search_balances(found["items"], rates)
     contact_balance.stamp_search_balances(found.get("suggestions") or [], rates)
-    return {
+    return await json_offload.maybe_offload({
         "items": clean_docs(found["items"]),
         "suggestions": clean_docs(found.get("suggestions") or []),
         "suggest_query": found.get("suggest_query") or "",
@@ -5400,7 +5404,7 @@ async def search_contacts_api(
         "page": found["page"],
         "limit": found["limit"],
         "has_more": found["has_more"],
-    }
+    })
 
 
 async def _sync_contact_tax_from_sales_invoice(invoice_type, contact_id, tax_id, tax_office, contact=None, company_id=None):
@@ -8114,7 +8118,7 @@ async def list_products(
     """
     cid = tenant_access.resolve_company_id(user, company_id)
     if page is not None or page_size is not None:
-        return await product_list_page.list_products_for_user(
+        return await json_offload.maybe_offload(await product_list_page.list_products_for_user(
             db,
             user,
             cid,
@@ -8137,7 +8141,7 @@ async def list_products(
             export=export,
             clean=clean_docs,
             decorate_page=_products_page_decorate,
-        )
+        ))
     query = {"company_id": cid}
     if b2b_only:
         query.update(
@@ -8173,13 +8177,15 @@ async def list_products(
     key_count = len(id_list) + len(sku_list)
     limit = min(max(key_count, 1), 500) if keyed else (5000 if lite else 10000)
     if keyed and key_count < 1:
-        return []
+        return await json_offload.maybe_offload([])
     products = await db.products.find(query, proj).to_list(limit if keyed else (5000 if lite else 10000))
     if lite:
         # Maliyet / son alış taranmaz — web liste ve mobil ilk boya hızı için.
-        return [clean_doc(p) for p in products]
+        return await json_offload.maybe_offload([clean_doc(p) for p in products])
     cost_map = await _purchase_costs_by_product(cid) if products else {}
-    return [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
+    return await json_offload.maybe_offload(
+        [_with_purchase_costs(p, cost_map.get(p.get("_id") or p.get("id")) or []) for p in products]
+    )
 
 
 def _reorder_qty(p: dict) -> float:
@@ -13307,7 +13313,7 @@ async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int =
                 row["current_balance"] = shown[aid]
     if want_month:
         await bank_rematch.attach_month_totals(db, cid or "", out)
-    return out
+    return await json_offload.maybe_offload(out)
 
 
 async def _can_read_reconciliation(user: dict, company_id: Optional[str] = None) -> bool:

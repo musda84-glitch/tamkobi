@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+import json_offload
 import tenant_access
 from mysql_store import iso_ts, parse_ts
 
@@ -121,10 +122,10 @@ async def incremental_sync(
             "more": more,
             "complete": full,
         }
-    return {
+    return await json_offload.maybe_offload({
         "company_id": cid,
         "since": None if full else since,
         "server_time": iso_ts(_now()),
         "full": full,
         "collections": out,
-    }
+    })
