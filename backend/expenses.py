@@ -151,11 +151,14 @@ async def next_msr_number(db, company_id: str) -> str:
     """
     year = datetime.now(timezone.utc).strftime("%Y")
     key = f"MSR-{year}-{company_id}"
-    if not await db.counters.find_one({"_id": key}):
+    private = account_balance.uses_private_store(db, company_id)
+    query = {"_id": key, "company_id": company_id} if private else {"_id": key}
+    if not await db.counters.find_one(query):
         seed = await _max_msr_seq(db, company_id, year)
-        await db.counters.update_one({"_id": key}, {"$setOnInsert": {"seq": seed}}, upsert=True)
+        insert = {"seq": seed, "company_id": company_id} if private else {"seq": seed}
+        await db.counters.update_one(query, {"$setOnInsert": insert}, upsert=True)
     doc = await db.counters.find_one_and_update(
-        {"_id": key}, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
+        query, {"$inc": {"seq": 1}}, upsert=True, return_document=True,
     )
     seq = int((doc or {}).get("seq") or 1)
     return f"MSR-{year}-{seq:04d}"
@@ -320,8 +323,33 @@ async def record_card_spend(
     }
     await _db.expenses.insert_one(doc)
     if cat not in DEFAULT_CATEGORIES:
-        await add_category_for_company(company_id, cat)
+        try:
+            await add_category_for_company(company_id, cat)
+        except Exception:
+            await _db.expenses.delete_one({"_id": doc["_id"], "company_id": company_id})
+            raise
     return _clean(doc)
+
+
+async def detach_bank_match_expense(exp: dict, *, company_id: str) -> None:
+    """Banka eşleşmesinden doğan masraf silinince satırdaki masraf bağını kaldır."""
+    if (exp or {}).get("source") != "bank_match":
+        return
+    cid = str(company_id or "").strip()
+    if not cid or _db is None:
+        return
+    unset = {"expense_id": "", "expense_number": "", "pos_commission": ""}
+    bt_id = exp.get("bank_transaction_id")
+    if bt_id:
+        await _db.bank_transactions.update_one(
+            {"_id": bt_id, "company_id": cid},
+            {"$unset": unset},
+        )
+        return
+    await _db.bank_transactions.update_one(
+        {"expense_id": exp.get("_id"), "company_id": cid},
+        {"$unset": unset},
+    )
 
 
 async def add_category_for_company(cid: str, name: str):
@@ -576,6 +604,7 @@ async def delete_expense(expense_id: str, user: dict = Depends(_user_dep)):
     had_partner = bool(await _db.partner_transactions.find_one({"expense_id": expense_id, "company_id": cid}))
     if exp.get("payment_status") == "paid":
         await _reverse_payment(exp, company_id=cid)  # ortak / kasa karşılığını siler, bakiyeleri geri alır
+    await detach_bank_match_expense(exp, company_id=cid)
     import trash
     note = f"{float(exp.get('total') or 0):,.2f} ₺ · {exp.get('payment_status')}"
     if had_partner:

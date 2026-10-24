@@ -338,6 +338,12 @@ export function BankingMatchPanel({
           {!matched.length ? <Muted>Henüz eşleştirilmiş hareket yok.</Muted> : matched.map((t) => {
             const matchedId = idOf(t);
             const expenseNo = String(t.expense_number || "").trim();
+            const showPosExpense = Boolean(
+              expenseNo
+              || t.expense_id
+              || t.pos_commission === 0
+              || t.pos_commission,
+            );
             return (
               <View key={matchedId}>
                 <ListRow
@@ -358,9 +364,11 @@ export function BankingMatchPanel({
                     <View style={{ alignSelf: "flex-start", backgroundColor: colors.amber50, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
                       <Text testID={`matched-pos-chip-${matchedId}`} style={{ color: "#92400E", fontSize: 11, fontWeight: "800" }}>POS bloke</Text>
                     </View>
-                    <Text testID={`matched-pos-expense-${matchedId}`} style={{ color: colors.muted, fontSize: 12 }}>
-                      {`↳ Masraf · POS komisyonu${expenseNo ? ` (${expenseNo})` : ""}  ${formatTrAmount(t.pos_commission || 0)}`}
-                    </Text>
+                    {showPosExpense ? (
+                      <Text testID={`matched-pos-expense-${matchedId}`} style={{ color: colors.muted, fontSize: 12 }}>
+                        {`↳ Masraf · POS komisyonu${expenseNo ? ` (${expenseNo})` : ""}  ${formatTrAmount(t.pos_commission || 0)}`}
+                      </Text>
+                    ) : null}
                   </View>
                 ) : null}
               </View>

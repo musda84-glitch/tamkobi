@@ -11,11 +11,19 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 
+import account_balance
 import expenses
 
 _POS_TYPES = ("pos", "okc_pos")
 _TOL = 0.005
 _DEFAULT_CATEGORY = "POS Komisyonu"
+
+
+class SettlementBusy(HTTPException):
+    """Aynı banka hareketi için ikinci karşı kayıt. Çağıran bakiyeyi geri almaz."""
+
+    def __init__(self) -> None:
+        super().__init__(status_code=409, detail="Bu bloke çözümü zaten işleniyor.")
 
 
 def _money(value: Any, label: str) -> float:
@@ -101,15 +109,26 @@ async def annotate(db, company_id: str, txs: list) -> list:
 
 
 async def _restore_pos(db, cid: str, pos_id: str, gross: float, counter_id: Optional[str]) -> None:
-    await db.bank_accounts.update_one(
-        {"_id": pos_id, "company_id": cid},
-        {"$inc": {"current_balance": gross}},
-    )
+    await account_balance.apply_balance_delta(db, pos_id, gross, company_id=cid)
     if counter_id:
         await db.bank_transactions.delete_one({"_id": counter_id, "company_id": cid})
 
 
-async def apply(
+async def _counters(db, cid: str, tx_id, pos_id: str) -> list:
+    rows = await db.bank_transactions.find({
+        "company_id": cid,
+        "source": "bank_match",
+        "related_bank_tx_id": tx_id,
+        "account_id": pos_id,
+    }).to_list(10)
+    return [row for row in rows or [] if isinstance(row, dict)]
+
+
+def _deleted(result) -> bool:
+    return int(getattr(result, "deleted_count", 0) or 0) == 1
+
+
+async def validate(
     db,
     tx: dict,
     *,
@@ -117,14 +136,8 @@ async def apply(
     gross,
     commission,
     category,
-    actor,
 ) -> dict:
-    """POS bakiyesini düşür, karşı hareketi ve tek komisyon masrafını yaz.
-
-    Dönüş, banka hareketine yazılacak alanlardır. Banka bakiyesine dokunmaz.
-    actor eşleşme kaydına burada yazılmaz (çağıran matched_by alanlarını kurar).
-    """
-    del actor
+    """Yazmadan önce tutar, hesap, entegrasyon ve para birimi. Bakiye $inc yok."""
     cid = _company_id(tx)
     if not cid:
         raise HTTPException(status_code=400, detail="Şirket bilgisi eksik.")
@@ -154,13 +167,115 @@ async def apply(
         raise HTTPException(status_code=404, detail="POS hesabı bulunamadı.")
     if account.get("type") not in _POS_TYPES:
         raise HTTPException(status_code=400, detail="POS bloke çözümü yalnızca POS hesabına uygulanabilir.")
-    pos_name = account.get("account_name") or "POS"
+    if await account_balance.account_is_integrated(db, pos_id, company_id=cid):
+        raise HTTPException(
+            status_code=400,
+            detail="Entegre POS hesabının bakiyesi bankadan gelir; bloke çözümü uygulanamaz.",
+        )
+    tx_ccy = str(tx.get("currency") or "TRY").upper()
+    acc_ccy = str(account.get("currency") or "TRY").upper()
+    if tx_ccy != acc_ccy:
+        raise HTTPException(status_code=400, detail="POS hesabı ile banka hareketinin para birimi farklı.")
+    existing = await _counters(db, cid, tx.get("_id"), pos_id)
     # Eşik kayıtlı current_balance'dır. Liste örtüsü yalnız gösterimdir.
-    updated = await db.bank_accounts.update_one(
-        {"_id": pos_id, "company_id": cid, "type": {"$in": ["pos", "okc_pos"]}, "current_balance": {"$gte": gross_v}},
-        {"$inc": {"current_balance": -gross_v}},
+    stored = round(float(account.get("current_balance") or 0), 2)
+    if not existing and stored + _TOL < gross_v:
+        raise HTTPException(status_code=400, detail="Brüt tutar POS bakiyesini aşıyor.")
+    return {
+        "cid": cid,
+        "pos_id": pos_id,
+        "gross": gross_v,
+        "commission": commission_v,
+        "category": cat,
+        "pos_name": account.get("account_name") or "POS",
+        "net": net,
+        "existing": bool(existing),
+    }
+
+
+def _match_fields(prepared: dict, *, expense_id=None, expense_number=None) -> dict:
+    fields = {
+        "match_kind": "pos_settlement",
+        "target_account_id": prepared["pos_id"],
+        "target_account_name": prepared["pos_name"],
+        "pos_gross": prepared["gross"],
+        "pos_commission": prepared["commission"],
+        "category": prepared["category"],
+    }
+    if expense_id:
+        fields["expense_id"] = expense_id
+    if expense_number:
+        fields["expense_number"] = expense_number
+    return fields
+
+
+async def _commission_expense(db, cid: str, tx: dict, prepared: dict):
+    if prepared["commission"] <= 0:
+        return None, None
+    existing = await db.expenses.find_one({
+        "company_id": cid,
+        "source": "bank_match",
+        "bank_transaction_id": tx.get("_id"),
+    })
+    if existing and existing.get("_id"):
+        return existing.get("_id"), existing.get("expense_number")
+    exp = await expenses.record_card_spend(
+        cid,
+        date=(tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+        category=prepared["category"],
+        description="POS komisyonu",
+        amount=prepared["commission"],
+        account_id=prepared["pos_id"],
+        account_name=prepared["pos_name"],
+        bank_tx_id=tx.get("_id"),
+        source="bank_match",
     )
-    if int(getattr(updated, "modified_count", 0) or 0) == 0:
+    exp_id = (exp or {}).get("id") or (exp or {}).get("_id")
+    exp_number = (exp or {}).get("expense_number")
+    if not exp_id:
+        raise HTTPException(status_code=400, detail="POS komisyon masrafı kaydedilemedi.")
+    return exp_id, exp_number
+
+
+async def apply(
+    db,
+    tx: dict,
+    *,
+    pos_account_id,
+    gross,
+    commission,
+    category,
+    actor,
+) -> dict:
+    """POS bakiyesini düşür, karşı hareketi ve tek komisyon masrafını yaz.
+
+    Dönüş, banka hareketine yazılacak alanlardır. Banka bakiyesine dokunmaz.
+    actor eşleşme kaydına burada yazılmaz (çağıran matched_by alanlarını kurar).
+    """
+    del actor
+    prepared = await validate(
+        db, tx,
+        pos_account_id=pos_account_id,
+        gross=gross,
+        commission=commission,
+        category=category,
+    )
+    cid = prepared["cid"]
+    pos_id = prepared["pos_id"]
+    gross_v = prepared["gross"]
+    if prepared.get("existing"):
+        exp_id, exp_number = await _commission_expense(db, cid, tx, prepared)
+        return _match_fields(prepared, expense_id=exp_id, expense_number=exp_number)
+    posted = await account_balance.apply_capped_balance_delta(
+        db, pos_id, -gross_v, company_id=cid, floor=gross_v,
+        match={"type": {"$in": list(_POS_TYPES)}},
+    )
+    if posted == "integrated":
+        raise HTTPException(
+            status_code=400,
+            detail="Entegre POS hesabının bakiyesi bankadan gelir; bloke çözümü uygulanamaz.",
+        )
+    if posted != "posted":
         raise HTTPException(status_code=400, detail="Brüt tutar POS bakiyesini aşıyor.")
     counter_id = str(uuid.uuid4())
     bank_name = tx.get("account_name") or "Banka"
@@ -169,12 +284,12 @@ async def apply(
             "_id": counter_id,
             "company_id": cid,
             "account_id": pos_id,
-            "account_name": pos_name,
+            "account_name": prepared["pos_name"],
             "type": "outflow",
-            "category": cat,
+            "category": prepared["category"],
             "amount": gross_v,
             "currency": tx.get("currency") or "TRY",
-            "description": f"{bank_name} ← {pos_name}: POS bloke çözümü",
+            "description": f"{bank_name} ← {prepared['pos_name']}: POS bloke çözümü",
             "source": "bank_match",
             "related_bank_tx_id": tx.get("_id"),
             "date": tx.get("date"),
@@ -183,65 +298,53 @@ async def apply(
     except Exception:
         await _restore_pos(db, cid, pos_id, gross_v, None)
         raise
-    exp_id = None
-    exp_number = None
-    if commission_v > 0:
-        try:
-            exp = await expenses.record_card_spend(
-                cid,
-                date=(tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
-                category=cat,
-                description="POS komisyonu",
-                amount=commission_v,
-                account_id=pos_id,
-                account_name=pos_name,
-                bank_tx_id=tx.get("_id"),
-                source="bank_match",
-            )
-        except Exception:
-            await _restore_pos(db, cid, pos_id, gross_v, counter_id)
-            raise
-        exp_id = (exp or {}).get("id") or (exp or {}).get("_id")
-        exp_number = (exp or {}).get("expense_number")
-        if not exp_id:
-            await _restore_pos(db, cid, pos_id, gross_v, counter_id)
-            raise HTTPException(status_code=400, detail="POS komisyon masrafı kaydedilemedi.")
-    fields = {
-        "match_kind": "pos_settlement",
-        "target_account_id": pos_id,
-        "target_account_name": pos_name,
-        "pos_gross": gross_v,
-        "pos_commission": commission_v,
-        "category": cat,
-    }
-    if exp_id:
-        fields["expense_id"] = exp_id
-    if exp_number:
-        fields["expense_number"] = exp_number
-    return fields
+    rows = await _counters(db, cid, tx.get("_id"), pos_id)
+    if len(rows) > 1:
+        deleted = await db.bank_transactions.delete_one({"_id": counter_id, "company_id": cid})
+        if _deleted(deleted):
+            await account_balance.apply_balance_delta(db, pos_id, gross_v, company_id=cid)
+        raise SettlementBusy()
+    try:
+        exp_id, exp_number = await _commission_expense(db, cid, tx, prepared)
+    except Exception:
+        await _restore_pos(db, cid, pos_id, gross_v, counter_id)
+        raise
+    return _match_fields(prepared, expense_id=exp_id, expense_number=exp_number)
 
 
 async def reverse(db, tx: dict) -> None:
-    """POS bakiyesini, karşı hareketi ve bağlı masrafı geri alır."""
+    """Karşı kaydı silinen satır kadar iade eder. İkinci çağrı bakiye yazmaz."""
     cid = _company_id(tx)
     if not cid:
         raise HTTPException(status_code=400, detail="Şirket bilgisi eksik.")
-    gross_v = 0.0
-    if tx.get("pos_gross") not in (None, ""):
-        gross_v = _money(tx.get("pos_gross"), "Brüt tutar")
-    pos_id = str(tx.get("target_account_id") or "").strip()
-    if pos_id and gross_v > 0:
-        await db.bank_accounts.update_one(
-            {"_id": pos_id, "company_id": cid},
-            {"$inc": {"current_balance": gross_v}},
-        )
-    counter = await db.bank_transactions.find_one({
-        "related_bank_tx_id": tx.get("_id"),
-        "company_id": cid,
-        "source": "bank_match",
-    })
-    if counter and counter.get("_id"):
-        await db.bank_transactions.delete_one({"_id": counter["_id"], "company_id": cid})
+    seen = set()
+    while len(seen) < 20:
+        counter = await db.bank_transactions.find_one({
+            "related_bank_tx_id": tx.get("_id"),
+            "company_id": cid,
+            "source": "bank_match",
+        })
+        if not counter or not counter.get("_id") or counter["_id"] in seen:
+            break
+        seen.add(counter["_id"])
+        deleted = await db.bank_transactions.delete_one({"_id": counter["_id"], "company_id": cid})
+        if not _deleted(deleted):
+            continue
+        try:
+            amount = round(float(counter.get("amount") or 0), 2)
+        except (TypeError, ValueError):
+            amount = 0.0
+        pos_id = str(counter.get("account_id") or "").strip()
+        if pos_id and amount > 0:
+            await account_balance.apply_balance_delta(db, pos_id, amount, company_id=cid)
     expense_id = tx.get("expense_id")
     if expense_id:
         await db.expenses.delete_one({"_id": expense_id, "company_id": cid})
+        return
+    exp = await db.expenses.find_one({
+        "company_id": cid,
+        "source": "bank_match",
+        "bank_transaction_id": tx.get("_id"),
+    })
+    if exp and exp.get("_id"):
+        await db.expenses.delete_one({"_id": exp["_id"], "company_id": cid})

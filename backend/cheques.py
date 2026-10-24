@@ -661,6 +661,17 @@ async def _unwind_bank(cheque_id: str, *, company_id: str):
                 _db, tx["account_id"], change, company_id=cid,
             )
         await _db.bank_transactions.delete_one({"_id": tx["_id"], "company_id": cid})
+    legs = await _db.partner_transactions.find({"cheque_id": cheque_id, "company_id": cid}).to_list(20)
+    for leg in legs or []:
+        if not isinstance(leg, dict) or not leg.get("_id"):
+            continue
+        inc = partner_pay.posting_inc(leg)
+        if leg.get("partner_id") and inc:
+            await _db.partners.update_one(
+                {"_id": leg["partner_id"], "company_id": cid},
+                {"$inc": {key: -float(value) for key, value in inc.items()}},
+            )
+        await _db.partner_transactions.delete_one({"_id": leg["_id"], "company_id": cid})
 
 
 def _open_only(doc: dict):

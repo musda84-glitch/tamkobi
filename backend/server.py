@@ -5437,7 +5437,7 @@ async def update_contact(contact_id: str, updated: Dict[str, Any], user: dict = 
 @api_router.delete("/contacts/{contact_id}")
 async def delete_contact(contact_id: str, user: dict = Depends(get_current_user)):
     c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
-    counts = await contact_activity.contact_activity_counts(db, contact_id)
+    counts = await contact_activity.contact_activity_counts(db, contact_id, c.get("company_id"))
     msg = contact_activity.activity_block_message(counts, balance=c.get("balance") or 0)
     if msg:
         raise HTTPException(status_code=400, detail=msg)
@@ -14222,6 +14222,50 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any], user: dict = 
         raise
     return clean_doc(await db.bank_transactions.find_one({"_id": tx_id, "company_id": tx["company_id"]}))
 
+async def _match_pairs_for_tx(tx: Dict[str, Any]):
+    """Silinen hareketin bank_match karşı kayıtları, bağlı banka satırı ve POS masrafı.
+
+    _linked_expense_related company_id'siz _id okumasını burada değiştirmez.
+    """
+    cid = str((tx or {}).get("company_id") or "").strip()
+    tid = (tx or {}).get("_id")
+    if not cid or not tid:
+        return [], [], []
+    counters = await db.bank_transactions.find({
+        "company_id": cid,
+        "source": "bank_match",
+        "related_bank_tx_id": tid,
+    }).to_list(50)
+    counters = [row for row in counters or [] if isinstance(row, dict) and row.get("_id") != tid]
+    linkers = await db.bank_transactions.find({
+        "company_id": cid,
+        "related_manual_tx_id": tid,
+        "linked_existing": True,
+    }).to_list(20)
+    linkers = [row for row in linkers or [] if isinstance(row, dict) and row.get("_id") != tid]
+    pos_expenses = []
+    eid = tx.get("expense_id")
+    if eid and tx.get("match_kind") == "pos_settlement":
+        exp = await db.expenses.find_one({"_id": eid, "company_id": cid})
+        if exp and expenses._from_statement(exp):
+            pos_expenses.append(exp)
+    return counters, linkers, pos_expenses
+
+
+async def _reconcile_counterpart_accounts(company_id: str, account_ids, skip_ids) -> None:
+    """Karşı POS/banka hesabını hareket toplamına çeker. Silinen hesabın kendisi yok."""
+    cid = str(company_id or "").strip()
+    if not cid:
+        return
+    skipped = {item for item in (skip_ids or []) if item}
+    seen = set()
+    for aid in account_ids or []:
+        if not aid or aid in skipped or aid in seen:
+            continue
+        seen.add(aid)
+        await account_balance.reconcile_account_balance(db, aid, company_id=cid)
+
+
 async def _linked_expense_related(tx: Dict[str, Any]) -> list:
     """Masrafa bağlı hareket silinince masrafı da aynı çöp kaydına taşı (çift reverse yok)."""
     eid = tx.get("expense_id")
@@ -14242,6 +14286,7 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
     tx = await tenant_access.get_tenant_doc(db, "bank_transactions", tx_id, user, not_found="Hareket bulunamadı.")
     linked_moves.assert_not_source_linked(tx)
     _assert_editable_tx(tx)
+    counters, linkers, pos_expenses = await _match_pairs_for_tx(tx)
     related = await _linked_expense_related(tx)
     pair = None
     pair_id = tx.get("pair_tx_id")
@@ -14252,6 +14297,14 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 _assert_editable_tx(pair)
             except HTTPException:
                 pair = None
+    if pair:
+        counters = [row for row in counters if row.get("_id") != pair.get("_id")]
+    for linker in linkers:
+        await _unmatch(linker)
+    if counters:
+        related = list(related or []) + [{"collection": "bank_transactions", "docs": counters}]
+    if pos_expenses:
+        related = list(related or []) + [{"collection": "expenses", "docs": pos_expenses}]
     tid = await trash.soft_delete(
         "bank_transactions",
         tx,
@@ -14277,11 +14330,13 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                     rows.append((block.get("collection") or "expenses", rel, None))
             await _rewind_delete(rows, None)
             raise
-    snap = await _snapshot_tx_balances([tx, pair])
+    snap = await _snapshot_tx_balances([tx, pair, *counters])
     try:
         await _reverse_tx_effects(tx, -1)
         if pair:
             await _reverse_tx_effects(pair, -1)
+        for counter in counters:
+            await _reverse_tx_effects(counter, -1)
         # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
         cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
         cash_accs = []
@@ -14293,7 +14348,15 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 cash_accs.append(acc)
         if cash_accs:
             await account_balance.sync_cash_box_balances(db, cash_accs)
+        await _reconcile_counterpart_accounts(
+            tx.get("company_id") or "",
+            [row.get("account_id") for row in counters],
+            cash_ids,
+        )
         sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
+        for linker in linkers:
+            if linker.get("contact_id"):
+                sync_ids.add(linker.get("contact_id"))
         for cid in sync_ids:
             if cid:
                 await contact_balance.sync_contact_balance(db, cid, company_id=tx.get("company_id") or "")
@@ -14301,6 +14364,10 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
         rows = [("bank_transactions", tx, tid)]
         if pair:
             rows.append(("bank_transactions", pair, pair_tid))
+        for counter in counters:
+            rows.append(("bank_transactions", counter, None))
+        for exp in pos_expenses:
+            rows.append(("expenses", exp, None))
         for block in related or []:
             for rel in block.get("docs") or []:
                 rows.append((block.get("collection") or "expenses", rel, None))
@@ -15064,18 +15131,52 @@ async def _reverse_partner_tx(tx: dict):
     if contact_delta:
         await db.contacts.update_one({"_id": tx["contact_id"], "company_id": cid}, {"$inc": {"balance": -contact_delta}})
     if _partner_tx_touches_cash(tx):
-        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"], "company_id": cid}) or await db.bank_transactions.find_one({
-            "source": "partner",
-            "account_id": tx["account_id"],
-            "amount": amount,
-            "date": tx.get("date"),
-            "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"},
-            "company_id": cid,
-        })
+        bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"], "company_id": cid})
+        if not bt and tx.get("account_id"):
+            rows = await db.bank_transactions.find({
+                "company_id": cid,
+                "source": "partner",
+                "account_id": tx["account_id"],
+                "amount": amount,
+                "date": tx.get("date"),
+            }).to_list(20)
+            candidates = []
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                bound = row.get("partner_tx_id")
+                if bound and bound != tx.get("_id"):
+                    continue
+                candidates.append(row)
+            if len(candidates) == 1:
+                bt = candidates[0]
+            elif len(candidates) > 1:
+                logger.warning("Ortak hareketinin kasa satırı tek değil; kasa satırı silinmedi.")
         if bt:
             inflow = bt.get("type") == "inflow"
-            await db.bank_accounts.update_one({"_id": bt["account_id"], "company_id": cid}, {"$inc": {"current_balance": -amount if inflow else amount}})
+            await account_balance.apply_balance_delta(
+                db, bt["account_id"], -amount if inflow else amount, company_id=cid,
+            )
+            children = await db.bank_transactions.find({
+                "company_id": cid,
+                "source": "bank_match",
+                "related_bank_tx_id": bt.get("_id"),
+            }).to_list(20)
+            child_accounts = []
+            for child in children or []:
+                if not isinstance(child, dict) or child.get("_id") == bt.get("_id"):
+                    continue
+                await _reverse_tx_effects(child, -1)
+                await db.bank_transactions.delete_one({"_id": child["_id"], "company_id": cid})
+                if child.get("account_id") and child.get("account_id") != bt.get("account_id"):
+                    child_accounts.append(child.get("account_id"))
+            exp_id = bt.get("expense_id")
+            if exp_id:
+                exp = await db.expenses.find_one({"_id": exp_id, "company_id": cid})
+                if exp and expenses._from_statement(exp):
+                    await db.expenses.delete_one({"_id": exp_id, "company_id": cid})
             await db.bank_transactions.delete_one({"_id": bt["_id"], "company_id": cid})
+            await _reconcile_counterpart_accounts(cid, child_accounts, {bt.get("account_id")})
 
 @api_router.put("/banking/partners/transactions/{tx_id}")
 async def update_partner_transaction(tx_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -16101,32 +16202,52 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
         if contact_id or invoice_id or as_expense or link_existing_id:
             raise HTTPException(status_code=400, detail="POS bloke çözümü cari, fatura veya masraf ile birlikte seçilemez.")
         import pos_settlement
-        fields = await pos_settlement.apply(
+        await pos_settlement.validate(
             db, tx,
             pos_account_id=target_account_id,
             gross=pos_gross,
             commission=pos_commission,
             category=category,
-            actor=actor,
         )
-        update.update(fields)
-        category = update.get("category") or category
-        contact_id = None
-        contact_name = None
-        target_account_id = update.get("target_account_id")
-        target_name = update.get("target_account_name")
-        phrase = match_phrase(
-            contact_name=contact_name,
-            invoice_number=None,
-            target_account_name=target_name,
-            category=category,
-        )
-        base_desc = strip_match_suffix(tx.get("description") or "")
-        update["description"] = append_match_suffix(base_desc, phrase)
-        await db.bank_transactions.update_one(
-            {"_id": tx["_id"], "company_id": tx.get("company_id")},
-            {"$set": update},
-        )
+        await bank_rematch.claim_matching(db, tx)
+        try:
+            fields = await pos_settlement.apply(
+                db, tx,
+                pos_account_id=target_account_id,
+                gross=pos_gross,
+                commission=pos_commission,
+                category=category,
+                actor=actor,
+            )
+            update.update(fields)
+            category = update.get("category") or category
+            contact_id = None
+            contact_name = None
+            target_account_id = update.get("target_account_id")
+            target_name = update.get("target_account_name")
+            phrase = match_phrase(
+                contact_name=contact_name,
+                invoice_number=None,
+                target_account_name=target_name,
+                category=category,
+            )
+            base_desc = strip_match_suffix(tx.get("description") or "")
+            update["description"] = append_match_suffix(base_desc, phrase)
+            written = await db.bank_transactions.update_one(
+                {"_id": tx["_id"], "company_id": tx.get("company_id"), "match_status": "matching"},
+                {"$set": update, "$unset": {"match_lock_at": ""}},
+            )
+            if not bank_rematch.claim_taken(written):
+                raise HTTPException(status_code=409, detail="Bu hareket eşleştiriliyor.")
+        except pos_settlement.SettlementBusy:
+            raise
+        except Exception:
+            try:
+                await pos_settlement.reverse(db, tx)
+            except Exception:
+                logger.exception("POS bloke çözümü geri alınamadı")
+            await bank_rematch.release_match_lock(db, tx)
+            raise
         if learn:
             rate_extra = {"match_kind": "pos_settlement"}
             try:
@@ -16466,6 +16587,15 @@ async def _release_rule_for_tx(tx: dict, actor: Optional[dict] = None) -> str:
 
 async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
     from bank_match_desc import strip_match_suffix, strip_trailing_actor
+    locked = await bank_rematch.lock_for_unmatch(db, tx)
+    if locked is None:
+        cid = tx.get("company_id")
+        found = await db.bank_transactions.find_one({"_id": tx.get("_id"), "company_id": cid})
+        out = clean_doc(found) if found else {}
+        if isinstance(out, dict):
+            out["rule_action"] = "none"
+        return out
+    tx = locked
     pos_settlement_match = tx.get("match_kind") == "pos_settlement"
     if pos_settlement_match:
         import pos_settlement
@@ -16473,13 +16603,13 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
     cid = tx.get("company_id")
-    # link_existing cari bakiyesine yazmaz; geri alma da yazmasın.
+    # link_existing cari ve fatura bakiyesine yazmaz; geri alma da yazmasın.
     if tx.get("contact_id") and not tx.get("linked_existing"):
         await db.contacts.update_one(
             {"_id": tx["contact_id"], "company_id": cid},
             {"$inc": {"balance": amount if is_inflow else -amount}},
         )
-    if tx.get("related_invoice_id"):
+    if tx.get("related_invoice_id") and not tx.get("linked_existing"):
         inv = await db.invoices.find_one({"_id": tx["related_invoice_id"], "company_id": cid})
         if inv:
             new_paid = round(max(0.0, inv.get("paid_amount", 0) - amount), 2)
@@ -16543,7 +16673,7 @@ async def _unmatch(tx: dict, actor: Optional[dict] = None) -> dict:
             "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
             "description": cleaned_desc,
         },
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "related_manual_tx_id": "", "linked_existing": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "expense_number": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "personnel_movement_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": "", "match_kind": "", "pos_gross": "", "pos_commission": ""}})
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "related_manual_tx_id": "", "linked_existing": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "expense_number": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "personnel_movement_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": "", "matched_rule_id": "", "learned_rule_id": "", "match_kind": "", "pos_gross": "", "pos_commission": "", "match_lock_at": ""}})
     rule_action = "none"
     try:
         rule_action = await _release_rule_for_tx(tx, actor=actor) or "none"
@@ -16921,6 +17051,9 @@ async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, An
         )
     if tx.get("match_status") == "matched":
         raise HTTPException(status_code=400, detail="Bu hareket zaten eşleştirilmiş.")
+    if str(tx.get("match_status") or "") in ("matching", "rematching", "unmatching"):
+        if not bank_rematch.lock_is_stale(tx):
+            raise HTTPException(status_code=409, detail="Bu hareket eşleştiriliyor.")
     actor = await _optional_actor(request)
     return await _apply_match(
         tx,
@@ -16945,9 +17078,14 @@ async def unmatch_bank_transaction(tx_id: str, user: dict = Depends(get_current_
     tx = await tenant_access.get_tenant_doc(db, "bank_transactions", tx_id, user, not_found="Banka hareketi bulunamadı.")
     if tx.get("source") != "bank_sync":
         raise HTTPException(status_code=404, detail="Banka hareketi bulunamadı.")
-    if tx.get("match_status") != "matched":
-        raise HTTPException(status_code=400, detail="Bu hareket eşleştirilmemiş.")
-    return await _unmatch(tx, actor=user)
+    status = str(tx.get("match_status") or "")
+    if status == "matched":
+        return await _unmatch(tx, actor=user)
+    if status in ("matching", "rematching", "unmatching"):
+        if bank_rematch.lock_is_stale(tx):
+            return await _unmatch(tx, actor=user)
+        raise HTTPException(status_code=409, detail="Bu hareket eşleştiriliyor.")
+    raise HTTPException(status_code=400, detail="Bu hareket eşleştirilmemiş.")
 
 
 def _tx_amount(tx: dict) -> float:
@@ -28769,6 +28907,11 @@ async def _restore_loan(doc, _related):
         await linked_moves.restore_linked_from_related(db, related)
 
 async def _restore_expense(doc, _related):
+    if (doc or {}).get("source") in ("bank_match", "card_statement", "bank_statement"):
+        raise HTTPException(
+            status_code=400,
+            detail="Banka eşleştirmesinden veya ekstreden oluşan masraf çöpten geri getirilemez. Eşleştirmeyi banka hareketinden yeniden yapın.",
+        )
     if doc.get("payment_status") == "paid" and not doc.get("netted_in_settlement") and (doc.get("account_id") or doc.get("partner_id")):
         await expenses._post_payment(doc, doc.get("account_id"), doc.get("paid_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), partner_id=doc.get("partner_id"))
 
