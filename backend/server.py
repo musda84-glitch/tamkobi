@@ -9697,19 +9697,29 @@ async def serve_file(
         )
         force_fmt = bool((fmt or "").strip()) and thumb_fmt in ("jpg", "png")
         if thumb and thumb.data and (force_fmt or len(thumb.data) < len(data)):
+            stored_mtime = None
+            stored_size = len(thumb.data)
             if cache_key != path:
                 try:
                     file_cache.forget(cache_key)
-                    await asyncio.to_thread(put_object, cache_key, thumb.data, thumb.content_type)
+
+                    def _store_thumb():
+                        put_object(cache_key, thumb.data, thumb.content_type)
+                        return stat_object(cache_key)
+
+                    meta_after = await asyncio.to_thread(_store_thumb)
+                    if meta_after is not None:
+                        stored_mtime = meta_after.mtime
+                        stored_size = meta_after.size or stored_size
                 except Exception as e:
                     logger.debug("thumb cache write failed path=%s: %s", cache_key, e)
-            etag = file_cache.etag_for(cache_key, len(thumb.data), None)
-            file_cache.remember(cache_key, etag, None, len(thumb.data))
+            etag = file_cache.etag_for(cache_key, stored_size, stored_mtime)
+            file_cache.remember(cache_key, etag, stored_mtime, stored_size)
             headers = _cached_file_headers({
                 "Vary": "Accept",
                 "X-Image-Resize": str(edge or w or ""),
                 "X-Image-Cache": "miss",
-            }, public=public, etag=etag)
+            }, public=public, etag=etag, mtime=stored_mtime)
             return _file_response(thumb.data, thumb.content_type, headers, head=head)
     if meta is not None:
         etag = file_cache.etag_for(path, meta.size, meta.mtime)
@@ -9748,19 +9758,27 @@ async def _serve_cached_thumb(cache_key, path, request, *, public, head, edge, w
         "X-Image-Cache": "hit",
     }
     meta = await asyncio.to_thread(stat_object, cache_key)
+    remembered = file_cache.recall(cache_key)
     if meta is not None and meta.size > 32:
         etag = file_cache.etag_for(cache_key, meta.size, meta.mtime)
-        if file_cache.not_modified(request, etag, meta.mtime):
-            headers = _cached_file_headers(resize_headers, public=public, etag=etag, mtime=meta.mtime)
-            return _file_response(b"", meta.content_type or "image/webp", headers, head=head, status=304)
-        if head:
-            media = meta.content_type or "image/webp"
-            headers = _cached_file_headers(resize_headers, public=public, etag=etag, mtime=meta.mtime)
-            if shopfloor_drawing.serves_as_svg_image(media, path):
-                media = "image/svg+xml"
-                headers.update(shopfloor_drawing.display_svg_response_headers())
-                headers = _cached_file_headers(headers, public=public, etag=etag, mtime=meta.mtime)
-            return _file_response(b"", media, headers, head=True, content_length=meta.size)
+        mtime = meta.mtime
+    elif remembered.get("etag"):
+        etag = remembered["etag"]
+        mtime = remembered.get("mtime")
+    else:
+        etag, mtime = "", None
+    if etag and file_cache.not_modified(request, etag, mtime):
+        media = (meta.content_type if meta is not None else None) or "image/webp"
+        headers = _cached_file_headers(resize_headers, public=public, etag=etag, mtime=mtime)
+        return _file_response(b"", media, headers, head=head, status=304)
+    if head and meta is not None and meta.size > 32:
+        media = meta.content_type or "image/webp"
+        headers = _cached_file_headers(resize_headers, public=public, etag=etag, mtime=mtime)
+        if shopfloor_drawing.serves_as_svg_image(media, path):
+            media = "image/svg+xml"
+            headers.update(shopfloor_drawing.display_svg_response_headers())
+            headers = _cached_file_headers(headers, public=public, etag=etag, mtime=mtime)
+        return _file_response(b"", media, headers, head=True, content_length=meta.size)
     try:
         cached, cached_ct = await asyncio.to_thread(get_object, cache_key)
     except FileNotFoundError:

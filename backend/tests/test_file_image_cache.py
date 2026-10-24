@@ -133,8 +133,8 @@ def test_public_image_has_long_cache_and_etag(files_db):
     assert resp.body == raw
     assert resp.headers["cache-control"].startswith("public")
     assert "max-age=31536000" in resp.headers["cache-control"]
+    assert "immutable" not in resp.headers["cache-control"]
     assert resp.headers["etag"]
-    assert "immutable" in resp.headers["cache-control"]
 
 
 def test_second_request_is_304_without_storage_read(files_db):
@@ -254,6 +254,47 @@ def test_if_modified_since_returns_304(tmp_path, monkeypatch):
     resp = _serve(storage, headers={"if-modified-since": "Tue, 01 Jan 2099 00:00:00 GMT"})
     assert resp.status_code == 304
     assert resp.body == b""
+
+
+def test_files_route_registers_head():
+    paths = [getattr(route, "path", "") for route in server.api_router.routes]
+    match = [
+        route for route in server.api_router.routes
+        if getattr(route, "path", "") in ("/files/{path:path}", "/api/files/{path:path}")
+    ]
+    assert match, paths
+    methods = set(match[0].methods or [])
+    assert "GET" in methods
+    assert "HEAD" in methods
+
+
+def test_thumb_etag_matches_on_revalidation(tmp_path, monkeypatch):
+    mem = MemDB()
+    monkeypatch.setattr(server, "db", mem)
+    monkeypatch.setattr(storage_service, "LOCAL_ROOT", tmp_path)
+    monkeypatch.setattr(storage_service, "_backend", "local")
+    storage = _storage("products", name="print.jpg")
+    raw = _jpeg(320)
+    storage_service.put_object(storage, raw, "image/jpeg")
+    _insert(mem, storage, "compA")
+    first = _serve(storage, w=200)
+    assert first.status_code == 200
+    assert first.headers["x-image-cache"] == "miss"
+    assert first.headers["etag"]
+    assert first.headers.get("last-modified")
+    assert "immutable" not in first.headers["cache-control"]
+    etag = first.headers["etag"]
+    head = _serve(storage, method="HEAD", w=200)
+    assert head.status_code == 200
+    assert head.body == b""
+    assert head.headers["etag"] == etag
+    assert head.headers.get("last-modified")
+    assert int(head.headers["content-length"]) == len(first.body)
+    again = _serve(storage, w=200, headers={"if-none-match": etag})
+    assert again.status_code == 304
+    assert again.body == b""
+    assert again.headers["etag"] == etag
+    assert again.headers.get("last-modified")
 
 
 def test_serve_does_not_log_body_or_token(files_db, caplog):

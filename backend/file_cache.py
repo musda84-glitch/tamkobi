@@ -9,7 +9,8 @@ import hashlib
 from datetime import timezone
 from typing import Optional
 
-PUBLIC_CACHE = "public, max-age=31536000, immutable"
+# immutable yok: yenileme If-None-Match gönderebilsin. Taze önbellek sunucuya gitmez.
+PUBLIC_CACHE = "public, max-age=31536000"
 PRIVATE_CACHE = "private, max-age=31536000"
 
 _VALIDATORS: dict = {}
