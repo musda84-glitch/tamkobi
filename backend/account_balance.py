@@ -354,6 +354,26 @@ def apply_drift_fields(accounts: List[dict], grouped: Dict[str, List[dict]]) -> 
     return accounts
 
 
+POS_DISPLAY_TYPES = frozenset({"pos", "okc_pos"})
+
+
+def overlay_pos_movement_balances(accounts: List[dict], txs: Iterable[dict]) -> List[dict]:
+    """POS ve ÖKC cevap bakiyesi = hareket toplamı. Yazılmaz.
+
+    Açılış hareketi movement_balance içinde bir kez sayılır. current_balance
+    alanının üstüne bir daha eklenmez. Entegre banka hesaplarına dokunulmaz.
+    """
+    grouped = group_txs_by_account(list(txs or []))
+    for acc in accounts or []:
+        if str((acc or {}).get("type") or "") not in POS_DISPLAY_TYPES:
+            continue
+        aid = str(acc.get("_id") or acc.get("id") or "")
+        if not aid:
+            continue
+        acc["current_balance"] = movement_balance(grouped.get(aid, []), aid, acc)
+    return accounts
+
+
 async def annotate_listed_accounts(db, company_id: str, accounts: List[dict], txs: Optional[List[dict]] = None) -> List[dict]:
     """Drift alanları. txs verilirse ikinci bank_transactions sorgusu açılmaz."""
     if txs is None:

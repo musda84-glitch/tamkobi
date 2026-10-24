@@ -230,6 +230,8 @@ async def _soft_delete_move(collection: str, doc: dict, entity_type: str, note: 
     label = f"{doc.get('description') or doc.get('type') or entity_type} · {float(doc.get('amount') or 0):,.2f} ₺"
     try:
         return await trash.soft_delete(collection, doc, entity_type, label, note=note)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("soft_delete %s %s", collection, doc.get("_id"))
         # Fallback: hard delete so orphan kalmasın. Dedicated satır company_id ister.
