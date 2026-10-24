@@ -76,3 +76,19 @@ export function requiresSession(pathname) {
   if (isPublicPath(p)) return false;
   return SESSION_PREFIXES.some((x) => p === x || p.startsWith(`${x}/`));
 }
+
+/**
+ * Giriş yapılmamış kimlik ekranları (giriş, şifre sıfırlama, kayıt, davet, QR girişi
+ * LoginPage modu olarak /login altında). Senkron çubuğu burada çizilmez.
+ */
+export function isGuestAuthPath(pathname) {
+  const p = pathname || "/";
+  if (p === "/login" || p === "/kayit" || p.startsWith("/kayit/")) return true;
+  if (p === "/kurulum") return true;
+  if (p === "/sso" || p.startsWith("/sso/")) return true;
+  if (p === "/sifre" || p.startsWith("/sifre/")) return true;
+  if (p === "/b2b/giris" || p === "/b2b/sifre" || p.startsWith("/b2b/sifre/")) return true;
+  if (p === "/sistem/giris" || p === "/sistem/2fa-kurulum") return true;
+  if (p.startsWith("/davet/")) return true;
+  return false;
+}
