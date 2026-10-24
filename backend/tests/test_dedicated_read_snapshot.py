@@ -257,6 +257,57 @@ def test_isolation_failure_still_refreshes_snapshot(monkeypatch):
     assert [doc["_id"] for doc in found] == ["new"]
 
 
+def test_refreshed_pool_connection_sets_read_committed(monkeypatch):
+    """Havuz kapanıp yeni bağlantı açılınca SET yeniden yazılır. Rollback silmez."""
+    opened = []
+
+    def _connect(dsn, write=True):
+        session = RRSession()
+        opened.append(session)
+        return session
+
+    monkeypatch.setattr(storage_dedicated, "connect", _connect)
+    coll = DedicatedCollection(CO, "expenses", DSN)
+    _run(coll.find({}).to_list(1))
+    assert len(opened) == 1
+    assert any("READ COMMITTED" in sql for sql in opened[0].sqls)
+    rollbacks_before = opened[0].rollbacks
+    _run(coll.find({}).to_list(1))
+    assert len(opened) == 1
+    assert opened[0].rollbacks > rollbacks_before
+    assert sum("READ COMMITTED" in sql for sql in opened[0].sqls) == 1
+    storage_dedicated.reset_pools()
+    _run(coll.find({}).to_list(1))
+    assert len(opened) == 2
+    assert opened[1] is not opened[0]
+    assert any("READ COMMITTED" in sql for sql in opened[1].sqls)
+
+
+def test_list_collections_releases_snapshot(monkeypatch):
+    session = RRSession()
+    session.store.append(("expenses", "old", _doc("old", "2026-10-24T10:00:00+00:00")))
+    _patch_connect(monkeypatch, session)
+    storage_dedicated.list_collections(CO, DSN)
+    assert session.snapshot is None
+    assert session.rollbacks >= 1
+    session.store.append(("expenses", "new", _doc("new", "2026-10-24T12:00:00+00:00")))
+    coll = DedicatedCollection(CO, "expenses", DSN)
+    found = _run(coll.find({}).to_list(10))
+    assert [doc["_id"] for doc in found] == ["old", "new"]
+
+
+def test_list_collections_leaves_injected_session():
+    session = RRSession()
+    session.store.append(("expenses", "old", _doc("old", "2026-10-24T10:00:00+00:00")))
+    token = storage_dedicated.use_read_session(CO, session)
+    try:
+        storage_dedicated.list_collections(CO, DSN)
+    finally:
+        storage_dedicated.reset_read_session(token)
+    assert session.rollbacks == 0
+    assert session.commits == 0
+
+
 def test_injected_session_is_left_open():
     session = RRSession()
     coll = DedicatedCollection(CO, "expenses", DSN)

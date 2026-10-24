@@ -246,15 +246,23 @@ def collection(db, company_id: str, name: str) -> "DedicatedCollection":
 
 
 def list_collections(company_id: str, dsn: str) -> list[str]:
-    """Firmanın dedicated koleksiyon adları. Yazmaz. DSN loglanmaz."""
+    """Firmanın dedicated koleksiyon adları. Yazmaz. DSN loglanmaz.
+
+    SELECT açık işlemi dondurur. Havuz oturumunda işlem sonunda rollback
+    gerekir; taşımanın verdiği oturum kapatılmaz.
+    """
     cid = str(company_id or "").strip()
     add_secret(dsn)
     with _session(cid, dsn) as session:
-        _assert_schema(session, cid)
-        rows = session.fetchall(
-            "SELECT DISTINCT collection FROM storage_records WHERE company_id = ?",
-            (cid,),
-        )
+        try:
+            _assert_schema(session, cid)
+            rows = session.fetchall(
+                "SELECT DISTINCT collection FROM storage_records WHERE company_id = ?",
+                (cid,),
+            )
+        finally:
+            if read_session(cid) is None:
+                _release_snapshot(session)
     return sorted({str(row[0]) for row in rows if row and row[0]})
 
 
@@ -358,6 +366,9 @@ def _open(company_id: str, dsn: str, key: str) -> _Pool:
     except Exception:
         _log.warning("dedicated havuzu açılamadı company=%s", _safe_id(company_id))
         raise DedicatedStorageError("Dedicated havuzu açılamadı.", company_id=company_id) from None
+    # Her yeni havuz bağlantısı. SESSION izolasyonu rollback ile silinmez.
+    # pymysql burada kendiliğinden yeniden bağlanmaz; kopan havuz kapanıp
+    # _open ile yeniden açılır ve READ COMMITTED yine yazılır.
     _use_read_committed(session)
     return _Pool(company_id, key, session)
 
