@@ -59,7 +59,6 @@ const ALLOWED_DUPLICATE_TESTIDS = {
     "{`recipe-mat-${i}-step-name-${si}`}", "{`recipe-mat-${i}-step-station-${si}`}",
     "{`recipe-step-name-${i}`}", "{`recipe-step-station-${i}`}",
   ],
-  "components/saas/AiProviderPanel.jsx": ['"ai-advisor-model"', '"ai-extract-model"'],
   "components/saas/EinvoiceDesignCanvas.jsx": ['"einvoice-design-preview"'],
   "components/saas/PlatformMailPanel.jsx": ['"mail-server-form"', '"mail-box-form"'],
   "components/SupportContactBar.jsx": ['"support-contact-link"'],
