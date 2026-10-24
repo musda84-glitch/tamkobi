@@ -141,6 +141,56 @@ def test_jsencrypt_bridge_signSha256_is_the_signature():
         assert bp._kuveyt_sign(get["token"], pem, query_string=get["query_string"]) == get["signature"]
 
 
+def test_node_timeout_uses_python_and_skips_the_next_node(monkeypatch):
+    """Asılı node 3 sn sonra kapanır; sonraki imza node'u tekrar bekletmez."""
+    import subprocess
+    import threading
+
+    bp._reset_kuveyt_node_backoff()
+    monkeypatch.setattr(bp.shutil, "which", lambda _name: "/usr/bin/node")
+    monkeypatch.setattr(bp.Path, "is_file", lambda _self: True)
+    calls = {"n": 0}
+
+    def boom(*_a, **_k):
+        calls["n"] += 1
+        raise subprocess.TimeoutExpired(cmd="node", timeout=bp._NODE_SIGN_TIMEOUT_SEC)
+
+    monkeypatch.setattr(bp.subprocess, "run", boom)
+    pem = _rsa_pem()
+    try:
+        sig1 = bp._kuveyt_sign("tok", pem, query_string="?a=1")
+        sig2 = bp._kuveyt_sign("tok", pem, query_string="?a=1")
+        assert calls["n"] == 1
+        assert sig1 == sig2
+        assert bp._NODE_SIGN_TIMEOUT_SEC <= 3
+        key = serialization.load_pem_private_key(pem.encode(), password=None)
+        key.public_key().verify(
+            __import__("base64").b64decode(sig1),
+            b"tok?a=1",
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+    finally:
+        bp._reset_kuveyt_node_backoff()
+
+
+def test_kuveyt_headers_async_runs_off_the_event_loop(monkeypatch):
+    import threading
+
+    def sync_headers(token, conn, *, params=None, json_body=None):
+        return {"thread": threading.get_ident(), "Authorization": f"Bearer {token}"}
+
+    monkeypatch.setattr(bp, "_kuveyt_headers", sync_headers)
+
+    async def go():
+        out = await bp.kuveyt_headers_async("t", {})
+        return out, threading.get_ident()
+
+    out, loop_thread = asyncio.run(go())
+    assert out["Authorization"] == "Bearer t"
+    assert out["thread"] != loop_thread
+
+
 def test_frontend_wires_travist_jsencrypt():
     from pathlib import Path
 
