@@ -704,6 +704,64 @@ def sql_count_exact(collection: str, query: Optional[dict]) -> Optional[Tuple[st
     return count_sql, params
 
 
+def scalar_select_sql(collection: str, query: Optional[dict], fields, limit: int = 20000):
+    """Tam belge yerine birkaç JSON alanı. Sorgu SQL'e tam inmiyorsa None.
+
+    docs gövdesi istemciye gelmez. Dedicated bu yolu kullanmaz.
+    """
+    if sql_count_exact(collection, query) is None:
+        return None
+    names = []
+    for field in fields or []:
+        text = str(field or "")
+        if not _SAFE_FIELD.match(text) or text in ("_id", "id"):
+            continue
+        if text not in names:
+            names.append(text)
+    if not names:
+        return None
+    select_sql, params = sql_pushdown(collection, query)
+    prefix = "SELECT doc FROM "
+    if not select_sql.startswith(prefix):
+        return None
+    pieces = ["id"]
+    # MariaDB JSON null'u JSON_UNQUOTE ile 'null' metnine çevirir.
+    pieces.extend(
+        f"NULLIF(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{name}')), 'null')" for name in names
+    )
+    try:
+        cap = int(limit)
+    except (TypeError, ValueError):
+        cap = 20000
+    if cap < 1:
+        cap = 1
+    sql = "SELECT " + ", ".join(pieces) + " FROM " + select_sql[len(prefix):] + " LIMIT %s"
+    return sql, list(params) + [cap], names
+
+
+def scalar_docs(rows, names) -> List[dict]:
+    """Sütun sırası: id, sonra names. Boş ve NULL alan yazılmaz."""
+    out: List[dict] = []
+    for row in rows or []:
+        doc: Dict[str, Any] = {}
+        ident = row[0] if row else None
+        if ident not in (None, ""):
+            if isinstance(ident, (bytes, bytearray)):
+                ident = ident.decode("utf-8")
+            doc["_id"] = ident
+        for idx, name in enumerate(names or [], start=1):
+            if idx >= len(row):
+                break
+            val = row[idx]
+            if isinstance(val, (bytes, bytearray)):
+                val = val.decode("utf-8")
+            if val is None or val == "" or val == "null":
+                continue
+            doc[name] = val
+        out.append(doc)
+    return out
+
+
 # --- Exact read pushdown (ORDER BY / LIMIT / projection) -----------------
 #
 # find().sort().limit()/to_list() used to: sql_pushdown (a partial WHERE) →
@@ -2385,6 +2443,20 @@ class MySQLCollection:
             "mark": time.perf_counter(),
         })
         return rows
+
+    async def scalar_rows(self, query, fields, limit: int = 20000):
+        """Paylaşılan docs. Yönlenen depo veya itilemeyen sorgu None döner."""
+        _guard(self.name, "find", query=query)
+        built = scalar_select_sql(self.name, query, fields, limit)
+        if built is None:
+            return None
+        routed = await _route_read(self, query)
+        if routed is not None:
+            return None
+        await _block_shared_copy(self, query=query, write=False)
+        sql, params, names = built
+        rows = await self._fetch_rows(sql, params)
+        return scalar_docs(rows, names)
 
     async def _load_all(self) -> List[dict]:
         rows = await self._fetch_rows("SELECT doc FROM docs WHERE collection=%s", [self.name])

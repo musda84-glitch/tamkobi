@@ -4610,13 +4610,33 @@ def _completed_in_tr_month_query(company_id: str, now: Optional[datetime] = None
     }
 
 
+_OVERVIEW_INVOICE_FIELDS = (
+    "invoice_type", "status", "payment_status", "grand_total", "paid_amount",
+    "due_date", "issue_date", "vat_total",
+)
+
+
+async def _overview_invoices(company_id: str):
+    """Açık özetin fatura alanları. Paylaşılan depo belge gövdesini okumaz.
+
+    Dedicated ve itilemeyen sorgu eski find yolunda kalır.
+    """
+    query = {"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}}
+    proj = {name: 1 for name in _OVERVIEW_INVOICE_FIELDS}
+    scalar = getattr(db.invoices, "scalar_rows", None)
+    if scalar is not None:
+        rows = await scalar(query, _OVERVIEW_INVOICE_FIELDS, 20000)
+        if rows is not None:
+            return rows
+    return await db.invoices.find(query, proj).to_list(20000)
+
+
 async def dashboard_overview_payload(company_id: str):
     now = _tr_now()
     today = now.strftime("%Y-%m-%d"); month = now.strftime("%Y-%m")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
     invs, exp_rows, inst_today, inst_overdue, pending_orders, quotes, products, leaves, early_leaves, budgets = await asyncio.gather(
-        db.invoices.find({"company_id": company_id, "invoice_type": {"$in": ["sales", "purchase"]}},
-                         {"invoice_type": 1, "status": 1, "payment_status": 1, "grand_total": 1, "paid_amount": 1, "due_date": 1, "issue_date": 1, "vat_total": 1}).to_list(20000),
+        _overview_invoices(company_id),
         db.expenses.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"vat_amount": 1}).to_list(5000),
         db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": today}),
         db.installments.count_documents({"company_id": company_id, "status": {"$ne": "paid"}, "due_date": {"$lt": today}}),
