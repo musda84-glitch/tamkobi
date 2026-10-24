@@ -41,9 +41,42 @@ def test_non_str_key_falls_back_to_stdlib():
     assert json_offload.dump_json({1: "a"}) == _stdlib({1: "a"})
 
 
-def test_nan_and_infinity_become_null():
-    body = json_offload.dump_json({"n": float("nan"), "inf": float("inf"), "neg": float("-inf")})
-    assert json.loads(body) == {"n": None, "inf": None, "neg": None}
+def test_nan_and_infinity_become_null(caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="tamkobi.json")
+    payload = {
+        "items": [{"sale_price": float("nan"), "name": "Gizli müşteri"}],
+        "qty": float("inf"),
+    }
+    body = json_offload.dump_json(payload)
+    parsed = json.loads(body)
+    assert parsed["items"][0]["sale_price"] is None
+    assert parsed["qty"] is None
+    assert "Gizli müşteri" not in caplog.text
+    assert "items[0].sale_price" in caplog.text
+    assert "qty" in caplog.text
+    assert "nan" in caplog.text.lower()
+    assert "inf" in caplog.text.lower()
+
+
+def test_missing_orjson_uses_stdlib(monkeypatch):
+    monkeypatch.setattr(json_offload, "_orjson", None)
+    payload = {"ad": "Şişli", "n": 1e-7}
+    assert json_offload.dump_json(payload) == _stdlib(payload)
+    assert b"1e-07" in json_offload.dump_json(payload)
+    with pytest.raises(ValueError):
+        json_offload.dump_json({"n": float("nan")})
+
+
+def test_small_exponent_bytes_differ_but_values_match():
+    orjson = pytest.importorskip("orjson")
+    payload = {"n": 1e-7}
+    fast = orjson.dumps(payload)
+    std = _stdlib(payload)
+    assert fast == b'{"n":1e-7}'
+    assert std == b'{"n":1e-07}'
+    assert json.loads(fast) == json.loads(std)
 
 
 def test_plain_dict_uses_orjson_when_installed():
