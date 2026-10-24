@@ -725,8 +725,9 @@ def scalar_select_sql(collection: str, query: Optional[dict], fields, limit: int
     if not select_sql.startswith(prefix):
         return None
     pieces = ["id"]
+    # MariaDB JSON null'u JSON_UNQUOTE ile 'null' metnine çevirir.
     pieces.extend(
-        f"JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{name}'))" for name in names
+        f"NULLIF(JSON_UNQUOTE(JSON_EXTRACT(doc, '$.{name}')), 'null')" for name in names
     )
     try:
         cap = int(limit)
@@ -752,11 +753,9 @@ def scalar_docs(rows, names) -> List[dict]:
             if idx >= len(row):
                 break
             val = row[idx]
-            if val is None:
-                continue
             if isinstance(val, (bytes, bytearray)):
                 val = val.decode("utf-8")
-            if val == "":
+            if val is None or val == "" or val == "null":
                 continue
             doc[name] = val
         out.append(doc)
@@ -2295,6 +2294,7 @@ class MySQLCollection:
 
     async def scalar_rows(self, query, fields, limit: int = 20000):
         """Paylaşılan docs. Yönlenen depo veya itilemeyen sorgu None döner."""
+        _guard(self.name, "find", query=query)
         built = scalar_select_sql(self.name, query, fields, limit)
         if built is None:
             return None
