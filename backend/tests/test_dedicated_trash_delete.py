@@ -279,7 +279,8 @@ def test_dedicated_deletes_once_and_second_attempt_is_404(routed):
     assert _live(db, CO_A, "contacts", CONTACT) is None
     assert _inc_sum(db, "contacts", CO_A, "balance") == pytest.approx(5000.0)
 
-    assert db.catalog == {}
+    # Sorgusuz okumalar boş katalog kovası açabilir; satır yazılmaz.
+    assert all(not rows for rows in db.catalog.values())
     assert db.dedicated[CO_B] == before_b
 
     incs_after = list(db.incs)
