@@ -41,6 +41,8 @@ import { fmtMoney } from "../utils/money";
 import { MoneyInput, QuantityInput } from "../components/MoneyInput";
 import { parseBarcodeWithQty, parseScanQtyInput } from "../utils/scanQty";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
+import { safeReadProducts, safeRememberProducts } from "../offline/db";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
@@ -186,15 +188,24 @@ export default function QuickSalePage() {
     setLoading(true);
     try {
       const { data } = await axios.get(`${API_URL}/products`, { params: { company_id: companyId } });
-      setProducts(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setProducts(list);
+      safeRememberProducts(companyId, list);
     } catch {
-      toast.error("Ürünler yüklenemedi");
+      const cached = await safeReadProducts(companyId);
+      if (cached.length) setProducts(cached);
+      else toast.error("Ürünler yüklenemedi");
     } finally {
       setLoading(false);
     }
   }, [companyId]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
+  useEffect(() => {
+    const onReject = () => { loadProducts(); };
+    window.addEventListener("tamkobi:offline-rejected", onReject);
+    return () => window.removeEventListener("tamkobi:offline-rejected", onReject);
+  }, [loadProducts]);
 
   useEffect(() => {
     const next = loadSections(companyId);
@@ -705,29 +716,56 @@ export default function QuickSalePage() {
         return;
       }
       const mix = mixedChange(totals.total, Number(mixCash) || 0, 0, Number(tenderedCash) || 0);
-      const { data } = await axios.post(`${API_URL}/pos/checkout`, {
-        company_id: companyId,
-        customer_name: customerName || "Perakende Müşteri",
-        payment_method: pay,
-        sector: "retail",
-        terminal_id: pos.terminalId,
-        cash_amount: pay === "mixed" ? Number(mixCash) || mix.cash : (pay === "cash" ? totals.total : 0),
-        card_amount: pay === "mixed" ? Math.max(0, totals.total - (Number(mixCash) || 0)) : (pay === "card" ? totals.total : 0),
-        tendered_cash: Number(tenderedCash) || 0,
-        items: cart.map((l) => ({
-          product_id: l.product_id,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          vat_rate: l.vat_rate,
-          unit: l.unit,
-          lot_id: l.lot_id,
-          lot_number: l.lot_number,
-          serial_number: l.serial_number,
-          production_date: l.production_date,
-          expiry_date: l.expiry_date,
-          weighed: l.weighed,
-        })),
-      }, { headers: pos.headers });
+      const items = cart.map((l) => ({
+        product_id: l.product_id,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        vat_rate: l.vat_rate,
+        unit: l.unit,
+        lot_id: l.lot_id,
+        lot_number: l.lot_number,
+        serial_number: l.serial_number,
+        production_date: l.production_date,
+        expiry_date: l.expiry_date,
+        weighed: l.weighed,
+      }));
+      const expectedStock = {};
+      items.forEach((line) => {
+        const product = products.find((p) => (p.id || p._id) === line.product_id);
+        if (product) expectedStock[line.product_id] = Number(product.stock_quantity || 0);
+      });
+      const { data } = await postOrQueue(axios, {
+        url: `${API_URL}/pos/checkout`,
+        body: {
+          company_id: companyId,
+          customer_name: customerName || "Perakende Müşteri",
+          payment_method: pay,
+          sector: "retail",
+          terminal_id: pos.terminalId,
+          cash_amount: pay === "mixed" ? Number(mixCash) || mix.cash : (pay === "cash" ? totals.total : 0),
+          card_amount: pay === "mixed" ? Math.max(0, totals.total - (Number(mixCash) || 0)) : (pay === "card" ? totals.total : 0),
+          tendered_cash: Number(tenderedCash) || 0,
+          items,
+        },
+        config: { headers: pos.headers },
+        companyId,
+        kind: "pos_checkout",
+        critical: true,
+        expected: { stock: expectedStock, grandTotal: totals.total, rollback: { items } },
+      });
+      if (data?.queued) {
+        setProducts((prev) => prev.map((p) => {
+          const line = items.find((it) => it.product_id === (p.id || p._id));
+          if (!line) return p;
+          return { ...p, stock_quantity: Number(p.stock_quantity || 0) - Number(line.quantity || 0) };
+        }));
+        toast.success(data.message);
+        setCart([]);
+        setTenderedCash("");
+        setMixCash("");
+        setBusy(false);
+        return;
+      }
       const receipt = {
         ...(data.receipt || {}),
         company_name: data.receipt?.company_name || activeCompany?.name || "İşletme",
@@ -746,7 +784,8 @@ export default function QuickSalePage() {
       await loadProducts();
       focusBarcode();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Satış tamamlanamadı");
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : detail?.message || err?.message || "Satış tamamlanamadı");
     } finally {
       setBusy(false);
     }

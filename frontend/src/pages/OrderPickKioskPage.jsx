@@ -18,6 +18,7 @@ import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
 
@@ -237,7 +238,27 @@ export default function OrderPickKioskPage() {
 
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: qty });
+      const r = await postOrQueue(axios, {
+        url: `${API_URL}/order-picks/${ses.order_id}/scan`,
+        body: { barcode: c, quantity: qty },
+        companyId,
+        kind: "pick_scan",
+        critical: false,
+      });
+      if (r.data?.queued) {
+        setSes((prev) => {
+          if (!prev) return prev;
+          const items = (prev.items || []).map((it) => {
+            if (it !== localLine && it.line_index !== localLine?.line_index) return it;
+            return { ...it, picked_qty: Number(it.picked_qty || 0) + qty };
+          });
+          return { ...prev, items, message: r.data.message, queued: true };
+        });
+        setCode("");
+        toast.success(r.data.message);
+        setBusy(false);
+        return;
+      }
       setSes(r.data);
       setCode("");
       setOverscanFlash(null);

@@ -3,12 +3,14 @@
 import axios from "axios";
 import { isUpdateTransportError } from "../utils/platformNotices";
 import { installPageUnloadGuard, shouldIgnoreTransportError } from "../utils/transportOutage";
+import { installOfflineGuard } from "../offline/axiosGuard";
 
 export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 export const API_URL = `${BACKEND_URL}/api`;
 
 axios.defaults.withCredentials = true;
 installPageUnloadGuard();
+installOfflineGuard(axios);
 
 /** 502/503/ağ hatalarında hata sayfası yerine güncelleme bilgisini tetikle. */
 if (typeof window !== "undefined" && !axios.__tamkobiNoticeInterceptor) {

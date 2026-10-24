@@ -216,8 +216,6 @@ TENANT_SCOPE_BASELINE: dict[tuple[str, str, str, str], int] = {
     ('server.py', 'create_contact_ledger_slip', 'contacts', 'update_one'): 1,
     ('server.py', 'create_dispatch', 'invoices', 'find_one'): 1,
     ('server.py', 'create_dispatch', 'orders', 'update_one'): 1,
-    ('server.py', 'create_order', 'orders', 'find_one'): 1,
-    ('server.py', 'create_order', 'orders', 'insert_one'): 1,
     ('server.py', 'create_product', 'products', 'insert_one'): 1,
     ('server.py', 'create_production_order', 'production_orders', 'insert_one'): 2,
     ('server.py', 'create_purchase_order', 'purchase_orders', 'insert_one'): 1,

@@ -8,9 +8,11 @@ import App from "@/App";
 import { canonicalizeLocalOrigin } from "@/canonicalizeLocal";
 import { stripStaticRhTags } from "@/stripStaticRhTags";
 import { installPrintPageCss } from "@/utils/printPageCss";
+import { registerOfflineServiceWorker } from "@/offline/registerServiceWorker";
 
 canonicalizeLocalOrigin();
 installPrintPageCss();
+registerOfflineServiceWorker();
 // Bot meta index.html’de kalsın; JS ortamında çift etiket olmasın.
 stripStaticRhTags();
 

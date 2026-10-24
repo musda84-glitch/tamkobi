@@ -65,6 +65,29 @@ def test_idempotency_caches_response():
     assert calls["n"] == 1
 
 
+def test_missing_idempotency_key_runs_each_request():
+    """Başlık yoksa yazma ucu eskisi gibi her istekte bir kez çalışır, kayıt tekilleştirilmez."""
+    import idempotency
+
+    idempotency._INDEXED = True
+    db = MagicMock()
+    db.idempotency_keys = FakeIdempo()
+    calls = {"n": 0}
+
+    async def fn():
+        calls["n"] += 1
+        return {"ok": True, "n": calls["n"]}
+
+    req = MagicMock()
+    req.headers = {}
+    r1 = _run(idempotency.run(db, "co1", req, "orders/create", fn))
+    r2 = _run(idempotency.run(db, "co1", req, "orders/create", fn))
+    assert r1 == {"ok": True, "n": 1}
+    assert r2 == {"ok": True, "n": 2}
+    assert calls["n"] == 2
+    assert db.idempotency_keys.docs == {}
+
+
 def test_idempotency_in_progress_conflict():
     import idempotency
 

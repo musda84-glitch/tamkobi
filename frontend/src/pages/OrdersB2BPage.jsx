@@ -97,6 +97,7 @@ import {
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 import OrdersStaffMobile from "../components/orders/OrdersStaffMobile";
 import { StaffFiveActions, StaffProduceChoices } from "../components/orders/staffOrderActions";
@@ -1686,19 +1687,32 @@ function OrdersB2BPageImpl({ staffMode = false }) {
 
     if (!companyId) { toast.error("Firma seçili değil"); return; }
     try {
-      await axios.post(`${API_URL}/orders`, {
-        company_id: companyId,
-        channel: "b2b",
-        customer_name: selectedContact?.name || "B2B Bayi",
-        customer_email: selectedContact?.email || "bayi@tamkobi.com",
-        customer_phone: selectedContact?.phone || "0555 111 22 33",
-        shipping_address: selectedContact?.address || "Bayi Deposu",
-        city: selectedContact?.city || "İstanbul",
-        items: items,
-        total_amount: total,
-        currency: "TRY",
-        order_status: "approved"
+      const created = await postOrQueue(axios, {
+        url: `${API_URL}/orders`,
+        companyId,
+        kind: "order_create",
+        critical: true,
+        expected: { grandTotal: total },
+        body: {
+          company_id: companyId,
+          channel: "b2b",
+          customer_name: selectedContact?.name || "B2B Bayi",
+          customer_email: selectedContact?.email || "bayi@tamkobi.com",
+          customer_phone: selectedContact?.phone || "0555 111 22 33",
+          shipping_address: selectedContact?.address || "Bayi Deposu",
+          city: selectedContact?.city || "İstanbul",
+          items: items,
+          total_amount: total,
+          currency: "TRY",
+          order_status: "approved",
+        },
       });
+      if (created.data?.queued) {
+        toast.success(created.data.message);
+        setCart({});
+        setActiveTab("orders");
+        return;
+      }
       toast.success("B2B Toptan Sipariş başarıyla oluşturuldu!");
       setCart({});
       setActiveTab("orders");

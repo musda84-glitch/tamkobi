@@ -19,6 +19,7 @@ import {
   RefreshCw, Package, ShoppingCart, CheckCircle2, MapPin, Phone, X,
 } from "lucide-react";
 import { activeCompanyId } from "../utils/activeCompanyId";
+import { postOrQueue } from "../offline/write";
 import NoCompanyNotice from "../components/NoCompanyNotice";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -202,7 +203,7 @@ export default function FieldSalesPage() {
           vat_rate, total, vat_amount, total_incl: Math.round((total + vat_amount) * 100) / 100,
         };
       });
-      const r = await axios.post(`${API_URL}/orders`, {
+      const r = await postOrQueue(axios, { url: `${API_URL}/orders`, companyId, kind: "order_create", critical: true, expected: { grandTotal: total }, body: {
         company_id: companyId, channel: "saha", order_status: "pending",
         customer_name: name, customer_phone: customer?.phone || newCust?.phone || "",
         customer_email: customer?.email || "",
@@ -211,12 +212,14 @@ export default function FieldSalesPage() {
         contact_id: pid(customer) || null, notes,
         salesperson_name: user?.name || "",
         items, total_amount: total,
-      });
+      } });
+      if (r.data?.queued) { toast.success(r.data.message); setCart([]); setNotes(""); setCustomer(null); setNewCust(null); setShowCart(false); return; }
       toast.success(`Sipariş alındı: ${r.data.order_number}`);
       setCart([]); setNotes(""); setCustomer(null); setNewCust(null); setShowCart(false);
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Sipariş kaydedilemedi.");
+      const detail = e.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : detail?.message || "Sipariş kaydedilemedi.");
     } finally { setBusy(false); }
   };
 
