@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { act } from "react";
 import { MemoryRouter } from "react-router-dom";
 import MainLayout from "./MainLayout";
+import { setOnlineForTests } from "../offline/policy";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,7 +56,10 @@ jest.mock("../context/AuthContext", () => ({
   }),
 }));
 
+afterEach(() => setOnlineForTests(null));
+
 test("main yatay taşmayı kesmez ve min-w-0 kalır", async () => {
+  setOnlineForTests(true);
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -74,6 +78,12 @@ test("main yatay taşmayı kesmez ve min-w-0 kalır", async () => {
   expect(main.className).toContain("w-full");
   expect(main.className).not.toContain("overflow-x-hidden");
   expect(main.textContent).toContain("sayfa içeriği");
+  const bar = host.querySelector('[data-testid="offline-status-bar"]');
+  expect(bar).toBeTruthy();
+  expect(bar.textContent).toContain("Çevrimiçi");
+  expect(bar.textContent).toContain("Bekleyen");
+  expect(bar.textContent).toContain("Son senkron");
+  expect(host.querySelector('[data-testid="guest-offline-notice"]')).toBeNull();
   await act(async () => { root.unmount(); });
   host.remove();
 });

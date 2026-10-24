@@ -1,5 +1,5 @@
 
-import { isPublicPath, requiresSession } from "./publicPath";
+import { isGuestAuthPath, isPublicPath, requiresSession } from "./publicPath";
 
 test("marketing, login and platform paths stay public", () => {
   expect(isPublicPath("/")).toBe(true);
@@ -28,6 +28,27 @@ test("ERP shell paths are not public", () => {
   expect(isPublicPath("/panel")).toBe(false);
   expect(isPublicPath("/invoices")).toBe(false);
   expect(isPublicPath("/b2b-yonetim")).toBe(false);
+});
+
+test("guest auth screens are the unauthenticated entry paths", () => {
+  expect(isGuestAuthPath("/login")).toBe(true);
+  expect(isGuestAuthPath("/kayit")).toBe(true);
+  expect(isGuestAuthPath("/kayit/")).toBe(true);
+  expect(isGuestAuthPath("/sifre")).toBe(true);
+  expect(isGuestAuthPath("/sifre/abc")).toBe(true);
+  expect(isGuestAuthPath("/b2b/giris")).toBe(true);
+  expect(isGuestAuthPath("/b2b/sifre/abc")).toBe(true);
+  expect(isGuestAuthPath("/sistem/giris")).toBe(true);
+  expect(isGuestAuthPath("/sistem/2fa-kurulum")).toBe(true);
+  expect(isGuestAuthPath("/davet/abc")).toBe(true);
+  expect(isGuestAuthPath("/sso")).toBe(true);
+  expect(isGuestAuthPath("/kurulum")).toBe(true);
+  expect(isGuestAuthPath("/")).toBe(false);
+  expect(isGuestAuthPath("/web")).toBe(false);
+  expect(isGuestAuthPath("/panel")).toBe(false);
+  expect(isGuestAuthPath("/sistem/sirketler")).toBe(false);
+  expect(isGuestAuthPath("/b2b-yonetim")).toBe(false);
+  expect(isGuestAuthPath("/b2b/tedarikci")).toBe(false);
 });
 
 test("unknown paths skip login so SPA 404 can render", () => {

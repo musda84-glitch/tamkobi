@@ -11,7 +11,7 @@ import { HelpButton } from "./help/HelpButton";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { RadialQuickMenu } from "./RadialQuickMenu";
-import { isPublicPath, requiresSession } from "../utils/publicPath";
+import { isGuestAuthPath, isPublicPath, requiresSession } from "../utils/publicPath";
 import { mesaimExclusivePathAllowed } from "../utils/attendanceSelf";
 import { isPersonelRole, personelCanUseErpShortcuts, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
 import { erpShellReady } from "../utils/authAccess";
@@ -22,6 +22,7 @@ import AppSidebarNav from "./AppSidebarNav";
 import { DataExportIconButton } from "./DataExportPanel";
 import { SupportContactBar } from "./SupportContactBar";
 import OfflineStatusBar from "./OfflineStatusBar";
+import GuestOfflineNotice from "./GuestOfflineNotice";
 import { PanelBoundary } from "./saas/PanelBoundary";
 import { useNavCounts } from "../hooks/useNavCounts";
 import { warmupPanelCache } from "../utils/dataSync";
@@ -219,9 +220,11 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const publicSite = isPublicPath(location.pathname);
   if (publicSite) {
+    // Oturum yokken senkron çubuğu (Çevrimiçi / Bekleyen / Son senkron) gösterilmez.
+    // Gerçekten internet yoksa yalnız kısa bir uyarı kalır.
     return (
       <>
-        {location.pathname === "/login" ? <OfflineStatusBar /> : null}
+        {isGuestAuthPath(location.pathname) ? <GuestOfflineNotice /> : null}
         {children}
       </>
     );
