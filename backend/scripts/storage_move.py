@@ -787,10 +787,14 @@ async def _measure_docs(docs, company_id: str, name: str = "") -> tuple:
 async def measure_collection(db, mode: str, company_id: str, name: str, company: dict, *, with_bytes: bool = True):
     """Periyodik hacim. SQL sayımı varsa (adet, bayt), yoksa None.
 
-    None yalnız bellek kataloğu içindir; çağıran o zaman tam okur.
-    SQL hatası yukarı çıkar. Tam okumaya düşülmez.
+    Legacy kip None döner. companies _id, users company_ids ve platform/token
+    koleksiyonları _belongs ile tam okunur; docs.company_id sütunu bu türleri kaçırır.
+    None bellek kataloğu için de geçerlidir; çağıran o zaman tam okur.
+    SQL hatası yukarı çıkar. Dedicated ve shared_v2 tam okumaya düşmez.
     with_bytes False ise yalnız COUNT(*). Belge gövdesi okunmaz.
     """
+    if storage_router.normalize_mode(mode) == storage_router.LEGACY:
+        return None
     _finish_private_reads()
     try:
         coll = _open(db, mode, company_id, name, company)
@@ -819,31 +823,11 @@ async def _shared_volume_names(company_id: str) -> list[str]:
     return _public_names(names)
 
 
-async def _legacy_volume_names(db, company_id: str):
-    """Paylaşılan docs'ta DISTINCT collection. Gövde okunmaz. Bellek kataloğu None."""
-    getter = getattr(db, "__getitem__", None)
-    if getter is None:
-        return None
-    try:
-        coll = db["companies"]
-    except Exception:
-        return None
-    fetch = getattr(coll, "_fetch_rows", None)
-    if fetch is None:
-        return None
-    rows = fetch(
-        "SELECT DISTINCT collection FROM docs WHERE company_id=%s",
-        [str(company_id)],
-    )
-    if inspect.isawaitable(rows):
-        rows = await rows
-    return [str(row[0]) for row in rows or [] if row and row[0]]
-
-
 async def volume_names(db, mode: str, company_id: str, company: dict) -> list[str]:
-    """Ölçümün koleksiyon listesi. Belge satırı çekmez.
+    """Ölçümün koleksiyon listesi.
 
-    Taşıma _names ile kalır. Bellek kataloğunda _names'e düşülür.
+    Dedicated ve shared_v2 belge satırı çekmez. Legacy eski _names yoludur:
+    company, membership, platform ve token _belongs ile eşlenir.
     """
     kind = storage_router.normalize_mode(mode)
     if kind == storage_router.DEDICATED:
@@ -855,9 +839,6 @@ async def volume_names(db, mode: str, company_id: str, company: dict) -> list[st
         return _public_names(names)
     if kind == storage_router.SHARED_V2:
         return await _shared_volume_names(company_id)
-    listed = await _legacy_volume_names(db, company_id)
-    if listed is not None:
-        return _public_names(listed)
     return await _names(db, kind, company_id, company, kind)
 
 

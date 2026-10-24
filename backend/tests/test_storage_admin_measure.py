@@ -50,9 +50,11 @@ def _quiet(monkeypatch):
     monkeypatch.delenv("STORAGE_ROUTER_ENABLED", raising=False)
     storage_admin._measure_not_before = None
     storage_admin._worker_guard = False
+    storage_admin._measure_guard = False
     yield
     storage_admin._measure_not_before = None
     storage_admin._worker_guard = False
+    storage_admin._measure_guard = False
     storage_router.reset()
     storage_dedicated.reset_pools()
     storage_shared_v2.reset_store()
@@ -211,33 +213,56 @@ def test_shared_measure_volume_does_not_load_docs(tmp_path):
         connection.close()
 
 
-def test_legacy_volume_names_lists_collections_without_documents():
-    class Coll:
-        def __init__(self):
-            self.sql = []
+def test_legacy_measure_uses_belongs_not_the_company_id_column(monkeypatch):
+    """companies _id ve users company_ids docs.company_id sayımında kaybolmasın."""
+    from dashboard_memdb import MemColl
 
-        async def _fetch_rows(self, sql, params):
-            self.sql.append((sql, list(params)))
-            return [("sync_tombstones",), ("orders",)]
+    called = {"volume": 0}
 
-    class DB:
-        def __init__(self):
-            self.coll = Coll()
+    async def measure_volume(self, company_id, *, with_bytes=True):
+        called["volume"] += 1
+        return (0, 0)
 
-        def __getitem__(self, name):
-            return self.coll
-
-    db = DB()
+    monkeypatch.setattr(MemColl, "measure_volume", measure_volume, raising=False)
+    monkeypatch.setattr(storage_admin, "SKIP_VOLUME", frozenset())
 
     async def _case():
-        names = await storage_move.volume_names(db, "legacy", CID, {})
-        assert names == ["orders", "sync_tombstones"]
+        db = MemDB()
+        await db.companies.insert_one({"_id": CID, "name": "Ersay"})
+        await db.companies.insert_one({"_id": "comp_other", "name": "Diğer", "company_id": "comp_other"})
+        await db.users.insert_one({"_id": "u1", "name": "Ada", "company_ids": [CID]})
+        await db.users.insert_one({
+            "_id": "u3", "name": "Berk", "company_id": "comp_other", "company_ids": [CID],
+        })
+        await db.users.insert_one({
+            "_id": "u2", "name": "Cem", "company_id": "comp_other", "company_ids": ["comp_other"],
+        })
+        await db.orders.insert_one({"_id": "o1", "company_id": CID, "name": "Kalem"})
+        await db.orders.insert_one({"_id": "o2", "company_id": "comp_other", "name": "Yabancı"})
+        await db.password_resets.insert_one({"_id": "pr1", "company_id": CID, "token": "a"})
+        await db.password_resets.insert_one({"_id": "pr2", "token": "b"})
+        await db.login_attempts.insert_one({"_id": "la1", "company_id": CID, "identifier": "ada@example.com"})
+        await db.login_attempts.insert_one({"_id": "la2", "identifier": "other"})
+
+        assert await storage_move.measure_collection(
+            db, "legacy", CID, "users", {}, with_bytes=True,
+        ) is None
+        names = await storage_move.volume_names(db, "legacy", CID, _company())
+        assert "companies" in names
+        assert "users" in names
+        volume = await storage_admin.read_volume(db, _company())
+        counts = {row["name"]: row["count"] for row in volume["collections"]}
+        assert counts["companies"] == 1
+        assert counts["users"] == 2
+        assert counts["orders"] == 1
+        assert counts["password_resets"] == 1
+        assert counts["login_attempts"] == 1
+        assert called["volume"] == 0
 
     _run(_case())
-    sql, params = db.coll.sql[0]
-    assert "DISTINCT collection" in sql
-    assert "SELECT doc" not in sql
-    assert params == [CID]
+    text = inspect.getsource(storage_move.volume_names)
+    assert "WHERE company_id" not in text
+    assert "LEGACY" in inspect.getsource(storage_move.measure_collection)
 
 
 def test_read_volume_does_not_fetch_rows_when_sql_counts(monkeypatch):
@@ -317,6 +342,7 @@ def test_small_change_reuses_bytes_and_large_change_sums(monkeypatch):
             "_id": CID,
             "company_id": CID,
             "measured_at": "2020-01-01T00:00:00+00:00",
+            "bytes_measured_at": (NOW - timedelta(hours=1)).isoformat(),
             "records": 180506,
             "bytes": 5000,
             "collections": [{"name": "sync_tombstones", "count": 180506, "bytes": 5000}],
@@ -410,7 +436,7 @@ def test_maybe_measure_waits_for_startup_and_interval(monkeypatch):
     assert "arm_measure_delay" in inspect.getsource(storage_admin.scheduler_loop)
 
 
-def test_failed_measure_does_not_retry_every_tick(monkeypatch):
+def test_failed_measure_retries_after_a_short_backoff(monkeypatch):
     calls = {"n": 0}
 
     async def boom(*_args, **_kwargs):
@@ -425,9 +451,141 @@ def test_failed_measure_does_not_retry_every_tick(monkeypatch):
         assert await storage_admin.maybe_measure(db, now=NOW + timedelta(seconds=90)) is False
         assert calls["n"] == 1
         meta = await db[storage_admin.SETTINGS].find_one({"_id": storage_admin.META_ID})
-        assert meta["measured_at"]
+        assert not (meta or {}).get("measured_at")
+        assert meta["measure_failed_at"]
+        retry_at = NOW + timedelta(seconds=storage_admin.measure_retry_seconds() + 1)
+        assert await storage_admin.maybe_measure(db, now=retry_at) is False
+        assert calls["n"] == 2
+        assert storage_admin._measure_guard is False
 
     _run(_case())
+
+
+def test_flat_count_refreshes_bytes_after_a_day(monkeypatch):
+    calls = []
+
+    async def names(*_args, **_kwargs):
+        return ["sync_tombstones"]
+
+    async def measure(_db, _mode, _cid, name, _company, *, with_bytes=True):
+        calls.append(with_bytes)
+        return (180506, 9000 if with_bytes else 0)
+
+    monkeypatch.setattr(storage_move, "volume_names", names)
+    monkeypatch.setattr(storage_move, "measure_collection", measure)
+
+    async def _case():
+        db = MemDB()
+        await db.companies.insert_one(_company())
+        await db[storage_admin.SUMMARIES].insert_one({
+            "_id": CID,
+            "company_id": CID,
+            "measured_at": "2020-01-01T00:00:00+00:00",
+            "records": 180506,
+            "bytes": 5000,
+            "collections": [{"name": "sync_tombstones", "count": 180506, "bytes": 5000}],
+        })
+        thresholds = dict(storage_admin.DEFAULT_THRESHOLDS)
+        missing = await storage_admin.measure_company(
+            db, _company(), thresholds, today="2026-10-24", now=NOW,
+        )
+        assert missing["bytes"] == 9000
+        assert missing["bytes_measured_at"] == NOW.isoformat()
+        assert calls == [True]
+        calls.clear()
+
+        await db[storage_admin.SUMMARIES].update_one(
+            {"_id": CID},
+            {"$set": {
+                "measured_at": "2020-01-01T00:00:00+00:00",
+                "bytes_measured_at": (NOW - timedelta(hours=1)).isoformat(),
+            }},
+        )
+        recent = await storage_admin.measure_company(
+            db, _company(), thresholds, today="2026-10-24", now=NOW,
+        )
+        assert recent["records"] == 180506
+        assert recent["bytes"] == 9000
+        assert calls == [False]
+        calls.clear()
+
+        await db[storage_admin.SUMMARIES].update_one(
+            {"_id": CID},
+            {"$set": {
+                "measured_at": "2020-01-01T00:00:00+00:00",
+                "bytes_measured_at": (NOW - timedelta(hours=25)).isoformat(),
+                "collections": [{"name": "sync_tombstones", "count": 180506, "bytes": 9000}],
+            }},
+        )
+        stale = await storage_admin.measure_company(
+            db, _company(), thresholds, today="2026-10-24", now=NOW,
+        )
+        assert stale["bytes"] == 9000
+        assert stale["bytes_measured_at"] == NOW.isoformat()
+        assert calls == [True]
+
+    _run(_case())
+
+
+def test_manual_measure_rejects_a_second_run(monkeypatch):
+    calls = {"n": 0}
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow(*_args, **_kwargs):
+        calls["n"] += 1
+        started.set()
+        await release.wait()
+        return {"measured_at": NOW.isoformat(), "companies": 1}
+
+    monkeypatch.setattr(storage_admin, "measure_all", slow)
+
+    async def _case():
+        db = MemDB()
+        storage_admin._measure_guard = True
+        with pytest.raises(storage_admin.StorageAdminError) as caught:
+            await storage_admin.measure_now(db, now=NOW)
+        assert caught.value.status == 409
+        assert calls["n"] == 0
+        assert await storage_admin.maybe_measure(db, now=NOW) is False
+        assert calls["n"] == 0
+        storage_admin._measure_guard = False
+
+        task = asyncio.create_task(storage_admin.measure_now(db, now=NOW))
+        await started.wait()
+        with pytest.raises(storage_admin.StorageAdminError) as busy:
+            await storage_admin.measure_now(db, now=NOW)
+        assert busy.value.status == 409
+        assert await storage_admin.maybe_measure(db, now=NOW) is False
+        release.set()
+        done = await task
+        assert done["companies"] == 1
+        assert calls["n"] == 1
+        assert storage_admin._measure_guard is False
+
+    _run(_case())
+
+
+def test_measure_endpoint_returns_409_when_busy(monkeypatch):
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("ikinci ölçüm başladı")
+
+    async def ready(token, database, **kwargs):
+        return {"_id": "sa", "is_super_admin": True, "totp_enabled": True, "name": "Mustafa"}
+
+    monkeypatch.setattr(storage_admin, "measure_all", boom)
+    monkeypatch.setattr(saas, "get_user_from_token", ready)
+    db = MemDB()
+    storage_admin.init(db)
+    saas._db = db
+    storage_admin._measure_guard = True
+    app = FastAPI()
+    app.include_router(storage_admin.router)
+    client = TestClient(app)
+    busy = client.post("/api/system/storage-admin/measure", headers={"Authorization": "Bearer tok"})
+    assert busy.status_code == 409
+    assert busy.json()["detail"] == "Ölçüm zaten çalışıyor."
+    assert storage_admin._measure_guard is True
 
 
 def test_dedicated_read_volume_counts_tombstones(monkeypatch, tmp_path):

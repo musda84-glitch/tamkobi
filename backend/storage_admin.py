@@ -212,10 +212,29 @@ def measure_start_delay() -> float:
     return value if value >= 0 else 600.0
 
 
-# Küçük değişim: mutlak ve oransal sınır birlikte. Bayt taraması atlanır.
+def byte_refresh_seconds() -> float:
+    """Aynı sayıda büyüyen belgeler için SUM(LENGTH(doc)) yenileme süresi."""
+    try:
+        value = float(os.environ.get("STORAGE_ADMIN_BYTE_REFRESH_SECONDS") or str(24 * 3600))
+    except (TypeError, ValueError):
+        value = 24 * 3600
+    return value if value >= 60 else 24 * 3600
+
+
+def measure_retry_seconds() -> float:
+    """Başarısız ölçümün yeniden deneme aralığı. Başarı damgası bu kadar bekletmez."""
+    try:
+        value = float(os.environ.get("STORAGE_ADMIN_MEASURE_RETRY_SECONDS") or "900")
+    except (TypeError, ValueError):
+        value = 900.0
+    return value if value >= 30 else 900.0
+
+
+# Küçük değişim: mutlak ve oransal sınır birlikte. Bayt taraması ancak damga yeniyse atlanır.
 _REUSE_ABS = 50
 _REUSE_RATIO = 0.01
 _measure_not_before: Optional[datetime] = None
+_measure_guard = False
 
 
 def arm_measure_delay(now: Optional[datetime] = None) -> None:
@@ -246,6 +265,30 @@ def _bytes_reusable(old, new) -> bool:
         return True
     base = max(previous, 1)
     return delta <= _REUSE_ABS and (delta / base) <= _REUSE_RATIO
+
+
+def _bytes_fresh(previous, moment: datetime) -> bool:
+    """Bayt önbelleği yoksa veya 24 saati geçtiyse SUM(LENGTH(doc)) gerekir."""
+    if not isinstance(previous, dict):
+        return False
+    stamp = _parse(previous.get("bytes_measured_at"))
+    if stamp is None:
+        return False
+    return (moment - stamp).total_seconds() < byte_refresh_seconds()
+
+
+def _try_begin_measure() -> bool:
+    """Aynı süreçte ikinci ölçümü açmaz. Bayrak ilk await'ten önce kurulur."""
+    global _measure_guard
+    if _measure_guard:
+        return False
+    _measure_guard = True
+    return True
+
+
+def _end_measure() -> None:
+    global _measure_guard
+    _measure_guard = False
 
 
 def _can_reuse_bytes(previous: dict, probe: dict) -> bool:
@@ -432,7 +475,8 @@ async def _files(db, company_id: str) -> dict:
 async def read_volume(db, company: dict, *, with_bytes: bool = True) -> dict:
     """Kayıt ve bayt, firmanın güncel kipinden. Yönlendirici kapalıysa legacy.
 
-    SQL sayımı belge çekmez. Sayım yoksa (bellek kataloğu) tam okuma kalır.
+    Dedicated ve shared_v2 SQL sayımı belge çekmez. Legacy tam okur:
+    company, membership, platform ve token _belongs ile eşlenir.
     SQL hatası tam okumaya düşmez. with_bytes False yalnız COUNT(*) çalıştırır.
     """
     cid = str(company.get("_id") or "")
@@ -509,15 +553,28 @@ async def _prune_snapshots(db, today: str) -> None:
             await db[SNAPSHOTS].delete_one({"_id": row.get("_id")})
 
 
-async def _volume_for(db, company: dict, previous, *, force: bool) -> dict:
-    """Taze özet, küçük sayım farkı veya tam SQL hacmi."""
-    if not force and isinstance(previous, dict) and not previous.get("measure_error"):
+async def _volume_for(db, company: dict, previous, *, force: bool, now: Optional[datetime] = None) -> dict:
+    """Taze özet, küçük sayım farkı veya tam hacim.
+
+    Sayım durgun olsa da bayt damgası yoksa ya da 24 saati geçtiyse SUM(LENGTH(doc)).
+    """
+    moment = now or _now()
+    if (
+        not force
+        and isinstance(previous, dict)
+        and not previous.get("measure_error")
+        and _bytes_fresh(previous, moment)
+    ):
         probe = await read_volume(db, company, with_bytes=False)
         if probe.get("error"):
             return probe
         if _can_reuse_bytes(previous, probe):
-            return _with_cached_bytes(probe, previous)
-    return await read_volume(db, company, with_bytes=True)
+            reused = _with_cached_bytes(probe, previous)
+            reused["bytes_refreshed"] = False
+            return reused
+    volume = await read_volume(db, company, with_bytes=True)
+    volume["bytes_refreshed"] = not bool(volume.get("error"))
+    return volume
 
 
 async def measure_company(
@@ -530,7 +587,9 @@ async def measure_company(
     previous = await _find_one(db, SUMMARIES, {"_id": cid})
     if not force and _summary_fresh(previous, moment):
         return previous
-    volume = await _volume_for(db, company, previous, force=force)
+    volume = await _volume_for(db, company, previous, force=force, now=moment)
+    refreshed = bool(volume.get("bytes_refreshed"))
+    prior_bytes_at = str(previous.get("bytes_measured_at") or "") if isinstance(previous, dict) else ""
     people = await _people(db, cid)
     files = await _files(db, cid)
     records = sum(int(row.get("count") or 0) for row in volume["collections"])
@@ -546,10 +605,11 @@ async def measure_company(
     for row in volume["collections"]:
         if largest is None or int(row.get("bytes") or 0) > int(largest.get("bytes") or 0):
             largest = {"name": row.get("name"), "bytes": int(row.get("bytes") or 0)}
-    measured_at = _iso()
+    measured_at = _iso(moment)
     summary = {
         "company_id": cid,
         "measured_at": measured_at,
+        "bytes_measured_at": measured_at if refreshed else prior_bytes_at,
         "records": records,
         "bytes": nbytes,
         "collections": volume["collections"],
@@ -605,28 +665,43 @@ async def measure_all(
     day = today or moment.date().isoformat()
     await _prune_snapshots(db, day)
     stamp = _iso(moment)
-    await _save(db, SETTINGS, META_ID, {"measured_at": stamp, "companies": len(rows)})
+    await _save(db, SETTINGS, META_ID, {
+        "measured_at": stamp,
+        "measure_failed_at": "",
+        "companies": len(rows),
+    })
     _logger().info("ölçüm firma=%s", len(rows))
     return {"measured_at": stamp, "companies": len(rows)}
 
 
 async def measure_now(db, *, company_id: str = "", now: Optional[datetime] = None) -> dict:
-    """Elle ölçüm. Aralık, açılış gecikmesi ve küçük değişim önbelleği uygulanmaz."""
-    moment = now or _now()
-    if str(company_id or "").strip():
-        cid = _company_id(company_id)
-        company = await _require_company(db, cid)
-        thresholds = await load_thresholds(db)
-        summary = await measure_company(
-            db, company, thresholds, today=moment.date().isoformat(), force=True, now=moment,
-        )
-        await _save(db, SETTINGS, META_ID, {"measured_at": summary.get("measured_at") or _iso(moment)})
-        return {
-            "measured_at": summary.get("measured_at") or "",
-            "companies": 1,
-            "company_id": storage_router._safe_company(cid),
-        }
-    return await measure_all(db, today=moment.date().isoformat(), force=True, now=moment)
+    """Elle ölçüm. Aralık, açılış gecikmesi ve küçük değişim önbelleği uygulanmaz.
+
+    Ölçüm zaten çalışıyorsa yenisi başlamaz.
+    """
+    if not _try_begin_measure():
+        raise StorageAdminError("Ölçüm zaten çalışıyor.", status=409)
+    try:
+        moment = now or _now()
+        if str(company_id or "").strip():
+            cid = _company_id(company_id)
+            company = await _require_company(db, cid)
+            thresholds = await load_thresholds(db)
+            summary = await measure_company(
+                db, company, thresholds, today=moment.date().isoformat(), force=True, now=moment,
+            )
+            await _save(db, SETTINGS, META_ID, {
+                "measured_at": summary.get("measured_at") or _iso(moment),
+                "measure_failed_at": "",
+            })
+            return {
+                "measured_at": summary.get("measured_at") or "",
+                "companies": 1,
+                "company_id": storage_router._safe_company(cid),
+            }
+        return await measure_all(db, today=moment.date().isoformat(), force=True, now=moment)
+    finally:
+        _end_measure()
 
 
 def maintenance_window(now: Optional[datetime] = None) -> dict:
@@ -1537,18 +1612,25 @@ async def maybe_measure(db, *, now: Optional[datetime] = None, force: bool = Fal
     stamp = _parse(meta.get("measured_at"))
     if not force and stamp is not None and (moment - stamp).total_seconds() < measure_seconds():
         return False
-    # Başarısız tarama her turda (≈90 sn) yeniden 180 bin satır okumasın.
-    if not force:
+    failed = _parse(meta.get("measure_failed_at"))
+    if not force and failed is not None and (moment - failed).total_seconds() < measure_retry_seconds():
+        return False
+    if not _try_begin_measure():
+        return False
+    try:
+        try:
+            await measure_all(db, today=moment.date().isoformat(), force=force, now=moment)
+        except Exception as exc:
+            _logger().info("ölçüm: %s", storage_router.public_store_error(exc) or type(exc).__name__)
+            await _save(db, SETTINGS, META_ID, {"measure_failed_at": _iso(moment)})
+            return False
         await _save(db, SETTINGS, META_ID, {
             "measured_at": _iso(moment),
-            "companies": meta.get("companies") or 0,
+            "measure_failed_at": "",
         })
-    try:
-        await measure_all(db, today=moment.date().isoformat(), force=force, now=moment)
-    except Exception as exc:
-        _logger().info("ölçüm: %s", storage_router.public_store_error(exc) or type(exc).__name__)
-        return False
-    return True
+        return True
+    finally:
+        _end_measure()
 
 
 async def tick(db, *, now: Optional[datetime] = None) -> dict:
@@ -1750,7 +1832,10 @@ async def storage_admin_overview(admin: dict = Depends(saas.require_super_admin)
 
 @router.post("/system/storage-admin/measure")
 async def storage_admin_measure(admin: dict = Depends(saas.require_super_admin)):
-    """Paneldeki elle yeniden ölç. Aralık ve önbellek uygulanmaz."""
+    """Paneldeki elle yeniden ölç. Aralık ve önbellek uygulanmaz.
+
+    Ölçüm sürüyorsa 409. İkinci tarama açılmaz.
+    """
     return await _run(measure_now, _database())
 
 
