@@ -1,10 +1,13 @@
-import { isOnline, newIdempotencyKey, onlineOnlyBlock } from "./policy";
+import { isOnline, moduleOfflineBlock, newIdempotencyKey, onlineOnlyBlock } from "./policy";
 import { enqueue, flushQueue } from "./queue";
 import { createDexieQueue } from "./dexieQueue";
 import { idbReady, sharedDb } from "./db";
 
 const META_SINCE = "offlineSince";
 const META_MAX = "offlineMaxMinutes";
+const META_POLICY = "offlinePolicy";
+const META_DEVICE = "offlineDeviceId";
+const MODULE_BY_KIND = { pos_checkout: "pos", pick_scan: "pick", order_create: "order" };
 
 async function metaGet(key) {
   const db = sharedDb();
@@ -49,6 +52,30 @@ export async function readOfflineClock() {
   return { offlineSince: offlineSince || null, maxMinutes: maxMinutes || 10 };
 }
 
+export async function rememberOfflinePolicy(policy) {
+  if (!policy) return;
+  await metaSet(META_POLICY, {
+    enabled: policy.enabled !== false,
+    maxMinutes: policy.maxMinutes,
+    modules: policy.modules || null,
+    ttlHours: policy.ttlHours,
+  });
+  if (policy.maxMinutes) await metaSet(META_MAX, policy.maxMinutes);
+}
+
+export async function readOfflinePolicy() {
+  const value = await metaGet(META_POLICY);
+  return value && typeof value === "object" ? value : null;
+}
+
+export async function ensureDeviceId() {
+  const current = await metaGet(META_DEVICE);
+  if (current && /^[A-Za-z0-9_-]{8,80}$/.test(String(current))) return String(current);
+  const id = newIdempotencyKey();
+  await metaSet(META_DEVICE, id);
+  return id;
+}
+
 function offlineError(block, status = 503) {
   const err = new Error(block.message);
   err.code = block.code;
@@ -69,6 +96,7 @@ export async function postOrQueue(axios, {
   config,
   companyId,
   kind = "write",
+  module,
   critical = false,
   expected,
   optimistic,
@@ -79,6 +107,10 @@ export async function postOrQueue(axios, {
   const key = newIdempotencyKey();
   const headers = { ...(config?.headers || {}), "Idempotency-Key": key };
   if (!isOnline()) {
+    const policy = await readOfflinePolicy();
+    const moduleName = module || MODULE_BY_KIND[kind];
+    const blockedModule = moduleOfflineBlock({ online: false, policy, module: moduleName });
+    if (blockedModule) throw offlineError(blockedModule, 403);
     await markOfflineWindow();
     const clock = await readOfflineClock();
     const queuedBody = { ...(body || {}) };

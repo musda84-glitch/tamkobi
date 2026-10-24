@@ -1,4 +1,4 @@
-"""HTTP Idempotency-Key: company_id + anahtar, 24 saat TTL."""
+"""HTTP Idempotency-Key: company_id + anahtar. Saklama süresi firma ayarı, varsayılan 24 saat."""
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +26,7 @@ DuplicateKeyError = MysqlDuplicateKeyError
 logger = logging.getLogger("idempotency")
 
 TTL_HOURS = 24
+MAX_TTL_HOURS = 168
 CLEANUP_EVERY_S = 3600
 _INDEXED = False
 
@@ -85,8 +86,16 @@ async def ensure_indexes(db) -> None:
         await db.idempotency_keys.create_index(
             [("company_id", 1), ("key", 1)], unique=True, name="idempo_company_key"
         )
+        drop = getattr(db.idempotency_keys, "drop_index", None)
+        if callable(drop):
+            try:
+                dropped = drop("idempo_ttl")
+                if hasattr(dropped, "__await__"):
+                    await dropped
+            except Exception:
+                pass
         await db.idempotency_keys.create_index(
-            "created_at", expireAfterSeconds=TTL_HOURS * 3600, name="idempo_ttl"
+            "created_at", expireAfterSeconds=MAX_TTL_HOURS * 3600, name="idempo_ttl"
         )
         _INDEXED = True
     except Exception:
@@ -129,7 +138,14 @@ async def begin(db, company_id: str, key: str, endpoint: str) -> Optional[Dict[s
 
     created = _as_utc(existing.get("created_at")) or now
     age_s = (now - created).total_seconds()
-    if age_s > TTL_HOURS * 3600:
+    ttl_hours = TTL_HOURS
+    try:
+        import offline_sync
+
+        ttl_hours = await offline_sync.ttl_hours_for(db, cid)
+    except Exception:
+        ttl_hours = TTL_HOURS
+    if age_s > ttl_hours * 3600:
         await db.idempotency_keys.delete_one({"_id": existing["_id"], "company_id": cid})
         if await _try_insert(db, doc):
             return {"hit": False, "key": key, "company_id": cid}
@@ -256,13 +272,35 @@ async def abandon(db, company_id: str, key: str) -> None:
         logger.exception("Idempotency anahtarı silinemedi: %s", key)
 
 
+async def _company_ttl_map(db) -> Dict[str, int]:
+    try:
+        import offline_sync
+
+        mapped = await offline_sync.ttl_hours_map(db)
+        if isinstance(mapped, dict):
+            return mapped
+    except Exception:
+        logger.exception("idempotency ttl haritası okunamadı")
+    return {}
+
+
+def _past_ttl(doc: dict, hours: int, now: datetime) -> bool:
+    created = _as_utc((doc or {}).get("created_at"))
+    if created is None:
+        return False
+    return (now - created).total_seconds() > max(1, int(hours or TTL_HOURS)) * 3600
+
+
 async def _purge_expired_routed(db) -> int:
     """Bayrak açık: süresi dolmuş anahtar her şirketin kendi deposunda silinir."""
     import storage_router
 
-    cutoff = (_now() - timedelta(hours=TTL_HOURS)).isoformat()
+    hours_map = await _company_ttl_map(db)
+    now = _now()
     deleted = 0
     async for cid, store in storage_router.iter_company_stores(db):
+        hours = int(hours_map.get(cid) or TTL_HOURS)
+        cutoff = (now - timedelta(hours=hours)).isoformat()
         try:
             stale = await store.idempotency_keys.find(
                 {"company_id": cid, "created_at": {"$lt": cutoff}},
@@ -281,17 +319,28 @@ async def _purge_expired_routed(db) -> int:
 
 
 async def purge_expired(db) -> int:
-    """24 saatten eski idempotency anahtarlarını sil. Silinen sayısı."""
+    """Firma saklama süresini aşmış idempotency anahtarlarını sil. Silinen sayısı."""
     import storage_router
 
     if storage_router.enabled():
         return await _purge_expired_routed(db)
-    cutoff = (_now() - timedelta(hours=TTL_HOURS)).isoformat()
+    now = _now()
+    hours_map = await _company_ttl_map(db)
+    # En kısa süre 1 saat. Daha yeni anahtarlar taranmaz; şirket süresi dolmayanlar atlanır.
+    cutoff = (now - timedelta(hours=1)).isoformat()
     deleted = 0
-    # created_at ISO string karşılaştırması lexicographic olarak güvenli (UTC)
     # tenant-ok: saatlik temizlik, süresi dolmuş anahtarları tüm şirketlerde tarar
-    stale = await db.idempotency_keys.find({"created_at": {"$lt": cutoff}}).to_list(5000)
+    cursor = db.idempotency_keys.find({"created_at": {"$lt": cutoff}})
+    sort = getattr(cursor, "sort", None)
+    if callable(sort):
+        sorted_cursor = sort("created_at", 1)
+        if sorted_cursor is not None:
+            cursor = sorted_cursor
+    stale = await cursor.to_list(5000)
     for doc in stale:
+        hours = int(hours_map.get(str(doc.get("company_id") or "")) or TTL_HOURS)
+        if not _past_ttl(doc, hours, now):
+            continue
         try:
             await db.idempotency_keys.delete_one({"_id": doc["_id"]})  # tenant-ok: saatlik temizlik, bulunan anahtarın _id'si
             deleted += 1

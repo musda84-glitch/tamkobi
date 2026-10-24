@@ -1256,12 +1256,11 @@ def clamp_price_decimals(value, default=2):
 
 @api_router.put("/companies/{company_id}")
 async def update_company(company_id: str, req: Dict[str, Any]):
-    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry", "price_decimals", "offline_max_minutes"}}
+    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry", "price_decimals"}}
     # company_no ve id salt okunur; istemci Şirket ID yazamaz.
+    # Çevrimdışı süre ve modüller şirket formundan değil, ynt panelinden yazılır.
     if "price_decimals" in allowed:
         allowed["price_decimals"] = clamp_price_decimals(allowed["price_decimals"])
-    if "offline_max_minutes" in allowed:
-        allowed["offline_max_minutes"] = offline_sync.clamp_offline_max_minutes(allowed["offline_max_minutes"])
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
@@ -8956,6 +8955,7 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
     }
     if amount_note:
         out["conflicts"] = [amount_note]
+        await offline_sync.note_conflict(db, company_id, amount_note)
     try:
         await pos_cashier.on_checkout_done(user or {}, invoice, pos_meta)
     except Exception:
@@ -22867,6 +22867,7 @@ async def _create_order_core(order: Order, request: Request, user: dict):
     )
     if amount_note and isinstance(payload, dict):
         payload = {**payload, "conflicts": [amount_note]}
+        await offline_sync.note_conflict(db, order.company_id, amount_note)
     return payload
 
 @api_router.put("/orders/{order_id}/status")
@@ -28131,6 +28132,8 @@ edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_te
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products_payload, "mail_account": _mail_account, "wa_send": wa_send}, get_current_user)
 order_pick.init(db, {"create_production_order": create_production_order, "push_order_to_shopphp": _push_order_to_shopphp, "create_draft_invoice_for_order": _create_draft_invoice_for_order}, get_current_user)
 offline_sync.init(db, get_current_user)
+import offline_admin
+offline_admin.init(db)
 trade.init(db, _create_invoice_core, get_current_user)
 
 async def _restore_bank_tx(doc, _related):
@@ -28372,6 +28375,7 @@ app.include_router(saas_docs.router)
 app.include_router(trade.router)
 app.include_router(order_pick.router)
 app.include_router(offline_sync.router)
+app.include_router(offline_admin.router)
 app.include_router(platform_mail.router)
 app.include_router(platform_sms.router)
 app.include_router(mail_service.router)

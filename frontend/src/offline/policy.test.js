@@ -2,6 +2,7 @@ import {
   BACKOFF_MS,
   clampOfflineMinutes,
   criticalBlock,
+  moduleOfflineBlock,
   onlineOnlyBlock,
   remainingMs,
   setOnlineForTests,
@@ -42,6 +43,20 @@ test("e-fatura, ödeme, banka ve AI çevrimdışıyken kapalıdır", () => {
   setOnlineForTests(true);
   expect(onlineOnlyBlock("/api/einvoice/send")).toBeNull();
   expect(onlineOnlyBlock("/api/isnet/outbox")).toBeNull();
+});
+
+test("kapalı firma ve kapalı modül çevrimdışıyken yazmayı durdurur", () => {
+  expect(moduleOfflineBlock({ online: true, policy: { enabled: false }, module: "pos" })).toBeNull();
+  expect(moduleOfflineBlock({ online: false, policy: null, module: "pos" })).toBeNull();
+  expect(moduleOfflineBlock({
+    online: false, module: "pos", policy: { enabled: false, modules: { pos: true } },
+  }).code).toBe("OFFLINE_DISABLED");
+  expect(moduleOfflineBlock({
+    online: false, module: "order", policy: { enabled: true, modules: { order: false } },
+  }).code).toBe("OFFLINE_MODULE_DISABLED");
+  expect(moduleOfflineBlock({
+    online: false, module: "pick", policy: { enabled: true, modules: { pick: true } },
+  })).toBeNull();
 });
 
 test("yeniden deneme aralıkları 1-2-4-8 saniyedir", () => {

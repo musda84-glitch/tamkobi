@@ -34,6 +34,23 @@ export function remainingMs({ offlineSince, maxMinutes, now = Date.now() } = {})
   return Math.max(0, max - (now - Number(offlineSince)));
 }
 
+export function moduleOfflineBlock({ online, policy, module }) {
+  if (online || !module || !policy) return null;
+  if (policy.enabled === false) {
+    return {
+      code: "OFFLINE_DISABLED",
+      message: "Bu firma için çevrimdışı kapalı. Bağlantı gelince yeniden deneyin.",
+    };
+  }
+  if (policy.modules && policy.modules[module] === false) {
+    return {
+      code: "OFFLINE_MODULE_DISABLED",
+      message: "Bu modül çevrimdışıyken kapalı. Bağlantı gelince yeniden deneyin.",
+    };
+  }
+  return null;
+}
+
 export function criticalBlock({ online, offlineSince, maxMinutes, now, critical }) {
   if (!critical || online) return null;
   const left = remainingMs({ offlineSince, maxMinutes, now });

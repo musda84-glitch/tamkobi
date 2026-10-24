@@ -118,20 +118,6 @@ export const CompanyForm = ({ companyId }) => {
           Logo ve Mikro birim fiyatı çoğu zaman 2–4 hane tutar; Paraşüt ve Bizimhesap varsayılanı 2’dir (kuruş). Web, mobil ve B2B fiyat gösterimi bu ayarı kullanır. Kayıtlı tutarlar ile GİB XML kuruşta kalır; döviz kuru bundan ayrıdır.
         </p>
       </div>
-      <div className="border border-slate-200 rounded-xl p-3 bg-slate-50" data-testid="company-offline-minutes">
-        <label className="block font-semibold text-slate-700 mb-1" htmlFor="company-offline-minutes">Çevrimdışı çalışma süresi (dakika)</label>
-        <input
-          id="company-offline-minutes"
-          type="number"
-          min={1}
-          max={720}
-          value={c.offline_max_minutes ?? 10}
-          onChange={(e) => set("offline_max_minutes", Math.max(1, Math.min(720, Number(e.target.value) || 10)))}
-          className={inputCls}
-          data-testid="company-offline-minutes-input"
-        />
-        <p className="text-[11px] text-slate-500 mt-1">İnternet kesilince POS ve sipariş bu süre boyunca kuyruğa yazılır. Varsayılan 10 dakikadır.</p>
-      </div>
       <div className="flex justify-end"><button type="submit" disabled={busy} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold disabled:opacity-60" data-testid="save-company-btn">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button></div>
     </form>
   );
