@@ -10,6 +10,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
+import invoice_kind
 from saas_docs import PDF_FONT, PDF_FONT_B, _tl
 
 
@@ -109,6 +110,7 @@ def statement_rows(
     invoices: Optional[List[dict]],
     payments: Optional[List[dict]],
     cheques: Optional[List[dict]] = None,
+    contact: Optional[dict] = None,
 ) -> List[dict]:
     """Personel ekstresiyle aynı borç/alacak sırası (iptal fatura ve virman hariç).
 
@@ -120,14 +122,14 @@ def statement_rows(
     for inv in invoices or []:
         if not isinstance(inv, dict) or inv.get("status") == "cancelled":
             continue
-        sales = inv.get("invoice_type") == "sales"
+        itype = invoice_kind.canonical_invoice_type(inv, contact)
         total = _num(inv.get("grand_total"))
-        kind = "Satış Faturası" if sales else "Alış Faturası"
+        label, debit, credit = invoice_kind.statement_label_and_sides(itype, total)
         rows.append({
             "date": _date(inv.get("issue_date")),
-            "doc": f"{inv.get('invoice_number') or 'Fatura'} • {kind}",
-            "debit": total if sales else 0.0,
-            "credit": 0.0 if sales else total,
+            "doc": f"{inv.get('invoice_number') or 'Fatura'} • {label}",
+            "debit": debit,
+            "credit": credit,
             "kind": "invoice",
             **invoice_gib_fields(inv),
         })

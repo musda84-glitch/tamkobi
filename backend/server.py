@@ -223,6 +223,7 @@ import applog
 import mail_tracking
 import stock_moves
 import statement_share
+import invoice_kind
 import project_photos
 
 applog.setup_logging()
@@ -3687,7 +3688,7 @@ async def _project_statement(p: Dict[str, Any], company: Dict[str, Any]):
     contact = await db.contacts.find_one({"_id": contact_id, "company_id": cid}) or {"name": p.get("contact_name"), "balance": 0}
     invoices = await db.invoices.find({"contact_id": contact_id, "company_id": cid, "status": {"$ne": "cancelled"}}).to_list(100)
     payments = await db.bank_transactions.find({"contact_id": contact_id, "company_id": cid, "type": {"$ne": "transfer"}}).to_list(100)
-    rows = statement_share.statement_rows(invoices, payments)
+    rows = statement_share.statement_rows(invoices, payments, contact=contact)
     if not contact.get("name"):
         contact = {**contact, "name": p.get("contact_name") or ""}
     return statement_share.public_statement_view(contact, company, rows)
@@ -5540,7 +5541,7 @@ async def _statement_bundle(contact_id: str):
         )
     company = await db.companies.find_one({"_id": contact.get("company_id")}) or {}
     payments = list(payments) + await _partner_statement_payments(contact_id, cid)
-    rows = statement_share.statement_rows(invoices, payments)
+    rows = statement_share.statement_rows(invoices, payments, contact=contact)
     return contact, statement_share.public_statement_view(contact, company, rows)
 
 
@@ -6706,7 +6707,7 @@ async def _b2b_portal_statement(contact: dict, invoices: List[dict]) -> Dict[str
         cheques.append(ch)
     rows = [
         _b2b_public_statement_row(row)
-        for row in statement_share.statement_rows(invoices, payments, cheques)
+        for row in statement_share.statement_rows(invoices, payments, cheques, contact=contact)
     ]
     return {
         "rows": rows,
@@ -9408,11 +9409,11 @@ async def list_product_movements(product_id: str, limit: int = 80, user: dict = 
         db.invoices.find(
             {
                 "company_id": company_id,
-                "invoice_type": {"$in": ["sales", "purchase", "sales_return", "purchase_return"]},
+                "invoice_type": {"$in": ["sales", "purchase", "sales_return", "purchase_return", "return", "iade"]},
                 "status": {"$nin": ["cancelled", "void", "rejected"]},
                 "$or": item_or,
             },
-            {"invoice_number": 1, "number": 1, "invoice_type": 1, "issue_date": 1, "created_at": 1, "contact_name": 1, "items": 1},
+            {"invoice_number": 1, "number": 1, "invoice_type": 1, "issue_date": 1, "created_at": 1, "contact_name": 1, "contact_id": 1, "direction": 1, "items": 1},
         ).sort("issue_date", -1).to_list(200),
         db.orders.find(
             {
@@ -9433,7 +9434,8 @@ async def list_product_movements(product_id: str, limit: int = 80, user: dict = 
     last_sale_price = product.get("sale_price")
     last_sale_contact = None
     last_sale_date = None
-    inv_moves = stock_moves.invoice_stock_moves(invoices, product_id, product)
+    typed_invoices = await _invoices_with_return_contact_types(invoices, company_id)
+    inv_moves = stock_moves.invoice_stock_moves(typed_invoices, product_id, product)
     for inv in invoices:
         if inv.get("invoice_type") != "purchase":
             continue
@@ -10669,6 +10671,11 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     _contact_row = None
     if invoice.contact_id:
         _contact_row = await db.contacts.find_one({"_id": invoice.contact_id, "company_id": invoice.company_id})
+    if invoice_kind.is_legacy_return(invoice.invoice_type):
+        invoice.invoice_type = invoice_kind.canonical_invoice_type(
+            {"invoice_type": invoice.invoice_type, "direction": invoice.direction},
+            _contact_row,
+        )
     if _contact_row:
         stamp_invoice_buyer(invoice, _contact_row)
     if _contact_row and invoice.invoice_type == "sales":
@@ -10975,6 +10982,122 @@ async def _compensate_effect_failure(steps: list) -> None:
             logging.getLogger(__name__).exception("Fatura etki telafisi yazılamadı")
 
 
+async def _invoice_kind_contact(inv: dict):
+    """Legacy iade için cari türü. company_id yoksa okunmaz."""
+    contact_id = str((inv or {}).get("contact_id") or "").strip()
+    cid = str((inv or {}).get("company_id") or "").strip()
+    if not contact_id or not cid:
+        return None
+    return await db.contacts.find_one({"_id": contact_id, "company_id": cid}, {"type": 1})
+
+
+async def _effect_invoice_type(inv: dict) -> str:
+    """Etki hesabında `return` → sales_return / purchase_return. Belgeyi yazmaz."""
+    contact = None
+    if invoice_kind.is_legacy_return((inv or {}).get("invoice_type")):
+        contact = await _invoice_kind_contact(inv)
+    return invoice_kind.canonical_invoice_type(inv, contact)
+
+
+def _return_type_may_persist(inv: dict) -> bool:
+    """İşlenmemiş taslak. Onaylı bakiyeye dokunulmaz, türü de yeniden yazılmaz."""
+    if not inv or inv.get("effects_applied"):
+        return False
+    status = str(inv.get("status") or "draft").strip().lower()
+    return status in ("", "draft", "approving")
+
+
+async def _persist_legacy_return_type(inv: dict, itype: str, cid: str) -> None:
+    """İlk işlenen taslağın türünü kanonik kaydet. Eski onaylı fatura olduğu gibi kalır."""
+    raw = str((inv or {}).get("invoice_type") or "")
+    if not invoice_kind.is_legacy_return(raw) or itype == raw or not _return_type_may_persist(inv):
+        return
+    inv["invoice_type"] = itype
+    if inv.get("_id") and cid:
+        await db.invoices.update_one(
+            {"_id": inv["_id"], "company_id": cid},
+            {"$set": {"invoice_type": itype}},
+        )
+
+
+async def _normalize_draft_return_type(inv: dict, allowed: dict) -> None:
+    """Taslak kayıt/güncellemede `return` kanonik türe çevrilir. Onaylı belgeye yazılmaz."""
+    if not _return_type_may_persist(inv):
+        return
+    effective = (allowed or {}).get("invoice_type", (inv or {}).get("invoice_type"))
+    if not invoice_kind.is_legacy_return(effective):
+        return
+    merged = {**(inv or {}), **(allowed or {}), "invoice_type": effective}
+    contact = None
+    if allowed.get("contact_id"):
+        contact = await _invoice_kind_contact(merged)
+    elif inv.get("contact_id"):
+        contact = await _invoice_kind_contact(inv)
+    allowed["invoice_type"] = invoice_kind.canonical_invoice_type(merged, contact)
+
+
+def _return_stock_should_apply(inv: dict) -> bool:
+    """Yeni iade stoğu girer. Eski işlenmiş iade (bayrak yok) stoğu değiştirmez."""
+    if inv.get("stock_effects_from_dispatch"):
+        return False
+    flag = inv.get("stock_effects_applied")
+    if flag is True:
+        return False
+    if flag is False:
+        return True
+    return not bool(inv.get("effects_applied"))
+
+
+def _return_stock_should_reverse(inv: dict) -> bool:
+    if inv.get("stock_effects_from_dispatch"):
+        return False
+    return inv.get("stock_effects_applied") is True
+
+
+async def _move_return_stock(inv: dict, cid: str, sign: float, steps: list) -> None:
+    for item in inv.get("items", []):
+        pid, qty = _invoice_item_pid_qty(item)
+        if pid:
+            delta = float(sign) * float(qty or 0)
+            await db.products.update_one({"_id": pid, "company_id": cid}, {"$inc": {"stock_quantity": delta}})
+            steps.append(("product", cid, pid, delta))
+        before = await _lot_before(item, cid)
+        try:
+            await _apply_lot_delta(item, float(sign), inv.get("company_id"))
+        finally:
+            _note_lot(steps, before)
+
+
+async def _invoices_with_return_contact_types(invoices, company_id: str) -> list:
+    """Stok geçmişi için legacy iadenin cari türünü kopyaya yazar. Kayıtlı faturaya dokunmaz."""
+    rows_in = list(invoices or [])
+    cid = str(company_id or "").strip()
+    if not cid:
+        return rows_in
+    ids = []
+    for inv in rows_in:
+        if not invoice_kind.is_legacy_return((inv or {}).get("invoice_type")):
+            continue
+        contact_id = str((inv or {}).get("contact_id") or "").strip()
+        if contact_id and contact_id not in ids:
+            ids.append(contact_id)
+    if not ids:
+        return rows_in
+    found = await db.contacts.find(
+        {"company_id": cid, "_id": {"$in": ids}},
+        {"type": 1},
+    ).to_list(len(ids) + 5)
+    types = {str(row.get("_id")): row.get("type") for row in found or []}
+    out = []
+    for inv in rows_in:
+        contact_id = str((inv or {}).get("contact_id") or "")
+        if contact_id in types:
+            out.append({**inv, "contact_type": types[contact_id]})
+        else:
+            out.append(inv)
+    return out
+
+
 async def _apply_invoice_effects(inv: dict):
     """Onaylanan fatura: cari bakiyesi + satış stok düşümü / alış stok girişi. İrsaliye bakiyeye yazılmaz."""
     if _is_dispatch_doc(inv):
@@ -10983,8 +11106,10 @@ async def _apply_invoice_effects(inv: dict):
     await _guard_effect_storage(cid)
     steps = []
     try:
+        itype = await _effect_invoice_type(inv)
+        await _persist_legacy_return_type(inv, itype, cid)
         if inv.get("contact_id"):
-            change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
+            change = invoice_kind.balance_delta(fx.try_amount(inv), itype)
             await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
             steps.append(("contact", cid, inv["contact_id"], change))
         # İrsaliye stoğu zaten düştüyse birleşik faturada stok bir kez daha düşmez. Cari bakiye yine yazılır.
@@ -11018,6 +11143,12 @@ async def _apply_invoice_effects(inv: dict):
             if inv.get("_id"):
                 await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
             inv["stock_effects_applied"] = True
+        elif itype in ("sales_return", "purchase_return") and _return_stock_should_apply(inv):
+            # Satış iadesi stoğa girer, alış iadesi stoktan çıkar. Satış/alış dallarına dokunulmaz.
+            await _move_return_stock(inv, cid, invoice_kind.stock_delta_sign(itype), steps)
+            if inv.get("_id"):
+                await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": True}})
+            inv["stock_effects_applied"] = True
     except Exception:
         await _compensate_effect_failure(steps)
         raise
@@ -11031,8 +11162,9 @@ async def _reverse_invoice_effects(inv: dict):
     await _guard_effect_storage(cid)
     steps = []
     try:
+        itype = await _effect_invoice_type(inv)
         if inv.get("contact_id"):
-            change = -fx.try_amount(inv) if inv.get("invoice_type") == "sales" else fx.try_amount(inv)
+            change = -invoice_kind.balance_delta(fx.try_amount(inv), itype)
             await db.contacts.update_one({"_id": inv["contact_id"], "company_id": cid}, {"$inc": {"balance": change}})
             steps.append(("contact", cid, inv["contact_id"], change))
         skip_stock = bool(inv.get("stock_effects_from_dispatch"))
@@ -11060,6 +11192,11 @@ async def _reverse_invoice_effects(inv: dict):
                     await _apply_lot_delta(item, -1.0, inv.get("company_id"))
                 finally:
                     _note_lot(steps, before)
+            if inv.get("_id"):
+                await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
+            inv["stock_effects_applied"] = False
+        elif itype in ("sales_return", "purchase_return") and _return_stock_should_reverse(inv):
+            await _move_return_stock(inv, cid, -invoice_kind.stock_delta_sign(itype), steps)
             if inv.get("_id"):
                 await db.invoices.update_one({"_id": inv["_id"], "company_id": cid}, {"$set": {"stock_effects_applied": False}})
             inv["stock_effects_applied"] = False
@@ -11530,6 +11667,7 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any], user: dict = Depe
         stamp = await fx.stamp(inv["company_id"], merged.get("currency"), merged.get("issue_date") or inv.get("issue_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(merged.get("grand_total") or inv.get("grand_total") or 0, stamp["fx_rate"])
+    await _normalize_draft_return_type(inv, allowed)
     updated = await _commit_invoice_effects_update(inv, invoice_id, allowed, reapply_effects)
     # Geri alma (rollback) bu noktaya gelmez. GİB kilidi yukarıda döner; kalem zaten yazılmaz.
     line_or_discount = bool({"items", "general_discount_rate", "general_discount_amount"} & set(allowed))

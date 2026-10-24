@@ -1,4 +1,5 @@
 """Stok hareketi birleştirme — fatura / sipariş / transfer satırlarından kayıt."""
+import invoice_kind
 
 
 def _norm(value) -> str:
@@ -61,15 +62,10 @@ def invoice_stock_moves(invoices: list, product_id: str, product: dict | None = 
     """Fatura satırlarından sentetik stok hareketi — stock_movements yazılmayan alış/satış için."""
     rows = []
     for inv in invoices or []:
-        itype = inv.get("invoice_type")
-        sign = 1
-        if itype in ("sales", "purchase_return"):
-            sign = -1
-            label = "Satış" if itype == "sales" else "Alış iadesi"
-        elif itype in ("purchase", "sales_return"):
-            sign = 1
-            label = "Alış" if itype == "purchase" else "Satış iadesi"
-        else:
+        itype = invoice_kind.canonical_invoice_type(inv)
+        sign = invoice_kind.stock_delta_sign(itype)
+        label = invoice_kind.stock_reason_label(itype)
+        if not sign or not label:
             continue
         num = inv.get("invoice_number") or inv.get("number") or "Fatura"
         date = inv.get("issue_date") or inv.get("created_at") or ""

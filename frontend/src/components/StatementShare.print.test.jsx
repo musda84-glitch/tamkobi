@@ -55,6 +55,50 @@ test("ekstre satırı ortak ödemesini Ortaklar Hesabı ve ortak adıyla göster
   expect(built.some((row) => String(row.doc).includes("Ortaklar Hesabı · Ali Veli"))).toBe(true);
 });
 
+test("iade faturası İade Faturası yazar ve borç/alacak yönü türe göredir", () => {
+  const supplier = buildStatementRows({
+    contact: { type: "supplier" },
+    invoices: [
+      { invoice_number: "IF-1", invoice_type: "return", grand_total: 999.58, issue_date: "2026-05-01", status: "approved" },
+      { invoice_number: "SF-1", invoice_type: "sales", grand_total: 10, issue_date: "2026-05-02", status: "approved" },
+      { invoice_number: "AF-1", invoice_type: "purchase", grand_total: 20, issue_date: "2026-05-03", status: "approved" },
+      { invoice_number: "SI-1", invoice_type: "sales_return", grand_total: 5, issue_date: "2026-05-04", status: "approved" },
+      { invoice_number: "AI-1", invoice_type: "purchase_return", grand_total: 7, issue_date: "2026-05-05", status: "approved" },
+    ],
+    payments: [],
+  });
+  expect(supplier.map((row) => row.doc)).toEqual([
+    "IF-1 • İade Faturası",
+    "SF-1 • Satış Faturası",
+    "AF-1 • Alış Faturası",
+    "SI-1 • İade Faturası",
+    "AI-1 • İade Faturası",
+  ]);
+  expect(supplier[0].debit).toBe(999.58);
+  expect(supplier[0].credit).toBe(0);
+  expect(supplier[1].debit).toBe(10);
+  expect(supplier[1].credit).toBe(0);
+  expect(supplier[2].debit).toBe(0);
+  expect(supplier[2].credit).toBe(20);
+  expect(supplier[3].debit).toBe(0);
+  expect(supplier[3].credit).toBe(5);
+  expect(supplier[4].debit).toBe(7);
+  expect(supplier[4].credit).toBe(0);
+  expect(supplier[4].balance).toBeCloseTo(999.58 + 10 - 20 - 5 + 7, 2);
+
+  const customer = buildStatementRows({
+    contact: { type: "customer" },
+    invoices: [
+      { invoice_number: "IF-2", invoice_type: "return", grand_total: 40, issue_date: "2026-05-01", status: "approved", direction: "incoming" },
+    ],
+    payments: [],
+  });
+  expect(customer[0].doc).toBe("IF-2 • İade Faturası");
+  expect(customer[0].debit).toBe(0);
+  expect(customer[0].credit).toBe(40);
+  expect(customer[0].balance).toBe(-40);
+});
+
 test("buildStatementRows GİB alanlarını kopyalar, uuid ve bakiye hesabı aynı kalır", () => {
   const built = buildStatementRows({
     invoices: [

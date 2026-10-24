@@ -13,18 +13,47 @@ import { contactPaymentDocLabel, isContactLedgerPay } from "../utils/contactPayM
 import { statementTotals } from "../utils/statementView";
 import { StatementGibBadge, useStatementView } from "./StatementTxList";
 
+const SUPPLIER_TYPES = new Set(["supplier", "tedarikçi", "tedarikci", "vendor", "satici", "satıcı"]);
+const CUSTOMER_TYPES = new Set(["customer", "müşteri", "musteri", "client", "alici", "alıcı"]);
+const PURCHASE_DIRECTIONS = new Set(["incoming", "purchase", "in", "alis", "alış"]);
+
+// backend/invoice_kind.py ile aynı: tedarikçi alış iadesi, müşteri satış iadesi.
+export const canonicalInvoiceType = (inv, contact) => {
+  const raw = String(inv?.invoice_type || "").trim().toLowerCase();
+  if (raw !== "return" && raw !== "iade") return raw;
+  const ctype = String(contact?.type || inv?.contact_type || "").trim().toLowerCase();
+  const direction = String(inv?.direction || "").trim().toLowerCase();
+  if (SUPPLIER_TYPES.has(ctype)) return "purchase_return";
+  if (CUSTOMER_TYPES.has(ctype)) return "sales_return";
+  if (PURCHASE_DIRECTIONS.has(direction)) return "purchase_return";
+  return "sales_return";
+};
+
+const invoiceStatementEntry = (inv, contact) => {
+  const kind = canonicalInvoiceType(inv, contact);
+  const total = inv.grand_total;
+  if (kind === "purchase_return") return { label: "İade Faturası", debit: total, credit: 0 };
+  if (kind === "sales_return") return { label: "İade Faturası", debit: 0, credit: total };
+  if (kind === "sales") return { label: "Satış Faturası", debit: total, credit: 0 };
+  return { label: "Alış Faturası", debit: 0, credit: total };
+};
+
 export const buildStatementRows = (data, { includeCheques = false } = {}) => {
   const rows = [];
-  (data.invoices || []).filter((i) => i.status !== "cancelled").forEach((i) => rows.push({
-    date: i.issue_date,
-    doc: `${i.invoice_number} • ${i.invoice_type === "sales" ? "Satış Faturası" : "Alış Faturası"}`,
-    debit: i.invoice_type === "sales" ? i.grand_total : 0,
-    credit: i.invoice_type === "sales" ? 0 : i.grand_total,
-    kind: "invoice",
-    einvoice_state: i.einvoice_state || "",
-    e_type: i.e_type || "",
-    has_gib_uuid: Boolean(i.gib_uuid),
-  }));
+  const contact = data?.contact || null;
+  (data.invoices || []).filter((i) => i.status !== "cancelled").forEach((i) => {
+    const entry = invoiceStatementEntry(i, contact);
+    rows.push({
+      date: i.issue_date,
+      doc: `${i.invoice_number} • ${entry.label}`,
+      debit: entry.debit,
+      credit: entry.credit,
+      kind: "invoice",
+      einvoice_state: i.einvoice_state || "",
+      e_type: i.e_type || "",
+      has_gib_uuid: Boolean(i.gib_uuid),
+    });
+  });
   (data.payments || []).filter((p) => p.type !== "transfer").forEach((p) => {
     const doc = isContactLedgerPay(p)
       ? contactPaymentDocLabel(p)
