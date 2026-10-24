@@ -647,11 +647,25 @@ async def sync_cash_box_balances(
     return accounts
 
 
+def _write_matched(result) -> int:
+    matched = getattr(result, "matched_count", None)
+    if matched is None and isinstance(result, dict):
+        matched = result.get("matched_count")
+    if matched is None:
+        matched = getattr(result, "modified_count", 0)
+    try:
+        return int(matched or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 async def reconcile_account_balance(db, account_id: str, *, company_id: str) -> str:
     """Karşı hesabın bakiyesini hareket toplamına çeker.
 
     Silinen hareketin kendi hesabına uygulanmaz: açılış hareketi yoksa
     movement_balance kasayı sıfırlar. Entegre hesap ve kasa dışı tür yazılmaz.
+    Yazma yalnız gerçek farkta ve okunan bakiyenin hâlâ durduğu koşulla olur;
+    eşzamanlı $inc ezilmez. Liste tavanı doluysa bakiye değiştirilmez.
     """
     cid = str(company_id or "").strip()
     aid = str(account_id or "").strip()
@@ -662,15 +676,25 @@ async def reconcile_account_balance(db, account_id: str, *, company_id: str) -> 
         return "skipped"
     if await account_is_integrated(db, aid, company_id=cid):
         return "integrated"
-    txs = await fetch_balance_txs(db, cid, [aid])
+    txs, truncated = await fetch_balance_txs_capped(db, cid, [aid])
+    if truncated:
+        return "skipped"
     moved = movement_balance(txs, aid, acc)
     stored = round(_num(acc.get("current_balance")), 2)
     if abs(moved - stored) < 0.01:
         return "ok"
-    await db.bank_accounts.update_one(
-        {"_id": aid, "company_id": cid},
+    if await account_is_integrated(db, aid, company_id=cid):
+        return "integrated"
+    if "current_balance" in acc:
+        balance_match: Any = acc.get("current_balance")
+    else:
+        balance_match = {"$exists": False}
+    updated = await db.bank_accounts.update_one(
+        {"_id": aid, "company_id": cid, "current_balance": balance_match},
         {"$set": {"current_balance": moved}},
     )
+    if _write_matched(updated) < 1:
+        return "skipped"
     return "posted"
 
 

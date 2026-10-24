@@ -14090,6 +14090,28 @@ async def _drop_trash_row(trash_id, company_id) -> None:
     await db.trash.delete_one({"_id": trash_id})
 
 
+async def _replace_company_doc(collection: str, doc: Optional[dict]) -> None:
+    """Anlık görüntüdeki belgeyi yazar; eşleşme sırasında eklenen alanları siler."""
+    if not isinstance(doc, dict) or doc.get("_id") is None:
+        return
+    cid = str(doc.get("company_id") or "").strip()
+    if not cid:
+        await _ensure_company_doc(collection, doc)
+        return
+    payload = copy.deepcopy(doc)
+    payload["company_id"] = cid
+    current = await db[collection].find_one({"_id": payload["_id"], "company_id": cid})
+    if not current:
+        await db[collection].insert_one(payload)
+        return
+    body = {key: value for key, value in payload.items() if key != "_id"}
+    extra = [key for key in current.keys() if key not in payload and key != "_id"]
+    update: Dict[str, Any] = {"$set": body}
+    if extra:
+        update["$unset"] = {key: "" for key in extra}
+    await db[collection].update_one({"_id": payload["_id"], "company_id": cid}, update)
+
+
 async def _restore_balance_snapshot(snap: Optional[dict]) -> None:
     if not snap:
         return
@@ -14103,6 +14125,87 @@ async def _restore_balance_snapshot(snap: Optional[dict]) -> None:
         await _ensure_company_doc("partners", row)
     for row in snap.get("bank_txs") or []:
         await _ensure_company_doc("bank_transactions", row)
+
+
+async def _snapshot_unmatch(linkers: List[dict]) -> Dict[str, List[dict]]:
+    """_unmatch öncesi eş satır, karşı kayıt ve bakiye kopyası."""
+    rows = [row for row in (linkers or []) if isinstance(row, dict)]
+    snap = await _snapshot_tx_balances(rows)
+    seen_accounts = {row.get("_id") for row in snap.get("accounts") or []}
+    seen_tx = set()
+    seen_exp = set()
+    bank_txs: List[dict] = []
+    expenses: List[dict] = []
+    partner_txs: List[dict] = []
+    for linker in rows:
+        if linker.get("_id") is None:
+            continue
+        cid = str(linker.get("company_id") or "").strip()
+        bank_txs.append(copy.deepcopy(linker))
+        seen_tx.add(linker["_id"])
+        if not cid:
+            continue
+        kind, target_id = bank_guard.parse_payment_target(linker.get("target_account_id"))
+        if kind == "account" and target_id and target_id not in seen_accounts:
+            acc = await _copy_company_doc("bank_accounts", target_id, cid)
+            if acc:
+                seen_accounts.add(acc.get("_id"))
+                snap["accounts"].append(acc)
+        elif kind == "partner" and target_id:
+            partner = await _copy_company_doc("partners", target_id, cid)
+            if partner and all(item.get("_id") != partner.get("_id") for item in snap.get("partners") or []):
+                snap.setdefault("partners", []).append(partner)
+            ptx = await db.partner_transactions.find_one({
+                "company_id": cid,
+                "related_bank_tx_id": linker["_id"],
+                "source": "bank_match",
+            })
+            if isinstance(ptx, dict):
+                partner_txs.append(copy.deepcopy(ptx))
+        children = await db.bank_transactions.find({
+            "company_id": cid,
+            "source": "bank_match",
+            "related_bank_tx_id": linker["_id"],
+        }).to_list(20)
+        for child in children or []:
+            if not isinstance(child, dict) or child.get("_id") in seen_tx:
+                continue
+            seen_tx.add(child["_id"])
+            bank_txs.append(copy.deepcopy(child))
+            aid = child.get("account_id")
+            if aid and aid not in seen_accounts:
+                acc = await _copy_company_doc("bank_accounts", aid, cid)
+                if acc:
+                    seen_accounts.add(acc.get("_id"))
+                    snap["accounts"].append(acc)
+        eid = linker.get("expense_id")
+        if eid and eid not in seen_exp:
+            exp = await db.expenses.find_one({"_id": eid, "company_id": cid})
+            if isinstance(exp, dict):
+                seen_exp.add(eid)
+                expenses.append(copy.deepcopy(exp))
+    snap["bank_txs"] = bank_txs
+    snap["expenses"] = expenses
+    snap["partner_txs"] = partner_txs
+    return snap
+
+
+async def _rewind_unmatch(snap: Optional[dict]) -> None:
+    """soft_delete başarısızsa eşleşmeyi ve bakiyeyi _unmatch öncesine alır."""
+    if not snap:
+        return
+    await _restore_balance_snapshot({
+        "accounts": snap.get("accounts"),
+        "contacts": snap.get("contacts"),
+        "invoices": snap.get("invoices"),
+        "partners": snap.get("partners"),
+    })
+    for row in snap.get("bank_txs") or []:
+        await _replace_company_doc("bank_transactions", row)
+    for row in snap.get("expenses") or []:
+        await _replace_company_doc("expenses", row)
+    for row in snap.get("partner_txs") or []:
+        await _replace_company_doc("partner_transactions", row)
 
 
 async def _rewind_delete(rows: List[tuple], snap: Optional[dict]) -> None:
@@ -14299,20 +14402,28 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 pair = None
     if pair:
         counters = [row for row in counters if row.get("_id") != pair.get("_id")]
-    for linker in linkers:
-        await _unmatch(linker)
-    if counters:
-        related = list(related or []) + [{"collection": "bank_transactions", "docs": counters}]
-    if pos_expenses:
-        related = list(related or []) + [{"collection": "expenses", "docs": pos_expenses}]
-    tid = await trash.soft_delete(
-        "bank_transactions",
-        tx,
-        "bank_transaction",
-        f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺",
-        related=related,
-        note=f"{tx.get('account_name')} · {tx.get('date')}" + (" · bağlı masraf" if related else ""),
-    )
+    unmatch_snap = await _snapshot_unmatch(linkers)
+    try:
+        for linker in linkers:
+            await _unmatch(linker)
+        if counters:
+            related = list(related or []) + [{"collection": "bank_transactions", "docs": counters}]
+        if pos_expenses:
+            related = list(related or []) + [{"collection": "expenses", "docs": pos_expenses}]
+        tid = await trash.soft_delete(
+            "bank_transactions",
+            tx,
+            "bank_transaction",
+            f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺",
+            related=related,
+            note=f"{tx.get('account_name')} · {tx.get('date')}" + (" · bağlı masraf" if related else ""),
+        )
+    except Exception:
+        try:
+            await _rewind_unmatch(unmatch_snap)
+        except Exception:
+            logger.exception("Eşleşme geri alınamadı")
+        raise
     pair_tid = None
     if pair:
         try:
@@ -14323,12 +14434,16 @@ async def delete_bank_transaction(tx_id: str, user: dict = Depends(get_current_u
                 f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
                 note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
             )
-        except Exception as exc:
+        except Exception:
             rows = [("bank_transactions", tx, tid)]
             for block in related or []:
                 for rel in block.get("docs") or []:
                     rows.append((block.get("collection") or "expenses", rel, None))
             await _rewind_delete(rows, None)
+            try:
+                await _rewind_unmatch(unmatch_snap)
+            except Exception:
+                logger.exception("Eşleşme geri alınamadı")
             raise
     snap = await _snapshot_tx_balances([tx, pair, *counters])
     try:
@@ -28788,17 +28903,50 @@ import offline_admin
 offline_admin.init(db)
 trade.init(db, _create_invoice_core, get_current_user)
 
+def _related_bank_txs(doc, related) -> List[dict]:
+    """Çöp kaydındaki karşı banka satırları. Ana belgeyi tekrar uygulamaz."""
+    own = (doc or {}).get("_id")
+    rows: List[dict] = []
+    seen = set()
+    for block in related or []:
+        if (block or {}).get("collection") != "bank_transactions":
+            continue
+        for row in (block or {}).get("docs") or []:
+            if not isinstance(row, dict) or row.get("_id") is None or row.get("_id") == own:
+                continue
+            if row["_id"] in seen:
+                continue
+            seen.add(row["_id"])
+            rows.append(row)
+    return rows
+
+
 async def _restore_bank_tx(doc, _related):
-    snap = await _snapshot_tx_balances([doc])
+    related_txs = _related_bank_txs(doc, _related)
+    snap = await _snapshot_tx_balances([doc, *related_txs])
     try:
         await _reverse_tx_effects(doc, +1)
+        for row in related_txs:
+            await _reverse_tx_effects(row, +1)
         # Kasa kartı bakiyesini hareket toplamına sabitle (orphan / kayma yok).
         aid = doc.get("account_id")
         if aid:
             acc = await db.bank_accounts.find_one({"_id": aid}, {"type": 1, "current_balance": 1, "company_id": 1, "is_customer_card_pool": 1})
             if acc and str(acc.get("type") or "") == "cash_box":
                 await account_balance.sync_cash_box_balances(db, [{**acc, "_id": aid}])
-        for cid in {doc.get("contact_id"), doc.get("owner_contact_id")}:
+        own_ids = {doc.get("account_id"), doc.get("target_account_id")}
+        counterpart_ids = []
+        for row in related_txs:
+            counterpart_ids.append(row.get("account_id"))
+            counterpart_ids.append(row.get("target_account_id"))
+        await _reconcile_counterpart_accounts(doc.get("company_id") or "", counterpart_ids, own_ids)
+        sync_ids = {doc.get("contact_id"), doc.get("owner_contact_id")}
+        for row in related_txs:
+            if row.get("contact_id"):
+                sync_ids.add(row.get("contact_id"))
+            if row.get("owner_contact_id"):
+                sync_ids.add(row.get("owner_contact_id"))
+        for cid in sync_ids:
             if cid:
                 await contact_balance.sync_contact_balance(db, cid, company_id=doc.get("company_id") or "")
     except Exception:

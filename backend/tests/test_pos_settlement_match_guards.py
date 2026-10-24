@@ -324,6 +324,212 @@ def test_delete_cari_payment_clears_pos_bank_and_balance(routed):
     assert db.dedicated[dedicated.CO_B] == before_b
 
 
+def test_restore_redebts_pos_counterpart(routed):
+    db = routed
+    user = dedicated._user(dedicated.CO_A)
+    for company_id, pos_balance, bank_balance, contact_balance in (
+        (dedicated.CO_A, 4800.0, 9000.0, 1000.0),
+        (dedicated.CO_B, 4800.0, 9000.0, 1000.0),
+    ):
+        dedicated._put(db, company_id, "bank_accounts", {
+            "_id": "acc-pos", "type": "pos", "account_name": "POS",
+            "current_balance": pos_balance, "currency": "TRY",
+        })
+        dedicated._put(db, company_id, "bank_accounts", {
+            "_id": "acc-bank", "type": "bank", "account_name": "Banka",
+            "current_balance": bank_balance, "currency": "TRY",
+        })
+        dedicated._put(db, company_id, "contacts", {
+            "_id": "cari-pay", "name": "Cari", "balance": contact_balance,
+        })
+        dedicated._put(db, company_id, "bank_transactions", {
+            "_id": "open-pos", "account_id": "acc-pos", "type": "inflow",
+            "amount": 5000.0, "source": "opening", "description": "Açılış",
+            "date": "2026-10-01",
+        })
+        dedicated._put(db, company_id, "bank_transactions", {
+            "_id": "open-bank", "account_id": "acc-bank", "type": "inflow",
+            "amount": 10000.0, "source": "opening", "description": "Açılış",
+            "date": "2026-10-01",
+        })
+        dedicated._put(db, company_id, "bank_transactions", {
+            "_id": "pay-1", "account_id": "acc-bank", "account_name": "Banka",
+            "type": "outflow", "amount": 1000.0, "source": "manual",
+            "contact_id": "cari-pay", "contact_name": "Cari",
+            "description": "Cari ödeme", "date": "2026-10-24",
+            "match_kind": "pos_settlement", "expense_id": "exp-pos",
+            "match_status": "matched",
+        })
+        dedicated._put(db, company_id, "bank_transactions", {
+            "_id": "pos-counter", "account_id": "acc-pos", "account_name": "POS",
+            "type": "outflow", "amount": 200.0, "source": "bank_match",
+            "related_bank_tx_id": "pay-1", "description": "POS bloke çözümü",
+            "date": "2026-10-24",
+        })
+        dedicated._put(db, company_id, "expenses", {
+            "_id": "exp-pos", "source": "bank_match", "bank_transaction_id": "pay-1",
+            "expense_number": "MSR-1", "total": 50.0, "category": "POS Komisyonu",
+            "description": "POS komisyonu", "payment_status": "paid",
+        })
+    before_b = copy.deepcopy(db.dedicated[dedicated.CO_B])
+    _run(server.delete_bank_transaction("pay-1", user))
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "acc-pos")["current_balance"] == pytest.approx(5000.0)
+    marked = len(db.incs)
+    trash_id = db.dedicated[dedicated.CO_A]["trash"][0]["_id"]
+    out = _run(trash.restore_trash_item(trash_id, user=user))
+    assert out["status"] == "success"
+    assert dedicated._live(db, dedicated.CO_A, "bank_transactions", "pay-1")["amount"] == pytest.approx(1000.0)
+    assert dedicated._live(db, dedicated.CO_A, "bank_transactions", "pos-counter")["amount"] == pytest.approx(200.0)
+    pos_debits = [
+        delta for name, cid, doc_id, key, delta in db.incs[marked:]
+        if name == "bank_accounts" and cid == dedicated.CO_A and doc_id == "acc-pos" and key == "current_balance"
+    ]
+    assert sum(pos_debits) == pytest.approx(-200.0)
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "acc-pos")["current_balance"] == pytest.approx(4800.0)
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "acc-bank")["current_balance"] == pytest.approx(9000.0)
+    assert dedicated._live(db, dedicated.CO_A, "contacts", "cari-pay")["balance"] == pytest.approx(1000.0)
+    assert db.dedicated[dedicated.CO_B] == before_b
+
+
+def test_reconcile_writes_only_real_drift_and_skips_integrated(routed, monkeypatch):
+    db = routed
+    dedicated._put(db, dedicated.CO_A, "bank_accounts", {
+        "_id": "pos-r", "type": "pos", "account_name": "POS",
+        "current_balance": 80.0, "currency": "TRY",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "in-r", "account_id": "pos-r", "type": "inflow",
+        "amount": 100.0, "source": "opening",
+    })
+    queries = []
+    original = db.bank_accounts.update_one
+
+    async def _spy(query, update, upsert=False):
+        if isinstance(update, dict) and "current_balance" in (update.get("$set") or {}):
+            queries.append(copy.deepcopy(query))
+        return await original(query, update, upsert)
+
+    monkeypatch.setattr(db.bank_accounts, "update_one", _spy)
+    posted = _run(account_balance.reconcile_account_balance(db, "pos-r", company_id=dedicated.CO_A))
+    assert posted == "posted"
+    assert queries[-1]["current_balance"] == 80.0
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-r")["current_balance"] == pytest.approx(100.0)
+
+    same = _run(account_balance.reconcile_account_balance(db, "pos-r", company_id=dedicated.CO_A))
+    assert same == "ok"
+    assert len(queries) == 1
+
+    dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-r")["current_balance"] = 100.004
+    tiny = _run(account_balance.reconcile_account_balance(db, "pos-r", company_id=dedicated.CO_A))
+    assert tiny == "ok"
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-r")["current_balance"] == pytest.approx(100.004)
+    assert len(queries) == 1
+
+    dedicated._put(db, dedicated.CO_A, "bank_accounts", {
+        "_id": "pos-int", "type": "pos", "account_name": "Entegre",
+        "current_balance": 10.0, "currency": "TRY",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_connections", {
+        "_id": "conn-pos", "linked_account_id": "pos-int", "provider_name": "Banka",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "in-int", "account_id": "pos-int", "type": "inflow",
+        "amount": 100.0, "source": "opening",
+    })
+    integrated = _run(account_balance.reconcile_account_balance(db, "pos-int", company_id=dedicated.CO_A))
+    assert integrated == "integrated"
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-int")["current_balance"] == pytest.approx(10.0)
+    assert all(item.get("_id") != "pos-int" for item in queries)
+
+    dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-r")["current_balance"] = 50.0
+
+    async def _race(query, update, upsert=False):
+        if isinstance(update, dict) and "current_balance" in (update.get("$set") or {}):
+            queries.append(copy.deepcopy(query))
+            dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-r")["current_balance"] = 70.0
+        return await original(query, update, upsert)
+
+    monkeypatch.setattr(db.bank_accounts, "update_one", _race)
+    lost = _run(account_balance.reconcile_account_balance(db, "pos-r", company_id=dedicated.CO_A))
+    assert lost == "skipped"
+    assert queries[-1]["current_balance"] == 50.0
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-r")["current_balance"] == pytest.approx(70.0)
+
+    monkeypatch.setattr(account_balance, "COMPANY_TX_LIMIT", 1)
+    dedicated._put(db, dedicated.CO_A, "bank_accounts", {
+        "_id": "pos-cut", "type": "pos", "account_name": "Kesik",
+        "current_balance": 0.0, "currency": "TRY",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "cut-1", "account_id": "pos-cut", "type": "inflow", "amount": 40.0, "source": "opening",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "cut-2", "account_id": "pos-cut", "type": "inflow", "amount": 60.0, "source": "manual",
+    })
+    capped = _run(account_balance.reconcile_account_balance(db, "pos-cut", company_id=dedicated.CO_A))
+    assert capped == "skipped"
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "pos-cut")["current_balance"] == pytest.approx(0.0)
+
+
+def test_soft_delete_failure_restores_linker_match_and_balance(routed, monkeypatch):
+    db = routed
+    user = dedicated._user(dedicated.CO_A)
+    dedicated._put(db, dedicated.CO_A, "bank_accounts", {
+        "_id": "acc-pos", "type": "pos", "account_name": "POS",
+        "current_balance": 1000.0, "currency": "TRY",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_accounts", {
+        "_id": "acc-bank", "type": "bank", "account_name": "Banka",
+        "current_balance": 9000.0, "currency": "TRY",
+    })
+    dedicated._put(db, dedicated.CO_A, "contacts", {
+        "_id": "cari-pay", "name": "Cari", "balance": 1000.0,
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "pay-1", "account_id": "acc-bank", "type": "outflow",
+        "amount": 1000.0, "source": "manual", "contact_id": "cari-pay",
+        "description": "Cari ödeme", "date": "2026-10-24",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "linker", "account_id": "acc-bank", "type": "inflow",
+        "amount": 1000.0, "source": "bank_sync", "match_status": "matched",
+        "linked_existing": True, "related_manual_tx_id": "pay-1",
+        "target_account_id": "acc-pos", "target_account_name": "POS",
+        "contact_id": "cari-pay", "contact_name": "Cari",
+        "description": "Banka", "date": "2026-10-24",
+    })
+    dedicated._put(db, dedicated.CO_A, "bank_transactions", {
+        "_id": "linker-counter", "account_id": "acc-pos", "type": "outflow",
+        "amount": 100.0, "source": "bank_match", "related_bank_tx_id": "linker",
+        "description": "POS karşı", "date": "2026-10-24",
+    })
+    dedicated._put(db, dedicated.CO_B, "bank_accounts", {
+        "_id": "acc-pos", "type": "pos", "current_balance": 1000.0, "currency": "TRY",
+    })
+    before_b = copy.deepcopy(db.dedicated[dedicated.CO_B])
+
+    async def _boom(*_args, **_kwargs):
+        raise HTTPException(status_code=409, detail="Kayıt silinemedi. Çöp kutusuna taşınmadı.")
+
+    monkeypatch.setattr(trash, "soft_delete", _boom)
+    with pytest.raises(HTTPException) as exc:
+        _run(server.delete_bank_transaction("pay-1", user))
+    assert exc.value.status_code == 409
+    linker = dedicated._live(db, dedicated.CO_A, "bank_transactions", "linker")
+    assert linker["match_status"] == "matched"
+    assert linker["linked_existing"] is True
+    assert linker["related_manual_tx_id"] == "pay-1"
+    assert linker["contact_id"] == "cari-pay"
+    assert linker["description"] == "Banka"
+    assert "match_lock_at" not in linker
+    assert dedicated._live(db, dedicated.CO_A, "bank_transactions", "linker-counter")["amount"] == pytest.approx(100.0)
+    assert dedicated._live(db, dedicated.CO_A, "bank_transactions", "pay-1") is not None
+    assert dedicated._live(db, dedicated.CO_A, "bank_accounts", "acc-pos")["current_balance"] == pytest.approx(1000.0)
+    assert dedicated._live(db, dedicated.CO_A, "contacts", "cari-pay")["balance"] == pytest.approx(1000.0)
+    assert db.dedicated[dedicated.CO_A].get("trash", []) == []
+    assert db.dedicated[dedicated.CO_B] == before_b
+
+
 def test_partner_reverse_finds_single_candidate_without_regex(routed):
     db = routed
     dedicated._put(db, dedicated.CO_A, "partners", {
