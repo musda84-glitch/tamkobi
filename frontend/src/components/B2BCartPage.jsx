@@ -1,6 +1,6 @@
 import React from "react";
 import { Package, Trash2 } from "lucide-react";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { productListImageUrl } from "../utils/productImages";
 import { fmt, b2bGross } from "./B2BPortalParts";
 import { LegalConsent } from "./LegalConsent";
@@ -36,7 +36,7 @@ function LineImage({ product }) {
   return (
     <div className="w-14 h-14 shrink-0 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center">
       {src
-        ? <img src={resolveImageUrl(src)} alt="" className="w-full h-full object-contain" loading="lazy" decoding="async" />
+        ? <img src={listThumbUrl(src)} alt="" width={56} height={56} className="w-full h-full object-contain" loading="lazy" decoding="async" />
         : <Package className="w-5 h-5 text-slate-300" />}
     </div>
   );

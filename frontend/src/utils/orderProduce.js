@@ -1,6 +1,33 @@
+/** id ve sku haritası. Liste açılırken her satırda katalog taranmaz. */
+export function buildOrderProductIndex(catalog = []) {
+  const byId = new Map();
+  const bySku = new Map();
+  const list = Array.isArray(catalog) ? catalog : [];
+  for (const row of list) {
+    if (!row) continue;
+    const id = row.id || row._id;
+    if (id != null && id !== "") byId.set(String(id), row);
+    const sku = String(row.sku || "").trim();
+    if (sku && !bySku.has(sku)) bySku.set(sku, row);
+  }
+  return { byId, bySku };
+}
+
+export function isOrderProductIndex(catalog) {
+  return Boolean(catalog && catalog.byId && catalog.bySku && typeof catalog.byId.get === "function");
+}
+
 /** Sipariş satırından üretim emri için stok kartı çözümle. */
 export function resolveOrderLineProduct(item, catalog = []) {
-  if (!item || !Array.isArray(catalog) || !catalog.length) return null;
+  if (!item) return null;
+  if (isOrderProductIndex(catalog)) {
+    const pid = item.product_id || item.productId;
+    if (pid != null && pid !== "" && catalog.byId.has(String(pid))) return catalog.byId.get(String(pid));
+    const sku = String(item.sku || "").trim();
+    if (sku && catalog.bySku.has(sku)) return catalog.bySku.get(sku);
+    return null;
+  }
+  if (!Array.isArray(catalog) || !catalog.length) return null;
   const pid = item.product_id || item.productId;
   const sku = String(item.sku || "").trim();
   return (
@@ -34,9 +61,10 @@ export function buildProduceFromOrderPayload(ord, item, product) {
 /** Siparişte üretilebilir kalemler (aksiyon butonu / seçici). */
 export function producibleLinesForOrder(ord, catalog = []) {
   const items = Array.isArray(ord?.items) ? ord.items : [];
+  const index = isOrderProductIndex(catalog) ? catalog : buildOrderProductIndex(catalog);
   const out = [];
   items.forEach((it, idx) => {
-    const p = resolveOrderLineProduct(it, catalog);
+    const p = resolveOrderLineProduct(it, index);
     if (!orderLineCanProduce(p)) return;
     const payload = buildProduceFromOrderPayload(ord, it, p);
     if (!payload) return;

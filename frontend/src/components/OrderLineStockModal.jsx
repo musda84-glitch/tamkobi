@@ -5,7 +5,7 @@ import { Link2, PackagePlus, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { ProductDetailModal } from "./ProductDetailModal";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 /**
@@ -124,7 +124,7 @@ export function OrderLineStockModal({
 
         <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
           {item?.image_url ? (
-            <img src={resolveImageUrl(item.image_url)} alt="" className="w-14 h-14 rounded-lg object-cover border bg-white" />
+            <img src={listThumbUrl(item.image_url)} alt="" width={56} height={56} loading="lazy" decoding="async" className="w-14 h-14 rounded-lg object-cover border bg-white" />
           ) : (
             <div className="w-14 h-14 rounded-lg border bg-white flex items-center justify-center text-slate-300">
               <PackagePlus className="w-5 h-5" />

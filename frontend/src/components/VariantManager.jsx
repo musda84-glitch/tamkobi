@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Plus, X, Wand2, Trash2, Save, ImagePlus, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { compressProductImageFile } from "../utils/compressImage";
 import { MoneyInput, QuantityInput } from "./MoneyInput";
 import { productCardPrice } from "../utils/documentLines";
@@ -82,7 +82,7 @@ const VariantImageCell = ({ product, variant, onUpdated }) => {
   };
   return (
     <label className="w-9 h-9 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center text-slate-400 hover:border-emerald-500 cursor-pointer" title="Varyant görseli" data-testid="variant-image-btn">
-      {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : variant.image_url ? <img src={resolveImageUrl(variant.image_url)} alt="" className="w-full h-full object-cover" /> : <ImagePlus className="w-4 h-4" />}
+      {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : variant.image_url ? <img src={listThumbUrl(variant.image_url)} alt="" width={40} height={40} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <ImagePlus className="w-4 h-4" />}
       <input type="file" accept="image/*" className="sr-only" onChange={upload} disabled={busy} />
     </label>
   );

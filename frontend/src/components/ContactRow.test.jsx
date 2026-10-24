@@ -7,7 +7,11 @@ import { act } from "react";
 import { ContactRow } from "./ContactRow";
 
 jest.mock("./ContactLocationModal", () => ({ mapsLink: () => "" }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/money", () => ({ formatTrAmount: (n) => String(n) }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;

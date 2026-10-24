@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, ChevronDown, Printer, LogOut, Check, FileText } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
-import { listImageUrl, resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
 import { orderStatusLabel, trackingCarrierLabel } from "../utils/warehouseShip";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
@@ -169,7 +169,7 @@ function balanceTone(bal) {
 
 function SupplierMark({ name, logoUrl, className = "w-9 h-9" }) {
   if (logoUrl) {
-    return <img src={resolveImageUrl(logoUrl)} alt="" className={`${className} rounded-lg object-contain bg-white border border-slate-200 shrink-0`} />;
+    return <img src={listThumbUrl(logoUrl)} alt="" width={48} height={48} loading="lazy" decoding="async" className={`${className} rounded-lg object-contain bg-white border border-slate-200 shrink-0`} />;
   }
   if (!String(name || "").trim()) {
     return (
@@ -465,7 +465,7 @@ export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy,
       <div key={l.key || `${l.p.id}-${i}`} className="py-2 flex items-center gap-2" data-testid={`b2b-cart-line-${l.p.sku}-${i}${suffix}`}>
         <div className="w-11 h-11 shrink-0 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center" data-testid={`b2b-cart-line-img-${l.p.sku}-${i}${suffix}`}>
           {l.p?.image_url
-            ? <img src={resolveImageUrl(l.p.image_url)} alt="" className="w-full h-full object-contain" loading="lazy" decoding="async" />
+            ? <img src={listThumbUrl(l.p.image_url)} alt="" width={44} height={44} className="w-full h-full object-contain" loading="lazy" decoding="async" />
             : <Package className="w-5 h-5 text-slate-300" />}
         </div>
         <div className="flex-1 min-w-0">
@@ -858,7 +858,7 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
           <div key={`${l.product_id}-${l.note || ""}-${idx}`} className="py-2 flex items-center gap-2" data-testid={`b2b-edit-line-${l.sku || idx}`}>
             <div className="w-11 h-11 shrink-0 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center" data-testid={`b2b-edit-line-img-${l.sku || idx}`}>
               {img
-                ? <img src={resolveImageUrl(img)} alt="" className="w-full h-full object-contain" loading="lazy" decoding="async" />
+                ? <img src={listThumbUrl(img)} alt="" width={44} height={44} className="w-full h-full object-contain" loading="lazy" decoding="async" />
                 : <Package className="w-5 h-5 text-slate-300" />}
             </div>
             <div className="flex-1 min-w-0">
@@ -1060,8 +1060,10 @@ function InvoiceLineImage({ url }) {
   if (!url) return null;
   return (
     <img
-      src={listImageUrl(url, 48)}
+      src={listThumbUrl(url)}
       alt=""
+      width={36}
+      height={36}
       className="w-9 h-9 object-contain rounded border bg-white shrink-0"
       loading="lazy"
       decoding="async"

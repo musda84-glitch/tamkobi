@@ -17,7 +17,11 @@ jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }))
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api", useAuth: () => ({ user: { id: "u1" } }) }));
 jest.mock("../utils/useEscape", () => ({ useEscape: () => {} }));
 jest.mock("../utils/modalBackdrop", () => ({ backdropDismissProps: () => ({}) }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
 jest.mock("./WorkScheduleSettings", () => ({ EmployeeCompensationForm: () => null }));
 jest.mock("./EmployeePayModal", () => ({ EmployeePayModal: () => null }));

@@ -19,7 +19,11 @@ const mockAuth = { user: { id: "u1", role: "admin" } };
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api", useAuth: () => mockAuth }));
 jest.mock("../utils/useEscape", () => ({ useEscape: () => {} }));
 jest.mock("../utils/modalBackdrop", () => ({ backdropDismissProps: () => ({}) }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
 jest.mock("./WorkScheduleSettings", () => ({ EmployeeCompensationForm: () => null }));
 jest.mock("./EmployeePayModal", () => ({ EmployeePayModal: () => null }));

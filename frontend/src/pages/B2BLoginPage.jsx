@@ -13,7 +13,7 @@ export default function B2BLoginPage() {
   const [err, setErr] = useState("");
   const [mode, setMode] = useState("login");
   const [resetInfo, setResetInfo] = useState(null);
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(false);
   const [consent, setConsent] = useState(emptyLegalConsent);
 
   useEffect(() => {
@@ -117,8 +117,8 @@ export default function B2BLoginPage() {
               </div>
               <p className="text-xs text-slate-500">Tedarikçinizin size verdiği e-posta / VKN ve şifre ile.</p>
             </div>
-            <div><label className="block text-xs font-semibold mb-1">E-posta veya VKN</label><input required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-email" /></div>
-            <div><label className="block text-xs font-semibold mb-1">Şifre</label><input type="password" required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-password" /></div>
+            <div><label className="block text-xs font-semibold mb-1">E-posta veya VKN</label><input required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-email" autoComplete="username" /></div>
+            <div><label className="block text-xs font-semibold mb-1">Şifre</label><input type="password" required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm" data-testid="b2b-login-password" autoComplete="current-password" /></div>
             <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" data-testid="b2b-remember-row">
               <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" data-testid="b2b-remember" />

@@ -232,7 +232,14 @@ def _month_pipeline(company_id: str, account_ids: List[str], start: str, end: st
 
 
 async def attach_month_totals(db, company_id: str, rows: List[dict]) -> None:
-    """Her hesaba bu ayın giriş, çıkış ve eşleşmemiş sayısını yazar. Tek aggregate."""
+    """Her hesaba bu ayın giriş, çıkış ve eşleşmemiş sayısını yazar.
+
+    Giriş/çıkış aggregate'i aynı kalır (type inflow/outflow, account_id).
+    Virman tek belgedir (type=transfer): kaynak ay çıkışına, hedef ay girişine
+    eklenir. POS bloke çözümü zaten POS hesabında type=outflow olduğu için
+    aggregate'tedir; banka girişinin target_account_id'si ikinci kez eklenmez.
+    company_id boşsa sorgu açılmaz.
+    """
     ids: List[str] = []
     for row in rows or []:
         aid = str((row or {}).get("id") or (row or {}).get("_id") or "")
@@ -255,6 +262,26 @@ async def attach_month_totals(db, company_id: str, rows: List[dict]) -> None:
                 "month_out": round(float(bucket.get("month_out") or 0), 2),
                 "unmatched_count": int(round(float(bucket.get("unmatched_count") or 0))),
             }
+        transfers = await db.bank_transactions.find({
+            "company_id": company_id,
+            "type": "transfer",
+            "$and": [
+                {"date": {"$gte": start}},
+                {"date": {"$lt": end}},
+            ],
+            "$or": [
+                {"account_id": {"$in": ids}},
+                {"target_account_id": {"$in": ids}},
+            ],
+        }).to_list(None)
+        for tx in transfers or []:
+            amt = abs(float((tx or {}).get("amount") or 0))
+            src = str((tx or {}).get("account_id") or "")
+            tgt = str((tx or {}).get("target_account_id") or "")
+            if src in totals:
+                totals[src]["month_out"] = round(float(totals[src]["month_out"]) + amt, 2)
+            if tgt and tgt != src and tgt in totals:
+                totals[tgt]["month_in"] = round(float(totals[tgt]["month_in"]) + amt, 2)
     for row in rows or []:
         aid = str((row or {}).get("id") or (row or {}).get("_id") or "")
         row.update(totals.get(aid, {"month_in": 0.0, "month_out": 0.0, "unmatched_count": 0}))

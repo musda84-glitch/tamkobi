@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { backdropDismissProps } from "./modalBackdrop";
 import { X, ExternalLink } from "lucide-react";
-import { resolveImageUrl } from "./imageUrl";
+import { cardThumbUrl, listThumbUrl, resolveImageUrl } from "./imageUrl";
 
 const PREVIEW_MAX = 360;
 const GAP = 12;
@@ -25,8 +25,12 @@ export function HoverImageThumb({
   className = "w-10 h-10 rounded-lg object-cover border",
   href,
   testId,
+  width = 56,
+  height = 56,
 }) {
-  const url = resolveImageUrl(src);
+  const url = listThumbUrl(src);
+  const preview = cardThumbUrl(src);
+  const full = resolveImageUrl(src);
   const [hover, setHover] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -63,7 +67,7 @@ export function HoverImageThumb({
 
   if (!url) return null;
 
-  const link = href === false ? undefined : (href || url);
+  const link = href === false ? undefined : (href || full);
 
   const openLightbox = (e) => {
     e.preventDefault();
@@ -77,8 +81,11 @@ export function HoverImageThumb({
     <img
       src={url}
       alt={alt}
+      width={width}
+      height={height}
       className={className}
       loading="lazy"
+      decoding="async"
       data-testid={testId}
     />
   );
@@ -125,8 +132,11 @@ export function HoverImageThumb({
           aria-hidden
         >
           <img
-            src={url}
+            src={preview}
             alt=""
+            width={360}
+            height={360}
+            decoding="async"
             className="block max-w-[360px] max-h-[360px] w-auto h-auto rounded-lg object-contain bg-slate-50"
           />
         </div>,
@@ -163,8 +173,11 @@ export function HoverImageThumb({
             </a>
           ) : null}
           <img
-            src={url}
+            src={preview}
             alt={alt}
+            width={600}
+            height={600}
+            decoding="async"
             className="max-h-[85vh] max-w-full object-contain rounded-lg bg-white shadow-2xl"
             onClick={(ev) => ev.stopPropagation()}
           />

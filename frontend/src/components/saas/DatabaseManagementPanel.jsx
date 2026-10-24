@@ -69,6 +69,7 @@ export function DatabaseManagementView({
   onSaveThresholds,
   onResetThresholds,
   onPrepare,
+  onMeasure,
 }) {
   const [modeFilter, setModeFilter] = useState("all");
   const [onlyDiff, setOnlyDiff] = useState(false);
@@ -109,9 +110,19 @@ export function DatabaseManagementView({
         <p className="text-[11px] text-slate-500 mt-1 max-w-3xl">
           Firmaların depolama modlarını izleyin, eşikleri yönetin ve güvenli taşıma yapın. Taşıma sırasında firma yazmaya kilitlenir; sonunda checksum ve kayıt sayısı doğrulanır.
         </p>
-        <p className="text-[10px] text-slate-400 mt-1" data-testid="dbm-measured-at">
-          Son ölçüm: {data.measured_at ? formatLogin(data.measured_at) : "henüz yok"}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400" data-testid="dbm-measured-at">
+          <span>Son ölçüm: {data.measured_at ? formatLogin(data.measured_at) : "henüz yok"}</span>
+          {onMeasure && (
+            <button
+              type="button"
+              onClick={onMeasure}
+              className="px-2 py-0.5 rounded-lg border border-slate-200 font-semibold text-slate-600"
+              data-testid="dbm-remeasure"
+            >
+              Yeniden ölç
+            </button>
+          )}
+        </div>
       </div>
 
       {!routerOn && (
@@ -451,6 +462,7 @@ export function DatabaseManagementPanel() {
       onSaveThresholds={(values) => send("put", `${API_URL}/system/storage-admin/thresholds`, values)}
       onResetThresholds={() => send("post", `${API_URL}/system/storage-admin/thresholds/reset`, {})}
       onPrepare={(company) => send("post", `${API_URL}/system/storage-admin/companies/${company.id}/prepare-dedicated`, { confirm: true })}
+      onMeasure={() => send("post", `${API_URL}/system/storage-admin/measure`, {})}
     />
   );
 }

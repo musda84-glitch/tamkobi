@@ -200,6 +200,52 @@ test("eşik kaydı ve canlı ilerleme", async () => {
   view.unmount();
 });
 
+test("yeniden ölç aralığı atlar ve ölçü uçunu çağırır", async () => {
+  const onMeasure = jest.fn();
+  const view = await mount(
+    <DatabaseManagementView
+      data={base}
+      onDryRun={jest.fn()}
+      onApply={jest.fn()}
+      onRollback={jest.fn()}
+      onRecover={jest.fn()}
+      onCancel={jest.fn()}
+      onSaveThresholds={jest.fn()}
+      onResetThresholds={jest.fn()}
+      onPrepare={jest.fn()}
+      onMeasure={onMeasure}
+    />,
+  );
+  expect(view.host.querySelector("[data-testid='dbm-remeasure']").textContent).toBe("Yeniden ölç");
+  await act(async () => {
+    view.host.querySelector("[data-testid='dbm-remeasure']").click();
+  });
+  expect(onMeasure).toHaveBeenCalledTimes(1);
+  view.unmount();
+});
+
+test("panel yeniden ölç isteğini ölçü ucuna yollar", async () => {
+  axios.get.mockResolvedValue({ data: base });
+  axios.mockResolvedValue({ data: { measured_at: base.measured_at, companies: 2 } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<DatabaseManagementPanel />);
+  });
+  await act(async () => {});
+  await act(async () => {
+    host.querySelector("[data-testid='dbm-remeasure']").click();
+  });
+  expect(axios).toHaveBeenCalledWith(expect.objectContaining({
+    method: "post",
+    url: "http://test/api/system/storage-admin/measure",
+    data: {},
+  }));
+  act(() => root.unmount());
+  host.remove();
+});
+
 test("panel ölçümü çeker ve ilerlemeyi yeniler", async () => {
   let pct = 40;
   axios.get.mockImplementation(() => Promise.resolve({

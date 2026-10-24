@@ -4,7 +4,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { printPayslip } from "../utils/payslip";
 import { toast } from "sonner";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
@@ -921,7 +921,7 @@ export default function PersonnelPage() {
                 <div className="flex w-full min-w-0 shrink-0 items-center gap-3 md:w-[250px]">
                   <div className="relative shrink-0">
                     <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 text-sm font-black text-slate-500" data-testid={`employee-photo-${idSuffix}`}>
-                      {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="h-full w-full object-cover" /> : cardInitials(emp.full_name)}
+                      {emp.photo_url ? <img src={listThumbUrl(emp.photo_url)} alt="" width={40} height={40} loading="lazy" decoding="async" className="h-full w-full object-cover" /> : cardInitials(emp.full_name)}
                     </div>
                     <span className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${pill.dot}`} />
                   </div>
@@ -1399,7 +1399,7 @@ export default function PersonnelPage() {
             <form onSubmit={handleSaveEmployee} className="space-y-3 text-xs">
               <div className="flex items-center gap-3">
                 <div className="w-16 h-16 rounded-2xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0" data-testid="employee-photo-preview">
-                  {newEmployee.photo_url ? <img src={resolveImageUrl(newEmployee.photo_url)} alt="" className="w-full h-full object-cover" /> : <ImageIcon className="w-7 h-7 text-slate-300" />}
+                  {newEmployee.photo_url ? <img src={listThumbUrl(newEmployee.photo_url)} alt="" width={64} height={64} decoding="async" className="w-full h-full object-cover" /> : <ImageIcon className="w-7 h-7 text-slate-300" />}
                 </div>
                 <div className="space-y-1">
                   <label className="inline-flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold">

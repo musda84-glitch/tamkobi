@@ -135,13 +135,18 @@ test("çıkış seçim oturumunu siler, sepeti ve çerezi bırakır", async () =
   expect(localStorage.getItem("b2b_contact_portals")).toBeNull();
   expect(localStorage.getItem("b2b_cart_tok-a")).toContain("p1");
   expect(localStorage.getItem("b2b_held_carts_tok-a")).toContain("h1");
-  expect(sessionStorage.getItem("tamkobi_access_token")).toBe("panel-session");
-  expect(localStorage.getItem("tamkobi_access_token")).toBe("panel-local");
+  expect(sessionStorage.getItem("tamkobi_access_token")).toBeNull();
+  expect(localStorage.getItem("tamkobi_access_token")).toBeNull();
   expect(document.cookie).toContain("tamkobi_app=stay");
   expect(goSpy).toHaveBeenCalledWith("/b2b/giris");
   expect(axios.post).toHaveBeenCalledWith(
+    "/api/auth/logout",
+    {},
+    { withCredentials: true, headers: undefined },
+  );
+  expect(axios.post).toHaveBeenCalledWith(
     "/api/public/b2b/logout",
     { select_token: "select-secret" },
-    { headers: { Authorization: "B2BSession select-secret" } },
+    { withCredentials: true, headers: { Authorization: "B2BSession select-secret" } },
   );
 });

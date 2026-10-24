@@ -12,7 +12,7 @@ import { SmsCenter } from "../components/SmsCenter";
 import { MailClient } from "../components/MailClient";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { PrintTemplateEditor } from "../components/PrintDocument";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { UsersRolesPanel } from "../components/UsersRolesPanel";
 import { PosRulesPanel } from "../components/PosRulesPanel";
@@ -92,7 +92,7 @@ export const CompanyForm = ({ companyId }) => {
   return (
     <form onSubmit={save} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs" data-testid="company-form">
       <div className="flex items-center gap-4">
-        <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden">{c.logo_url ? <img src={resolveImageUrl(c.logo_url)} alt="logo" className="w-full h-full object-contain" /> : <Building2 className="w-8 h-8 text-slate-300" />}</div>
+        <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden">{c.logo_url ? <img src={listThumbUrl(c.logo_url)} alt="logo" width={80} height={80} decoding="async" className="w-full h-full object-contain" /> : <Building2 className="w-8 h-8 text-slate-300" />}</div>
         <label className="flex items-center gap-1.5 px-3 py-2 border rounded-lg cursor-pointer hover:bg-slate-50 font-semibold"><Upload className="w-3.5 h-3.5" /> Logo Yükle<input type="file" accept="image/*" className="hidden" onChange={uploadLogo} data-testid="company-logo-input" /></label>
       </div>
       <div className="flex flex-wrap items-end gap-2" data-testid="company-no-row">

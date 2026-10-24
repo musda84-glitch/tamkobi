@@ -49,7 +49,11 @@ jest.mock("../components/EmployeeLedgerModal", () => ({ EmployeeLedgerModal: () 
 jest.mock("../components/EmployeeYevmiyeModal", () => ({ EmployeeYevmiyeModal: () => null }));
 jest.mock("../utils/payslip", () => ({ printPayslip: jest.fn() }));
 jest.mock("../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/dataRefresh", () => ({
   notifyDataChanged: jest.fn(),
   useDataRefresh: () => {},

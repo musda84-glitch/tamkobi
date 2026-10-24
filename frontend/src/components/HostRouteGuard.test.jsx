@@ -99,6 +99,25 @@ describe("HostRouteGuard", () => {
     await m.cleanup();
   });
 
+  test("redirects /mesajlar from the apex site to app and keeps the query", async () => {
+    mockLocation.pathname = "/mesajlar";
+    mockLocation.search = "?yeni=1";
+    const m = await mount();
+    expect(hostUrl).toHaveBeenCalledWith("app", "/mesajlar?yeni=1");
+    expect(replaceSpy).toHaveBeenCalledWith("https://app.tamkobi.com/mesajlar?yeni=1");
+    await m.cleanup();
+  });
+
+  test("redirects /mesajlar subpaths from the apex site to app", async () => {
+    mockLocation.pathname = "/mesajlar/sohbet";
+    mockLocation.search = "?c=1";
+    mockLocation.hash = "#son";
+    const m = await mount();
+    expect(hostUrl).toHaveBeenCalledWith("app", "/mesajlar/sohbet?c=1#son");
+    expect(replaceSpy).toHaveBeenCalledWith("https://app.tamkobi.com/mesajlar/sohbet?c=1#son");
+    await m.cleanup();
+  });
+
   test("sets robots meta for non-site hosts", async () => {
     getHostKind.mockReturnValue("app");
     mockLocation.pathname = "/panel";

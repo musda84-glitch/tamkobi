@@ -29,7 +29,7 @@ import isnet_portal
 import qnb_efinans
 import tenant_access
 import ubl_export
-from buyer_tax import buyer_tax_choice, usable_tax
+from buyer_tax import buyer_tax_choice, invoice_buyer_name, usable_tax
 from invoice_edit_lock import invoice_gib_locked
 from safe_error import looks_like_raw_body, mask_sensitive_text, public_provider_detail
 
@@ -660,8 +660,12 @@ def normalize_scenario(raw: Optional[str], e_type: str) -> str:
 
 
 def validate_buyer(contact: Optional[dict], invoice: dict, e_type: str) -> Dict[str, Any]:
-    name = ((contact or {}).get("name") or invoice.get("contact_name") or "").strip()
     tax = buyer_tax_choice(invoice, contact)["tax"]
+    name = invoice_buyer_name(
+        contact,
+        fallback=invoice.get("contact_name") or "",
+        tax_id=tax,
+    ).strip()
     if not name:
         raise HTTPException(status_code=400, detail="Alıcı ünvanı zorunludur (GİB).")
     if e_type == "e_invoice" and len(tax) not in (10, 11):
@@ -913,6 +917,9 @@ async def issue_invoice(
                     "E-fatura onayında muafiyet / istisna kodunu seçin."
                 ),
             )
+    gib_name = str((gib_meta or {}).get("name") or "").strip()
+    if gib_name and isinstance(contact, dict) and not str(contact.get("gib_title") or "").strip():
+        contact = {**contact, "gib_title": gib_name}
     buyer = validate_buyer(contact, inv, et)
     company = await _db.companies.find_one({"_id": inv.get("company_id")}) or {}
 

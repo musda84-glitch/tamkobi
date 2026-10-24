@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Navigation, Ruler, Calendar, User, MapPin, ImagePlus } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl, resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
@@ -72,7 +72,7 @@ export const SurveyDetailModal = ({ survey, onClose, onChanged }) => {
         <div>
           <div className="text-[10px] uppercase text-slate-400 font-semibold mb-1">Fotoğraflar</div>
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-            {images.map((img) => <a key={img} href={resolveImageUrl(img)} target="_blank" rel="noreferrer"><img src={resolveImageUrl(img)} alt="" className="w-full h-20 object-cover rounded-lg border" /></a>)}
+            {images.map((img) => <a key={img} href={resolveImageUrl(img)} target="_blank" rel="noreferrer"><img src={listThumbUrl(img)} alt="" width={120} height={80} loading="lazy" decoding="async" className="w-full h-20 object-cover rounded-lg border" /></a>)}
             <label className="h-20 rounded-lg border-2 border-dashed border-slate-300 hover:border-emerald-500 flex flex-col items-center justify-center cursor-pointer text-slate-400 text-[10px] gap-1" data-testid="survey-upload-photo">
               <ImagePlus className="w-4 h-4" />{uploading ? "Yükleniyor…" : "Ekle"}
               <input type="file" accept="image/*,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" onChange={upload} disabled={uploading} />

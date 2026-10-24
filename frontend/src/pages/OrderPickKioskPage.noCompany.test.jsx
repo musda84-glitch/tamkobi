@@ -19,7 +19,11 @@ jest.mock("../context/AuthContext", () => ({
   API_URL: "/api",
   useAuth: () => ({ activeCompany: null }),
 }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (url) => url || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (url) => url || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../components/CameraScanner", () => ({ ScanButton: () => null, CameraScanner: () => null }));
 jest.mock("../components/PickLabelPrintHost", () => ({ PickLabelPrintHost: () => null }));
 jest.mock("../utils/dataRefresh", () => ({ notifyDataChanged: jest.fn() }));

@@ -69,3 +69,16 @@ export function listImageUrl(url, edge = 64) {
     return resolved;
   }
 }
+
+/** Liste satırı (ürün, sipariş, toplama) için saklanan küçük kenar. */
+export const LIST_THUMB_EDGE = 200;
+/** Kart ve hover için saklanan kenar. Yazdırma satırı 200 px kullanır. */
+export const CARD_THUMB_EDGE = 600;
+
+export function listThumbUrl(url) {
+  return listImageUrl(url, LIST_THUMB_EDGE);
+}
+
+export function cardThumbUrl(url) {
+  return listImageUrl(url, CARD_THUMB_EDGE);
+}

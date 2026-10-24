@@ -3,7 +3,7 @@ import axios from "axios";
 import { useParams } from "react-router-dom";
 import { Loader2, Building2, AlertTriangle, FileDown, Printer } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { StatementTxList } from "../components/StatementTxList";
 import { StatementPrint } from "../components/StatementShare";
@@ -32,7 +32,7 @@ export default function StatementPublicPage() {
       <div className="max-w-3xl mx-auto space-y-4">
         <div className="bg-slate-900 text-white rounded-2xl p-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            {c.logo_url ? <img src={resolveImageUrl(c.logo_url)} alt="" className="h-12 bg-white rounded-lg p-1 object-contain" /> : <Building2 className="w-8 h-8 text-slate-400 shrink-0" />}
+            {c.logo_url ? <img src={listThumbUrl(c.logo_url)} alt="" width={48} height={48} decoding="async" className="h-12 bg-white rounded-lg p-1 object-contain" /> : <Building2 className="w-8 h-8 text-slate-400 shrink-0" />}
             <div className="min-w-0">
               <div className="font-bold text-lg leading-tight truncate">{c.name}</div>
               <div className="text-xs text-slate-400 truncate">{c.phone} {c.email && `• ${c.email}`}</div>
