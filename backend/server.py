@@ -9591,6 +9591,7 @@ def _cached_file_headers(base: dict, *, public: bool, etag: str, mtime: Optional
 
 
 async def _file_record(path: str):
+    # tenant-ok: depolama yolu oturumsuz dosya anahtarıdır; oturum yokken şirket bilinmez, hassas alanda yetki kayıt company_id ile doğrulanır
     return await db.files.find_one({"storage_path": path, "is_deleted": False})
 
 
