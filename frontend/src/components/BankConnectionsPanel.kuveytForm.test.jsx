@@ -17,7 +17,11 @@ jest.mock("axios", () => {
 });
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
-jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "",
+  listImageUrl: (u) => u || "",
+  listThumbUrl: (u) => u || "",
+  cardThumbUrl: (u) => u || "",
+}));
 jest.mock("../utils/jsencryptKuveyt", () => ({
   generateJsencryptKeyPair: jest.fn(async () => ({
     privateKey: "PRIV",

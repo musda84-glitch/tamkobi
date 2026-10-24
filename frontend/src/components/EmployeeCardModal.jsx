@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { X, User, FileText, Wallet, CalendarDays, Clock, KeyRound, Upload, Trash2, ExternalLink, Loader2, Mail, Banknote, Receipt, ClipboardList, UserMinus, MessageSquare, RotateCcw } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl, resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { EmployeeCompensationForm } from "./WorkScheduleSettings";
 import { EmployeePayModal } from "./EmployeePayModal";
@@ -403,7 +403,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <label className="relative w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-lg shrink-0 overflow-hidden cursor-pointer" title="Fotoğraf yükle" data-testid="emp-card-photo">
-              {e.photo_url ? <img src={resolveImageUrl(e.photo_url)} alt="" className="w-full h-full object-cover" /> : (e.full_name?.split(" ").map((w) => w[0]).slice(0, 2).join("") || "?")}
+              {e.photo_url ? <img src={listThumbUrl(e.photo_url)} alt="" width={48} height={48} decoding="async" className="w-full h-full object-cover" /> : (e.full_name?.split(" ").map((w) => w[0]).slice(0, 2).join("") || "?")}
               <input type="file" accept="image/*" className="hidden" onChange={async (ev) => {
                 const raw = ev.target.files?.[0]; ev.target.value = ""; if (!raw) return;
                 try {

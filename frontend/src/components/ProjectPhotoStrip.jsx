@@ -1,4 +1,5 @@
 import React from "react";
+import { listThumbUrl } from "../utils/imageUrl";
 
 export function projectPhotoItems(project) {
   const photos = Array.isArray(project?.stage_photos) ? project.stage_photos : [];
@@ -38,8 +39,12 @@ export function ProjectPhotoStrip({ project, stages = [], onOpenPhotos }) {
           {thumbs.map((photo) => (
             <img
               key={photo.url}
-              src={photo.url}
+              src={listThumbUrl(photo.url)}
               alt=""
+              width={40}
+              height={40}
+              loading="lazy"
+              decoding="async"
               className="h-10 w-10 rounded-lg border border-slate-200 bg-white object-cover"
               data-testid={`project-photo-thumb-${number}`}
             />
