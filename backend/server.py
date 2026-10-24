@@ -104,7 +104,8 @@ from auth_utils import (
     create_refresh_token, get_user_from_token, jwt_secret_is_insecure,
     require_secure_jwt_secret, session_token,
     auth_cookie_kwargs, access_cookie_max_age, refresh_cookie_max_age,
-    clear_auth_cookies, token_version_of, revoke_login_sessions,
+    clear_auth_cookies, client_token_version, request_client_kind, new_session_id,
+    revoke_login_sessions,
 )
 import superadmin_2fa
 import google_auth
@@ -917,13 +918,16 @@ async def _issue_session_for_user(
     else:
         aud = _ha.audience_for_request(request) or _ha.AUD_APP
 
-    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi)
-    tv = token_version_of(user)
+    # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi).
+    # Web çıkışı mobile kuşağını, mobil çıkış web kuşağını düşürmez.
+    cli = request_client_kind(request)
+    tv = client_token_version(user, cli)
+    sid = new_session_id()
     token = create_access_token(
         user_id, email, user.get("role", "admin"),
-        is_super_admin=is_sa, mfa=is_sa, aud=aud, token_version=tv,
+        is_super_admin=is_sa, mfa=is_sa, aud=aud, token_version=tv, client=cli, sid=sid,
     )
-    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa, token_version=tv)
+    refresh_tok = create_refresh_token(user_id, is_super_admin=is_sa, token_version=tv, client=cli, sid=sid)
     access_age = access_cookie_max_age(is_super_admin=is_sa, remember=remember)
     refresh_age = refresh_cookie_max_age(is_super_admin=is_sa, remember=remember)
     response.set_cookie(key="access_token", value=token, **auth_cookie_kwargs(request, max_age=access_age))

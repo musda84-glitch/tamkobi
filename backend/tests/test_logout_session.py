@@ -1,4 +1,4 @@
-"""Çıkış oturumu düşürür: token_version, çerez bayrakları, QR teslimi.
+"""Çıkış yalnız kendi istemcisini düşürür: web çerezi ve mobil bearer.
 
 Bellek içi veritabanı. Canlı veritabanı ve 8021 yok.
 """
@@ -95,19 +95,48 @@ def test_login_remember_defaults_to_false():
     assert body.remember is False
 
 
-def test_issued_tokens_carry_generation_and_logout_rejects_them(monkeypatch, caplog):
+def _pair(client: str, *, version: int = 0):
+    sid = auth_utils.new_session_id()
+    access = auth_utils.create_access_token(
+        "usr1", "ada@example.com", "admin", aud="app",
+        token_version=version, client=client, sid=sid,
+    )
+    refresh = auth_utils.create_refresh_token("usr1", token_version=version, client=client, sid=sid)
+    return access, refresh
+
+
+def _mobile_request(token: str):
+    return SimpleNamespace(
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tamkobi-Client": "mobile",
+            "x-forwarded-proto": "https",
+        },
+        cookies={},
+        url="https://app.tamkobi.com/api/auth/logout",
+        client=SimpleNamespace(host="203.0.113.10"),
+    )
+
+
+def test_issued_tokens_carry_client_and_web_logout_spares_mobile(monkeypatch, caplog):
     import server
 
     db = _DB()
     asyncio.run(db.users.insert_one(_user()))
     monkeypatch.setattr(server, "db", db)
-    access = auth_utils.create_access_token("usr1", "ada@example.com", "admin", aud="app", token_version=0)
-    refresh = auth_utils.create_refresh_token("usr1", token_version=0)
+    access, refresh = _pair("web")
+    mobile_access, mobile_refresh = _pair("mobile")
+    legacy = auth_utils.create_access_token(
+        "usr1", "ada@example.com", "admin", aud="app", client=None,
+    )
     access_payload = auth_utils.decode_access_payload(access)
     refresh_payload = auth_utils.decode_access_payload(refresh)
-    assert access_payload["tv"] == 0 and access_payload["jti"]
-    assert refresh_payload["tv"] == 0 and refresh_payload["type"] == "refresh"
+    mobile_payload = auth_utils.decode_access_payload(mobile_access)
+    assert access_payload["cli"] == "web" and access_payload["tv"] == 0 and access_payload["sid"]
+    assert refresh_payload["cli"] == "web" and refresh_payload["sid"] == access_payload["sid"]
     assert access_payload["jti"] != refresh_payload["jti"]
+    assert mobile_payload["cli"] == "mobile" and mobile_payload["sid"] != access_payload["sid"]
+    assert "cli" not in auth_utils.decode_access_payload(legacy)
 
     asyncio.run(db.web_login_qr.insert_one({
         "_id": "qr1",
@@ -120,6 +149,7 @@ def test_issued_tokens_carry_generation_and_logout_rejects_them(monkeypatch, cap
     assert body["status"] == "success"
     assert access not in str(body)
     assert refresh not in str(body)
+    assert mobile_access not in caplog.text
     assert access not in caplog.text
     assert refresh not in caplog.text
 
@@ -133,19 +163,85 @@ def test_issued_tokens_carry_generation_and_logout_rejects_them(monkeypatch, cap
     assert "Domain=" not in raw
 
     stored = asyncio.run(db.users.find_one({"_id": "usr1"}))
-    assert stored["token_version"] == 1
+    assert stored["token_versions"]["web"] == 1
+    assert int(stored["token_versions"].get("mobile") or 0) == 0
+    assert int(stored.get("token_version") or 0) == 0
     with pytest.raises(HTTPException) as denied:
         asyncio.run(auth_utils.get_user_from_token(access, db))
     assert denied.value.status_code == 401
     assert not auth_utils.session_generation_current(refresh_payload, stored)
-
-    fresh = auth_utils.create_access_token(
-        "usr1", "ada@example.com", "admin", aud="app", token_version=stored["token_version"],
+    mobile_user = asyncio.run(auth_utils.get_user_from_token(mobile_access, db))
+    assert mobile_user["email"] == "ada@example.com"
+    assert auth_utils.session_generation_current(
+        auth_utils.decode_access_payload(mobile_refresh), stored,
     )
+    legacy_user = asyncio.run(auth_utils.get_user_from_token(legacy, db))
+    assert legacy_user["email"] == "ada@example.com"
+
+    fresh, _fresh_refresh = _pair("web", version=stored["token_versions"]["web"])
     again = asyncio.run(auth_utils.get_user_from_token(fresh, db))
     assert again["email"] == "ada@example.com"
     qr = asyncio.run(db.web_login_qr.find_one({"_id": "qr1"}))
     assert qr["status"] == "revoked"
+
+
+def test_mobile_logout_spares_web_session(monkeypatch):
+    import server
+
+    db = _DB()
+    asyncio.run(db.users.insert_one(_user()))
+    monkeypatch.setattr(server, "db", db)
+    web_access, web_refresh = _pair("web")
+    mobile_access, mobile_refresh = _pair("mobile")
+    legacy = auth_utils.create_access_token(
+        "usr1", "ada@example.com", "admin", aud="app", client=None,
+    )
+    asyncio.run(db.web_login_qr.insert_one({
+        "_id": "qr1",
+        "user_id": "usr1",
+        "status": "approved",
+    }))
+    body = asyncio.run(server.logout(_mobile_request(mobile_access), Response()))
+    assert body["status"] == "success"
+    assert mobile_access not in str(body)
+
+    stored = asyncio.run(db.users.find_one({"_id": "usr1"}))
+    assert stored["token_versions"]["mobile"] == 1
+    assert int(stored["token_versions"].get("web") or 0) == 0
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(auth_utils.get_user_from_token(mobile_access, db))
+    assert denied.value.status_code == 401
+    assert not auth_utils.session_generation_current(
+        auth_utils.decode_access_payload(mobile_refresh), stored,
+    )
+    web_user = asyncio.run(auth_utils.get_user_from_token(web_access, db))
+    assert web_user["email"] == "ada@example.com"
+    assert auth_utils.session_generation_current(
+        auth_utils.decode_access_payload(web_refresh), stored,
+    )
+    assert asyncio.run(auth_utils.get_user_from_token(legacy, db))["email"] == "ada@example.com"
+    qr = asyncio.run(db.web_login_qr.find_one({"_id": "qr1"}))
+    assert qr["status"] == "approved"
+
+
+def test_legacy_token_dies_only_when_that_session_logs_out(monkeypatch):
+    import server
+
+    db = _DB()
+    asyncio.run(db.users.insert_one(_user()))
+    monkeypatch.setattr(server, "db", db)
+    legacy = auth_utils.create_access_token(
+        "usr1", "ada@example.com", "admin", aud="app", client=None,
+    )
+    other = auth_utils.create_access_token(
+        "usr1", "ada@example.com", "admin", aud="app", client=None,
+    )
+    asyncio.run(server.logout(_request(legacy, ""), Response()))
+    stored = asyncio.run(db.users.find_one({"_id": "usr1"}))
+    assert stored["token_versions"]["web"] == 1
+    with pytest.raises(HTTPException):
+        asyncio.run(auth_utils.get_user_from_token(legacy, db))
+    assert asyncio.run(auth_utils.get_user_from_token(other, db))["email"] == "ada@example.com"
 
 
 def test_logout_leaves_shopfloor_device_token(monkeypatch):
@@ -164,6 +260,8 @@ def test_logout_leaves_shopfloor_device_token(monkeypatch):
     asyncio.run(server.logout(request, Response()))
     stored = asyncio.run(db.users.find_one({"_id": "usr1"}))
     assert int(stored.get("token_version") or 0) == 0
+    assert int((stored.get("token_versions") or {}).get("web") or 0) == 0
+    assert int((stored.get("token_versions") or {}).get("mobile") or 0) == 0
 
 
 def test_clear_auth_cookies_match_secure_flag():
