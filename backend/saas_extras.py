@@ -374,10 +374,12 @@ async def issue_subscription_invoice(tx: dict) -> Optional[str]:
     gross = round(float(tx["amount"]), 2); net = round(gross / 1.20, 2); vat = round(gross - net, 2)
     period_label = "Yıllık" if tx["period"] == "yearly" else "Aylık"
     invoice_number = await _next_subscription_invoice_number(platform_cid)
+    from buyer_tax import stamp_invoice_buyer
     inv = {"_id": str(uuid.uuid4()), "company_id": platform_cid, "invoice_number": invoice_number, "invoice_type": "sales", "e_type": "e_archive", "contact_id": contact["_id"], "contact_name": contact["name"], "contact_tax_id": contact.get("tax_number_or_id"), "issue_date": _now()[:10], "due_date": _now()[:10],
            "items": [{"product_id": "", "name": f"{st.get('brand_name', 'TamKobi')} {tx['plan_name']} Paketi – {period_label} Abonelik", "quantity": 1, "unit": "Adet", "unit_price": net, "vat_rate": 20, "discount_rate": 0, "total": net, "vat_amount": vat}],
            "subtotal": net, "vat_total": vat, "discount_total": 0.0, "grand_total": gross, "currency": "TRY", "status": "approved", "gib_status": "Başarıyla İletildi (GİB Onaylı)", "gib_tracking_id": f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}", "payment_status": "paid", "paid_amount": gross,
            "notes": f"Online ödeme ({tx.get('provider', 'stripe')}) · Referans {tx.get('session_id') or tx.get('merchant_oid')}", "source": "subscription", "payment_tx_id": tx["_id"], "subscriber_company_id": tx["company_id"], "created_at": _now()}
+    stamp_invoice_buyer(inv, contact)
     await _db.invoices.insert_one(inv)
     await _db.payment_transactions.update_one({"_id": tx["_id"]}, {"$set": {"invoice_id": inv["_id"], "invoice_number": inv["invoice_number"]}})
     mail = {"status": "skipped"}

@@ -55,7 +55,7 @@ from b2b_catalog import b2b_catalog_mongo_filter
 from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
 from contact_match import order_identity_ors, pick_bank_contact
 from contact_tax import contact_tax_patch
-from buyer_tax import buyer_tax_choice, invoice_contact_tax_id
+from buyer_tax import buyer_tax_choice, invoice_contact_tax_id, stamp_invoice_buyer
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -3083,6 +3083,7 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None, us
     if q.get("invoice_id"):
         raise HTTPException(status_code=400, detail="Bu teklif zaten faturaya dönüştürülmüş.")
     req = req or {}
+    contact = None
     if q.get("contact_id"):
         contact = await tenant_access.get_tenant_doc(db, "contacts", q["contact_id"], user, not_found="Cari hesap bulunamadı.")
         tenant_access.assert_same_company(user, q, contact)
@@ -3098,6 +3099,7 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None, us
            "grand_total": q["grand_total"], "currency": "TRY", "status": "draft", "gib_status": None, "payment_status": "unpaid", "paid_amount": 0,
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "due_date": req.get("due_date"), "notes": f"{q['quote_number']} numaralı tekliften oluşturuldu.",
            "quote_id": quote_id, "project_id": q.get("project_id"), "created_at": datetime.now(timezone.utc).isoformat()}
+    stamp_invoice_buyer(inv, contact)
     await db.invoices.insert_one(inv)
     if q.get("payment_plan"):
         await _create_invoice_installments(inv, q["payment_plan"].get("config", {}))
@@ -8875,6 +8877,7 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
 
     await offline_sync.assert_stock_available(db, company_id, lines, req.get("expected_stock"))
     amount_note = offline_sync.amount_decision(req.get("expected_grand_total"), grand)
+    stamp_invoice_buyer(invoice, contact)
     await _apply_invoice_effects(invoice)
     await db.invoices.insert_one(invoice)
 
@@ -10048,6 +10051,7 @@ async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get
            "despatch_carrier_name": defaults.get("carrier_name") or "",
            "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    stamp_invoice_buyer(doc, contact)
     await db.invoices.insert_one(doc)
     await db.invoices.update_one({"_id": invoice_id, "company_id": cid}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     sent = await _send_dispatch_to_isnet_if_configured(doc)
@@ -10442,6 +10446,8 @@ async def _create_invoice_core(invoice: Invoice, user: dict):
     _contact_row = None
     if invoice.contact_id:
         _contact_row = await db.contacts.find_one({"_id": invoice.contact_id, "company_id": invoice.company_id})
+    if _contact_row:
+        stamp_invoice_buyer(invoice, _contact_row)
     if _contact_row and invoice.invoice_type == "sales":
         await _sync_contact_tax_from_sales_invoice(
             invoice.invoice_type,
@@ -18401,6 +18407,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         doc["payment_method"] = pay_method
     if pay_kind:
         doc["payment_type"] = pay_kind
+    stamp_invoice_buyer(doc, contact)
     await db.invoices.insert_one(doc)
     await db.orders.update_one(
         {"_id": order["_id"]},
@@ -19208,6 +19215,7 @@ async def create_dispatch(order_id: str, user: dict = Depends(get_current_user))
            "despatch_carrier_name": defaults.get("carrier_name") or o.get("cargo_carrier") or "",
            "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
+    stamp_invoice_buyer(doc, contact)
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
@@ -23019,6 +23027,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None, us
         new_invoice["payment_method"] = pay_method
     if pay_kind:
         new_invoice["payment_type"] = pay_kind
+    stamp_invoice_buyer(new_invoice, _oc)
     if draft_inv and draft_inv.get("status") == "draft":
         inv_id = draft_inv["_id"]
         invoice_number = draft_inv.get("invoice_number") or invoice_number
