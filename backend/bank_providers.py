@@ -5,6 +5,7 @@ Enpara (api.enpara.com) QNB'den ayrı bir bankadır; QNB Open Banking ayrı kay�
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -14,6 +15,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -579,6 +581,27 @@ def _kuveyt_sign_payload(access_token: str, *, query_string: str = "", json_body
     return (access_token or "").strip() + (query_string or "")
 
 
+# Asılı node süreci 20 sn event loop'u kilitliyordu (fx/rates p50 ~21 sn).
+# Çalışan node aynı imzayı üretir. Zaman aşımından sonra Python yedeği kullanılır.
+_NODE_SIGN_TIMEOUT_SEC = 3
+_NODE_SIGN_COOLDOWN_SEC = 300
+_node_sign_down_until = 0.0
+
+
+def _reset_kuveyt_node_backoff() -> None:
+    global _node_sign_down_until
+    _node_sign_down_until = 0.0
+
+
+def _node_sign_ready() -> bool:
+    return time.monotonic() >= _node_sign_down_until
+
+
+def _mark_node_sign_down() -> None:
+    global _node_sign_down_until
+    _node_sign_down_until = time.monotonic() + _NODE_SIGN_COOLDOWN_SEC
+
+
 def _jsencrypt_sign_sha256(pem: str, data: str) -> str:
     """travist/jsencrypt JSEncrypt.signSha256 — github.com/travist/jsencrypt."""
     node = shutil.which("node")
@@ -586,15 +609,19 @@ def _jsencrypt_sign_sha256(pem: str, data: str) -> str:
         raise RuntimeError("JSEncrypt için node bulunamadı")
     if not _JSENCRYPT_SIGN_JS.is_file():
         raise RuntimeError("JSEncrypt köprüsü (sign.js) yok")
-    proc = subprocess.run(
-        [node, str(_JSENCRYPT_SIGN_JS)],
-        input=json.dumps({"privateKey": pem, "data": data}, ensure_ascii=False),
-        capture_output=True,
-        text=True,
-        timeout=20,
-        cwd=str(_JSENCRYPT_BRIDGE_DIR),
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [node, str(_JSENCRYPT_SIGN_JS)],
+            input=json.dumps({"privateKey": pem, "data": data}, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            timeout=_NODE_SIGN_TIMEOUT_SEC,
+            cwd=str(_JSENCRYPT_BRIDGE_DIR),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        _mark_node_sign_down()
+        raise
     sig = (proc.stdout or "").strip()
     if proc.returncode != 0 or not sig:
         err = (proc.stderr or proc.stdout or "imza alınamadı").strip()[:240]
@@ -620,11 +647,14 @@ def _kuveyt_sign(access_token: str, pem: str, *, query_string: str = "", json_bo
     """
     payload = _kuveyt_sign_payload(access_token, query_string=query_string, json_body=json_body)
     _kuveyt_load_private_key(pem)
-    try:
-        return _jsencrypt_sign_sha256(pem, payload)
-    except Exception as e:
-        logger.warning("JSEncrypt node imza yok, PKCS1 SHA256 yedek: %s", _err_text(e)[:160])
-        return _kuveyt_sign_python(pem, payload)
+    if _node_sign_ready():
+        try:
+            return _jsencrypt_sign_sha256(pem, payload)
+        except Exception as e:
+            logger.warning("JSEncrypt node imza yok, PKCS1 SHA256 yedek: %s", _err_text(e)[:160])
+    else:
+        logger.warning("JSEncrypt node bekletiliyor, PKCS1 SHA256 yedek")
+    return _kuveyt_sign_python(pem, payload)
 
 
 def _kuveyt_headers(
@@ -651,6 +681,23 @@ def _kuveyt_headers(
         else:
             headers["Signature"] = _kuveyt_sign(token, pem, query_string=_kuveyt_query_string(params))
     return headers
+
+
+async def kuveyt_headers_async(
+    token: str,
+    conn: dict,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    json_body: Optional[str] = None,
+) -> Dict[str, str]:
+    """RSA imza (node subprocess) event loop dışında. Başlık baytları aynıdır."""
+    return await asyncio.to_thread(
+        _kuveyt_headers,
+        token,
+        conn,
+        params=params,
+        json_body=json_body,
+    )
 
 
 def _kuveyt_normalize_secret(val: str) -> str:
@@ -1059,7 +1106,7 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
     extra = " RSA-SHA256 imza anahtarı yok — fx/rates ve hareket için PKCS8 PEM gerekli."
     probe_ok = True
     if pem:
-        headers = _kuveyt_headers(token, conn)
+        headers = await kuveyt_headers_async(token, conn)
         last_probe = ""
         probe_ok = False
         timed_out: List[str] = []
@@ -1336,7 +1383,7 @@ async def fetch_kuveyt_fx_rates(conn: dict) -> tuple:
     async with httpx.AsyncClient(timeout=_KUVEYT_GATEWAY_TIMEOUT) as client:
         for base in _kuveyt_gateway_urls(conn):
             url = f"{base}/v1/fx/rates"
-            headers = _kuveyt_headers(token, conn)
+            headers = await kuveyt_headers_async(token, conn)
             try:
                 resp = await client.get(url, headers=headers)
             except httpx.TimeoutException as e:
@@ -1398,7 +1445,7 @@ async def _kuveyt_post_signed(conn: dict, path: str, body: dict, *, token: Optio
     async with httpx.AsyncClient(timeout=30) as client:
         for base in _kuveyt_gateway_urls(conn):
             url = f"{base}{path}"
-            headers = _kuveyt_headers(tok, conn, json_body=raw)
+            headers = await kuveyt_headers_async(tok, conn, json_body=raw)
             resp = await client.post(url, content=raw.encode("utf-8"), headers=headers)
             last = f"POST {url} HTTP {resp.status_code}: {_api_error_detail(resp)}"
             if resp.status_code == 404:
@@ -2340,7 +2387,7 @@ async def _kuveyt_enrich_rows_from_receipts(
             got = False
             for base in bases[:2]:
                 try:
-                    headers = _kuveyt_headers(token, conn, json_body=raw)
+                    headers = await kuveyt_headers_async(token, conn, json_body=raw)
                     resp = await client.post(f"{base.rstrip('/')}{path}", headers=headers, content=raw.encode("utf-8"))
                     if resp.status_code >= 400:
                         continue
@@ -3266,7 +3313,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         async def _get(gw: str, path: str, params: Optional[Dict[str, str]] = None):
             client.cookies.clear()
             qs_params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
-            headers = _kuveyt_headers(token, conn, params=qs_params or None)
+            headers = await kuveyt_headers_async(token, conn, params=qs_params or None)
             url = f"{gw}{path}" + _kuveyt_query_string(qs_params)
             return await client.get(url, headers=headers)
 
