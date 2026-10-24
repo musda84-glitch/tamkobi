@@ -23,6 +23,16 @@ export function productLabelImageUrl(product) {
   return mediaRef(product?.label_image_url) || mediaRef(product?.image_url) || "";
 }
 
+/** Kartta 600 px istenecek kapak. Liste thumb'ı (200 px) büyütülmez. */
+export function productCardImageUrl(product) {
+  return (
+    mediaRef(product?.image_url)
+    || (Array.isArray(product?.images) && mediaRef(product.images[0]))
+    || mediaRef(product?.thumbnail_url)
+    || ""
+  );
+}
+
 /** Liste/kart küçük önizleme — thumbnail yoksa kapak. */
 export function productListImageUrl(product) {
   return (

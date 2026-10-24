@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InvoicePrintShareModal } from "../components/InvoicePrintShareModal";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
-import { listImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { orderLineListImageUrl } from "../utils/productImages";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
@@ -2291,7 +2291,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3 align-top overflow-hidden">
-                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listImageUrl(orderLineListImageUrl(it, p), open ? 80 : 48); return (
+                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listThumbUrl(orderLineListImageUrl(it, p)); return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => {

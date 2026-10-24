@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listThumbUrl } from "../utils/imageUrl";
 import { notifyDataChanged } from "../utils/dataRefresh";
 
 import { PickLabelPrintHost } from "../components/PickLabelPrintHost";
@@ -80,9 +80,9 @@ const isLineComplete = (it) =>
   it && Number(it.picked_qty) >= Number(it.ordered_qty) - 1e-9;
 
 function PickThumb({ imageUrl }) {
-  const img = resolveImageUrl(imageUrl);
+  const img = listThumbUrl(imageUrl);
   if (img) {
-    return <img src={img} alt="" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" />;
+    return <img src={img} alt="" width={56} height={56} loading="lazy" decoding="async" className="w-14 h-14 rounded-xl object-cover border bg-white shrink-0" />;
   }
   return (
     <div className="w-14 h-14 rounded-xl border bg-slate-50 flex items-center justify-center text-slate-300 shrink-0">

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { cardThumbUrl, listImageUrl, resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
@@ -37,6 +37,7 @@ const printThumbUrl = (raw) => {
   if (!resolved) return "";
   try {
     const u = new URL(resolved, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    if (u.pathname.startsWith("/api/files/")) return listImageUrl(resolved, 200);
     if (/unsplash\.com|images\.pexels\.com|cloudinary\.com/i.test(u.hostname) || u.searchParams.has("w")) {
       u.searchParams.set("w", "128");
       if (!u.searchParams.has("q") && /unsplash/i.test(u.hostname)) u.searchParams.set("q", "60");
@@ -461,7 +462,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
           {isModern ? (
             <div className="px-10 py-6 print-sheet-pad text-white flex justify-between items-start" style={{ backgroundColor: color }}>
               <div className="flex items-center gap-3">
-                {tpl.show_logo && company?.logo_url && <img src={resolveImageUrl(company.logo_url)} alt="logo" className="h-14 object-contain bg-white rounded-lg p-1" />}
+                {tpl.show_logo && company?.logo_url && <img src={listImageUrl(company.logo_url, 200)} alt="logo" width={56} height={56} decoding="async" className="h-14 object-contain bg-white rounded-lg p-1" />}
                 <div><div className="text-lg font-bold">{company?.name}</div><div className="opacity-80">{company?.address} {company?.city}</div>{tpl.show_tax_info && <div className="opacity-80">VD: {company?.tax_office} • VKN: {company?.tax_number}</div>}<div className="opacity-80">{company?.phone} • {company?.email}</div></div>
               </div>
               <div className="text-right"><div className="text-2xl font-black tracking-tight">{title}</div><div className="font-mono font-semibold">{number}</div><div className="opacity-80">Tarih: {fmtDate(doc.issue_date || doc.order_date || doc.created_at)}</div>{doc.valid_until && <div className="opacity-80">Geçerlilik: {fmtDate(doc.valid_until)}</div>}{doc.due_date && <div className="opacity-80">Vade: {fmtDate(doc.due_date)}</div>}</div>
@@ -469,7 +470,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
           ) : (
           <div className={`flex justify-between items-start pb-4 ${isMinimal ? "border-b border-slate-900" : "border-b-4"}`} style={isMinimal ? {} : { borderColor: color }}>
             <div className="flex items-center gap-3">
-              {tpl.show_logo && company?.logo_url && <img src={resolveImageUrl(company.logo_url)} alt="logo" className="h-14 object-contain" />}
+              {tpl.show_logo && company?.logo_url && <img src={listImageUrl(company.logo_url, 200)} alt="logo" width={56} height={56} decoding="async" className="h-14 object-contain" />}
               <div>
                 <div className="text-lg font-bold" style={{ color }}>{company?.name}</div>
                 <div className="text-slate-500">{company?.address} {company?.city}</div>
@@ -541,7 +542,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
                       {showImages && (
                         <span className="print-compact-thumb shrink-0" data-testid={`print-item-image-${i}`}>
                           {img ? (
-                            <img src={img} alt="" width={44} height={44} loading="eager" decoding="async" fetchPriority="high" className="w-11 h-11 object-contain bg-white" />
+                            <img src={img} alt="" width={44} height={44} loading={i < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={i < 4 ? "high" : "low"} className="w-11 h-11 object-contain bg-white" />
                           ) : <span className="block w-11 h-11 bg-slate-50" />}
                         </span>
                       )}
@@ -602,9 +603,9 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
                         alt=""
                         width={64}
                         height={64}
-                        loading="eager"
+                        loading={i < 4 ? "eager" : "lazy"}
                         decoding="async"
-                        fetchPriority="high"
+                        fetchPriority={i < 4 ? "high" : "low"}
                         className="w-16 h-16 min-w-16 shrink-0 object-contain rounded border bg-white"
                       />
                     ) : <div className="w-16 h-16 min-w-16 rounded border border-dashed border-slate-200 bg-slate-50" />}
@@ -662,7 +663,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             </div>
           )}
           {(doc.notes || doc.terms) && <div className="mt-6 text-slate-600 whitespace-pre-wrap">{doc.notes}{doc.terms && <div className="mt-2"><b>Şartlar:</b> {doc.terms}</div>}</div>}
-          {doc.images?.length > 0 && <div className="mt-6 grid grid-cols-4 gap-2">{doc.images.slice(0, 8).map((img) => <img key={img} src={resolveImageUrl(img)} alt="" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
+          {doc.images?.length > 0 && <div className="mt-6 grid grid-cols-4 gap-2">{doc.images.slice(0, 8).map((img) => <img key={img} src={cardThumbUrl(img)} alt="" width={240} height={96} loading="lazy" decoding="async" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
           {tpl.show_bank_info && company?.iban && <div className="mt-6 text-slate-600"><b>Banka:</b> {company.bank_name} • <b>IBAN:</b> <span className="font-mono">{company.iban}</span></div>}
           {(() => {
             const footerNote = String(tpl.footer_note || "").trim();
