@@ -41,9 +41,9 @@ def test_non_str_key_falls_back_to_stdlib():
     assert json_offload.dump_json({1: "a"}) == _stdlib({1: "a"})
 
 
-def test_nan_is_rejected():
-    with pytest.raises(ValueError):
-        json_offload.dump_json({"n": float("nan")})
+def test_nan_and_infinity_become_null():
+    body = json_offload.dump_json({"n": float("nan"), "inf": float("inf"), "neg": float("-inf")})
+    assert json.loads(body) == {"n": None, "inf": None, "neg": None}
 
 
 def test_plain_dict_uses_orjson_when_installed():
@@ -109,14 +109,18 @@ def test_mark_is_visible_inside_base_http_middleware_task():
 
     app = Outer(json_offload.OffloadJSONMark(endpoint))
 
+    pending = [{"type": "http.request", "body": b"", "more_body": False}]
+
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        if pending:
+            return pending.pop(0)
+        return {"type": "http.disconnect"}
 
     async def send(message):
         seen.append(message["type"])
 
     asyncio.run(app(_http_scope(), receive, send))
-    assert True in seen
+    assert seen[0] is True
     assert json_offload.http_json_active() is False
 
 

@@ -59,7 +59,11 @@ def _default(obj: Any) -> Any:
 
 
 def dump_json(payload: Any) -> bytes:
-    """Starlette JSONResponse ile aynı sözleşme: UTF-8, sıkıştırılmış, NaN yok."""
+    """UTF-8, sıkıştırılmış JSON.
+
+    NaN ve Infinity orjson'da null olur. stdlib json.dumps allow_nan=False
+    bu değerlerde 500 üretirdi. Bu sıcak uçlar sayı alanlarında NaN beklemez.
+    """
     lib = _lib()
     if lib is not None:
         try:
