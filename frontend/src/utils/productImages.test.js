@@ -1,4 +1,4 @@
-import { mediaRef, orderLineListImageUrl, productCardImageUrl, productGalleryUrls, productIdOf, productListImageUrl } from "./productImages";
+import { collectOrderThumbSrcs, mediaRef, orderLineListImageUrl, orderLineThumbSrc, productCardImageUrl, productGalleryUrls, productIdOf, productListImageUrl } from "./productImages";
 
 describe("productImages", () => {
   test("mediaRef reads strings and object fields", () => {
@@ -43,5 +43,31 @@ describe("productImages", () => {
     expect(orderLineListImageUrl({ thumbnail_url: "/line-t.webp", image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/line-t.webp");
     expect(orderLineListImageUrl({}, { thumbnail_url: "/t.webp", image_url: "/full.jpg" })).toBe("/t.webp");
     expect(orderLineListImageUrl({}, { image_url: "/full.jpg" })).toBe("/full.jpg");
+  });
+
+  test("order list and opened order share one 200px file url", () => {
+    const line = { image_url: "/api/files/tamkobi/products/a.jpg" };
+    const closed = orderLineThumbSrc(line, null);
+    const opened = orderLineThumbSrc(line, { thumbnail_url: "/api/files/tamkobi/products/a.w200.webp" });
+    expect(closed).toBe("/api/files/tamkobi/products/a.jpg?w=200");
+    expect(opened).toBe(closed);
+    const orders = [{
+      items: [
+        line,
+        { image_url: "/api/files/tamkobi/products/b.jpg" },
+        { image_url: "/api/files/tamkobi/products/a.jpg" },
+        { product_id: "p9" },
+      ],
+    }];
+    const resolve = (it) => (it.product_id === "p9" ? { thumbnail_url: "/api/files/tamkobi/products/c.w200.webp" } : null);
+    expect(collectOrderThumbSrcs(orders, resolve, 2)).toEqual([
+      "/api/files/tamkobi/products/a.jpg?w=200",
+      "/api/files/tamkobi/products/b.jpg?w=200",
+    ]);
+    expect(collectOrderThumbSrcs(orders, resolve, null)).toEqual([
+      "/api/files/tamkobi/products/a.jpg?w=200",
+      "/api/files/tamkobi/products/b.jpg?w=200",
+      "/api/files/tamkobi/products/c.w200.webp",
+    ]);
   });
 });

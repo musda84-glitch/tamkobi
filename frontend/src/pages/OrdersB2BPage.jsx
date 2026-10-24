@@ -24,8 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InvoicePrintShareModal } from "../components/InvoicePrintShareModal";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
-import { listThumbUrl } from "../utils/imageUrl";
-import { orderLineListImageUrl } from "../utils/productImages";
+import { collectOrderThumbSrcs, orderLineListImageUrl, orderLineThumbSrc, preloadOrderThumbSrcs } from "../utils/productImages";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printCargoLabelsPreferIntegrator } from "../utils/cargoLabelPrint";
@@ -71,7 +70,7 @@ import {
   resolveCancelRequestError,
   resolveCancelRequestsBulk,
 } from "../utils/orderCancelRequest";
-import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
+import { buildOrderProductIndex, buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
 import { OrderLineStockModal } from "../components/OrderLineStockModal";
@@ -1049,8 +1048,44 @@ function OrdersB2BPageImpl({ staffMode = false }) {
   const [produceChoiceOrd, setProduceChoiceOrd] = useState(null);
   const [lineStock, setLineStock] = useState(null);
   const productCatalog = allProducts.length ? allProducts : products;
+  const [lineProductExtras, setLineProductExtras] = useState([]);
+  const askedLineImages = useRef(new Set());
+  const productIndex = useMemo(
+    () => buildOrderProductIndex(lineProductExtras.length ? productCatalog.concat(lineProductExtras) : productCatalog),
+    [productCatalog, lineProductExtras],
+  );
+  const lineProductOf = useCallback((it) => resolveOrderLineProduct(it, productIndex), [productIndex]);
+  useEffect(() => {
+    askedLineImages.current = new Set();
+    setLineProductExtras([]);
+  }, [companyId]);
+  useEffect(() => {
+    if (!companyId) return undefined;
+    const ids = [];
+    for (const ord of orders) {
+      for (const it of ord.items || []) {
+        if (orderLineListImageUrl(it, lineProductOf(it))) continue;
+        const id = String(it.product_id || it.productId || "").trim();
+        if (!id || askedLineImages.current.has(id)) continue;
+        askedLineImages.current.add(id);
+        ids.push(id);
+      }
+    }
+    if (!ids.length) return undefined;
+    let cancel = false;
+    const qs = new URLSearchParams({ company_id: companyId, lite: "1", ids: ids.slice(0, 200).join(",") });
+    axios.get(`${API_URL}/products?${qs}`).then((r) => {
+      if (cancel) return;
+      const rows = Array.isArray(r.data) ? r.data : [];
+      if (rows.length) setLineProductExtras((prev) => prev.concat(rows));
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [companyId, orders, lineProductOf]);
+  useEffect(() => {
+    preloadOrderThumbSrcs(collectOrderThumbSrcs(orders, lineProductOf, 2));
+  }, [orders, lineProductOf]);
   const openOrderLineStock = (ord, it, idx) => {
-    const resolved = resolveOrderLineProduct(it, productCatalog);
+    const resolved = resolveOrderLineProduct(it, productIndex);
     setLineStock({ order: ord, item: it, itemIndex: idx, product: resolved });
     if (resolved?.id || resolved?._id) {
       // Lite listede eksik alan varsa tam kartı çek
@@ -1062,7 +1097,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
     }
   };
   const openProduceForLine = (ord, it, idx) => {
-    const p = resolveOrderLineProduct(it, productCatalog);
+    const p = resolveOrderLineProduct(it, productIndex);
     if (!p) {
       toast.error("Ürün stok kartında bulunamadı.");
       return;
@@ -2291,17 +2326,17 @@ function OrdersB2BPageImpl({ staffMode = false }) {
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3 align-top overflow-hidden">
-                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listThumbUrl(orderLineListImageUrl(it, p)); return (
+                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => {
-                            const lineProd = resolveOrderLineProduct(it, productCatalog);
+                            const lineProd = lineProductOf(it);
                             const canProduce = orderLineCanProduce(lineProd);
-                            const thumb = img(it, lineProd);
+                            const thumb = orderLineThumbSrc(it, lineProd);
                             const itemLinkId = `order-item-link-${ord.order_number}-${idx}`;
                             return (
                             <div key={idx} className={`flex items-center gap-2 ${open ? `rounded-lg p-1.5 ${idx % 2 === 0 ? "bg-slate-50" : "bg-emerald-50/80"}` : ""}`}>
-                              {thumb ? <img src={thumb} alt="" width={open ? 40 : 32} height={open ? 40 : 32} loading="lazy" decoding="async" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
+                              {thumb ? <img src={thumb} alt="" width={open ? 40 : 32} height={open ? 40 : 32} loading={idx < 2 ? "eager" : "lazy"} decoding="async" fetchPriority={idx < 2 ? "high" : "low"} className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               {staffMode ? (
                                 <div className="text-left min-w-0 flex-1 text-slate-700" data-testid={itemLinkId}>
                                   <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
@@ -2333,7 +2368,7 @@ function OrdersB2BPageImpl({ staffMode = false }) {
                             </div>);
                           })}
                           </div>
-                          {items.length > 2 && <button type="button" onClick={() => setExpandedItems(open ? null : ord.id)} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-testid={`order-items-toggle-${ord.order_number}`}>{open ? "Daralt" : `+${items.length - 2} ürün daha · büyüt`}</button>}
+                          {items.length > 2 && <button type="button" onClick={() => { if (!open) preloadOrderThumbSrcs(collectOrderThumbSrcs([ord], lineProductOf, null)); setExpandedItems(open ? null : ord.id); }} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-testid={`order-items-toggle-${ord.order_number}`}>{open ? "Daralt" : `+${items.length - 2} ürün daha · büyüt`}</button>}
                         </div>); })()}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
