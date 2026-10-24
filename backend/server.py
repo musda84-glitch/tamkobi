@@ -53,7 +53,7 @@ from order_list_filter import (
     query_orders,
 )
 from b2b_catalog import b2b_catalog_mongo_filter
-from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts
+from contact_search import PAGE_SIZE as CONTACT_SEARCH_PAGE, recent_ids_from_scored, search_contacts_off_loop
 from contact_match import order_identity_ors, pick_bank_contact
 from contact_tax import contact_tax_patch
 from buyer_tax import buyer_tax_choice, invoice_contact_tax_id, stamp_invoice_buyer
@@ -5362,7 +5362,7 @@ async def search_contacts_api(
     if not (q or "").strip():
         recent = await _recent_contact_ids(company_id)
     banned = [part.strip() for part in (exclude_type or "").split(",") if part.strip()]
-    found = search_contacts(
+    found = await search_contacts_off_loop(
         rows, q or "", page=page, limit=size, recent_ids=recent,
         suggest=suggest or "", counterparty=counterparty or "",
         exclude_types=banned or None,

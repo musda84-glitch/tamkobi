@@ -1,5 +1,8 @@
 """Cari arama: 1000+ kayıt, kelime ortası, Türkçe katlama, ikisi-birden tipi."""
-from contact_search import extract_firma_adi, fold_tr, resolve_suggest_name, search_contacts
+import asyncio
+import threading
+
+from contact_search import extract_firma_adi, fold_tr, resolve_suggest_name, search_contacts, search_contacts_off_loop
 from contact_tax import contact_tax_patch, plan_sales_invoice_tax_backfill
 
 
@@ -198,3 +201,25 @@ def test_backfill_plan_uses_latest_sales_invoice_and_is_idempotent():
     updated.update(plans[0]["patch"])
     again = plan_sales_invoice_tax_backfill([updated, contacts[1], contacts[2]], invoices)
     assert again == []
+
+
+def test_search_contacts_off_loop_matches_and_leaves_the_thread():
+    contacts = [_row(i, name=f"Ersay {i}") for i in range(30)]
+
+    def wrapped(rows, q, **kwargs):
+        return {"thread": threading.get_ident(), "body": search_contacts(rows, q, **kwargs)}
+
+    async def go():
+        import contact_search
+        original = contact_search.search_contacts
+        contact_search.search_contacts = wrapped
+        try:
+            out = await search_contacts_off_loop(contacts, "ersay", limit=5)
+        finally:
+            contact_search.search_contacts = original
+        return out, threading.get_ident()
+
+    out, loop_thread = asyncio.run(go())
+    direct = search_contacts(contacts, "ersay", limit=5)
+    assert out["thread"] != loop_thread
+    assert [row["_id"] for row in out["body"]["items"]] == [row["_id"] for row in direct["items"]]

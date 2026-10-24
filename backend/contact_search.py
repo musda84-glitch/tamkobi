@@ -4,6 +4,7 @@ Tip filtresi yok — müşteri, tedarikçi ve ikisi birden döner. Pasif cariler
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -284,3 +285,8 @@ def search_contacts(
         "limit": size,
         "has_more": start + len(items) < total,
     }
+
+
+async def search_contacts_off_loop(*args, **kwargs) -> Dict[str, Any]:
+    """fold_tr taraması event loop'u 200–570 ms kilitliyordu. Eşleşme aynıdır."""
+    return await asyncio.to_thread(search_contacts, *args, **kwargs)
