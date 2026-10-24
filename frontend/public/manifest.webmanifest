@@ -1,0 +1,23 @@
+{
+  "name": "TamKobi",
+  "short_name": "TamKobi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0b0b14",
+  "lang": "tr",
+  "icons": [
+    {
+      "src": "brand/tamkobi-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "favicon.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    }
+  ]
+}

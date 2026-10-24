@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
@@ -9,6 +9,8 @@ import { DocumentFormModal } from "./DocumentFormModal";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { orderLinesLocked } from "../utils/orderEdit";
 import { orderDraftInvoiceCaption } from "../utils/orderMoreMenu";
+import { postOrQueue } from "../offline/write";
+import { safeReadProducts } from "../offline/db";
 import { useEscape } from "../utils/useEscape";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { formatTrAmount } from "../utils/money";
@@ -21,6 +23,16 @@ const CHANNELS = [["manual", "Manuel / Telefon"], ["b2b", "B2B Bayi"], ["trendyo
 
 export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
   useEscape(onClose);
+  const [catalog, setCatalog] = useState(products || []);
+  useEffect(() => {
+    if (products?.length) {
+      setCatalog(products);
+      return undefined;
+    }
+    let stop = false;
+    safeReadProducts(companyId).then((rows) => { if (!stop && rows.length) setCatalog(rows); });
+    return () => { stop = true; };
+  }, [products, companyId]);
   const [f, setF] = useState({ contact_id: "", customer_name: "", customer_phone: "", customer_email: "", shipping_address: "", city: "", channel: "manual", notes: "" });
   const [items, setItems] = useState([computeLine(emptyLine())]);
   const [busy, setBusy] = useState(false);
@@ -42,7 +54,7 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
     if (!valid.length) { toast.error("En az bir ürün kalemi ekleyin."); return; }
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/orders`, { company_id: companyId, channel: f.channel, customer_name: f.customer_name.trim(), customer_phone: f.customer_phone, customer_email: f.customer_email, shipping_address: f.shipping_address || "-", city: f.city || "-", order_status: "pending", contact_id: f.contact_id || null, notes: f.notes,
+      const r = await postOrQueue(axios, { url: `${API_URL}/orders`, companyId, kind: "order_create", critical: true, expected: { grandTotal: totals.grandTotal }, body: { company_id: companyId, channel: f.channel, customer_name: f.customer_name.trim(), customer_phone: f.customer_phone, customer_email: f.customer_email, shipping_address: f.shipping_address || "-", city: f.city || "-", order_status: "pending", contact_id: f.contact_id || null, notes: f.notes,
         items: valid.map((it) => ({
           product_id: it.product_id || "",
           product_name: it.product_name || it.name,
@@ -63,9 +75,13 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
         vat_total: totals.vat,
         discount_total: totals.lineDiscount,
         grand_total: totals.grandTotal,
-      });
+      } });
+      if (r.data?.queued) { toast.success(r.data.message); onSaved(); onClose(); return; }
       toast.success(`Sipariş oluşturuldu: ${r.data.order_number}`); onSaved(); onClose();
-    } catch (e) { toast.error(e.response?.data?.detail || "Sipariş oluşturulamadı."); } finally { setBusy(false); }
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : detail?.message || e.message || "Sipariş oluşturulamadı.");
+    } finally { setBusy(false); }
   };
   return (
     <DocumentFormModal
@@ -89,9 +105,9 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
         </div>
         <OrderAiCart
           companyId={companyId}
-          products={products}
+          products={catalog}
           onApply={(sel) => {
-            const byId = Object.fromEntries((products || []).map((p) => [p.id || p._id, p]));
+            const byId = Object.fromEntries((catalog || []).map((p) => [p.id || p._id, p]));
             const lines = sel.map((i) => lineFromProduct(byId[i.product_id], { invoiceType: "sales", quantity: Number(i.quantity) || 1 }));
             const blank = (it) => !(it.product_id || it.product_name || it.name) && !(Number(it.unit_price) || Number(it.unit_price_incl));
             setItems((prev) => {
@@ -114,7 +130,7 @@ export const NewOrderModal = ({ companyId, products, onClose, onSaved }) => {
         <DocumentLineEditor
           items={items}
           onChange={setItems}
-          products={products}
+          products={catalog}
           kind="order"
           allowService
           invoiceType="sales"

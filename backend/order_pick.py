@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import attendance
+import idempotency
 import notify
 import tenant_access
 
@@ -457,11 +458,19 @@ def _match_line(items: list, code: str, product: Optional[dict]) -> Optional[dic
 
 
 @router.post("/order-picks/{order_id}/scan")
-async def scan_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def scan_pick(order_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(_user_dep)):
     o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     cid = o.get("company_id")
     if not str(cid or "").strip():
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+
+    async def _scan():
+        return await _scan_pick_core(order_id, req, o, cid)
+
+    return await idempotency.run(_db, str(cid), request, "order-picks/scan", _scan)
+
+
+async def _scan_pick_core(order_id: str, req: Dict[str, Any], o: dict, cid: str):
     ses = await _session_for(o, create=True)
     code = str(req.get("barcode") or "").strip()
     qty = float(req.get("quantity") or 1)

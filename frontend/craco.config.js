@@ -120,6 +120,28 @@ let webpackConfig = {
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
+      // App shell + statik dosyalar cache-first. API önbelleğe alınmaz; sayfalar çevrimdışı index.html'e düşer.
+      if (process.env.NODE_ENV === "production") {
+        const { GenerateSW } = require("workbox-webpack-plugin");
+        webpackConfig.plugins.push(new GenerateSW({
+          clientsClaim: true,
+          skipWaiting: true,
+          navigateFallback: "/index.html",
+          navigateFallbackDenylist: [/^\/api\//],
+          exclude: [/\.map$/, /browser-extension/, /\.txt$/],
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+          runtimeCaching: [
+            {
+              urlPattern: ({ request }) => ["style", "script", "worker", "image", "font"].includes(request.destination),
+              handler: "CacheFirst",
+              options: {
+                cacheName: "tamkobi-static",
+                expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 14 },
+              },
+            },
+          ],
+        }));
+      }
       return webpackConfig;
     },
   },

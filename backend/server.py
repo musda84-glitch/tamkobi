@@ -179,6 +179,7 @@ import personnel_scope
 import trash
 import linked_moves
 import idempotency
+import offline_sync
 import pay_claim
 import company_audit
 import finance_txn
@@ -1255,10 +1256,12 @@ def clamp_price_decimals(value, default=2):
 
 @api_router.put("/companies/{company_id}")
 async def update_company(company_id: str, req: Dict[str, Any]):
-    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry", "price_decimals"}}
+    allowed = {k: v for k, v in req.items() if k in {"name", "tax_number", "tax_office", "address", "city", "phone", "email", "currency", "logo_url", "e_invoice_alias", "website", "iban", "bank_name", "mersis", "trade_registry", "price_decimals", "offline_max_minutes"}}
     # company_no ve id salt okunur; istemci Şirket ID yazamaz.
     if "price_decimals" in allowed:
         allowed["price_decimals"] = clamp_price_decimals(allowed["price_decimals"])
+    if "offline_max_minutes" in allowed:
+        allowed["offline_max_minutes"] = offline_sync.clamp_offline_max_minutes(allowed["offline_max_minutes"])
     await db.companies.update_one({"_id": company_id}, {"$set": allowed})
     return clean_doc(await db.companies.find_one({"_id": company_id}))
 
@@ -5153,6 +5156,7 @@ async def list_contacts(
     fin: Optional[str] = None,
     sort: Optional[str] = None,
     export: bool = False,
+    updated_since: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
     """lite=1: form/select için — yalnızca kimlik ve iletişim alanları. Seçicilerde pasif cariler gizlenir.
@@ -5191,6 +5195,7 @@ async def list_contacts(
     show_inactive = include_inactive if include_inactive is not None else (not lite)
     if not show_inactive:
         query["is_active"] = {"$ne": False}
+    offline_sync.apply_updated_since(query, updated_since)
     proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1, "is_active": 1} if lite else None
     contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     docs = clean_docs(contacts)
@@ -7993,6 +7998,7 @@ async def list_products(
     b2b: Optional[str] = None,
     sort: Optional[str] = None,
     export: bool = False,
+    updated_since: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
     """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi.
@@ -8048,6 +8054,7 @@ async def list_products(
         query["_id"] = {"$in": id_list}
     elif sku_list:
         query["sku"] = {"$in": sku_list}
+    offline_sync.apply_updated_since(query, updated_since)
     # Yazdırma / seçici: barkod + görsel alanları da gelsin (purchase_costs yok)
     proj = {
         "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
@@ -8867,6 +8874,8 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
     pos_meta["cash_amount"] = cash_amt if payment_method == "mixed" else (grand if payment_method == "cash" else 0)
     pos_meta["card_amount"] = card_amt if payment_method == "mixed" else (grand if payment_method == "card" else 0)
 
+    await offline_sync.assert_stock_available(db, company_id, lines, req.get("expected_stock"))
+    amount_note = offline_sync.amount_decision(req.get("expected_grand_total"), grand)
     await _apply_invoice_effects(invoice)
     await db.invoices.insert_one(invoice)
 
@@ -8945,6 +8954,8 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
         },
         "message": f"Satış tamamlandı: {grand:,.2f} ₺",
     }
+    if amount_note:
+        out["conflicts"] = [amount_note]
     try:
         await pos_cashier.on_checkout_done(user or {}, invoice, pos_meta)
     except Exception:
@@ -22817,7 +22828,15 @@ async def _mark_sales_order_sent_to_production(
     await db.orders.update_one({"_id": order_id, "company_id": cid}, {"$set": patch})
 
 @api_router.post("/orders")
-async def create_order(order: Order, user: dict = Depends(get_current_user)):
+async def create_order(order: Order, request: Request, user: dict = Depends(get_current_user)):
+    order.company_id = tenant_access.resolve_company_id(user, order.company_id)
+    return await idempotency.run(
+        db, order.company_id, request, "orders/create",
+        lambda: _create_order_core(order, request, user),
+    )
+
+
+async def _create_order_core(order: Order, request: Request, user: dict):
     order.company_id = tenant_access.resolve_company_id(user, order.company_id)
     if rbac.normalize_role_code(user.get("role")) == "personel" and not user.get("is_super_admin"):
         role = await rbac.role_for(user, order.company_id)
@@ -22827,8 +22846,13 @@ async def create_order(order: Order, user: dict = Depends(get_current_user)):
     import event_notify
     if event_notify.stores_order_line_image(order.channel or "manual"):
         await _fill_order_line_images(order.company_id, order.items)
+    client_number = str(order.order_number or "").strip()
     if not order.order_number:
         order.order_number = await _next_order_number(order.company_id, "B2B" if order.channel == "b2b" else "ORD")
+    if client_number and idempotency.header_key(request):
+        number_conflict = await offline_sync.document_number_conflict(db, order.company_id, client_number)
+        if number_conflict:
+            raise HTTPException(status_code=409, detail=number_conflict)
     _apply_order_totals(order)
 
     doc = order.to_mongo()
@@ -22836,7 +22860,14 @@ async def create_order(order: Order, user: dict = Depends(get_current_user)):
     await _ensure_order_contact(doc)
     await _attach_draft_invoice_on_intake(doc, source="intake")
     refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
-    return clean_doc(refreshed)
+    payload = clean_doc(refreshed)
+    amount_note = offline_sync.amount_decision(
+        request.headers.get("X-Offline-Expected-Total"),
+        payload.get("grand_total") if isinstance(payload, dict) else None,
+    )
+    if amount_note and isinstance(payload, dict):
+        payload = {**payload, "conflicts": [amount_note]}
+    return payload
 
 @api_router.put("/orders/{order_id}/status")
 async def update_order_status(order_id: str, req: Dict[str, str], user: dict = Depends(get_current_user)):
@@ -28099,6 +28130,7 @@ migration.init(db, get_current_user)
 edocs.init(db, {"pdf_text": _file_to_text, "ai_invoice": extract_invoice_from_text, "create_product": create_product_from_marketplace, "user_from_token": lambda token: get_user_from_token(token, db)}, get_current_user)
 pricing.init(db, {"channel_fees": _channel_fees, "marketplace_products": marketplace_products_payload, "mail_account": _mail_account, "wa_send": wa_send}, get_current_user)
 order_pick.init(db, {"create_production_order": create_production_order, "push_order_to_shopphp": _push_order_to_shopphp, "create_draft_invoice_for_order": _create_draft_invoice_for_order}, get_current_user)
+offline_sync.init(db, get_current_user)
 trade.init(db, _create_invoice_core, get_current_user)
 
 async def _restore_bank_tx(doc, _related):
@@ -28339,6 +28371,7 @@ app.include_router(support_access.router)
 app.include_router(saas_docs.router)
 app.include_router(trade.router)
 app.include_router(order_pick.router)
+app.include_router(offline_sync.router)
 app.include_router(platform_mail.router)
 app.include_router(platform_sms.router)
 app.include_router(mail_service.router)
