@@ -85,6 +85,7 @@ test("giriş sayfası QR seçeneğini açar ve kodu yalnız karekodda gösterir"
   expect(view.host.textContent).not.toContain(SECRET);
   expect(view.host.textContent).not.toContain(CODE);
   const startCall = axios.post.mock.calls.find((c) => String(c[0]).endsWith("/auth/qr-login/start"));
+  expect(startCall[1]).toEqual({ remember: false });
   expect(startCall[2]).toEqual({ withCredentials: true });
   await view.cleanup();
 });

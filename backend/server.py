@@ -774,7 +774,7 @@ class SsoExchangeRequest(BaseModel):
 
 
 class QrLoginStartRequest(BaseModel):
-    remember: bool = True
+    remember: bool = False
 
 
 class QrLoginStatusRequest(BaseModel):
@@ -812,7 +812,9 @@ async def auth_qr_login_status(req: QrLoginStatusRequest, request: Request, resp
     """Üreten tarayıcı yoklar. Onaylı oturum çerez ve gövde olarak bir kez verilir."""
 
     async def _issue(user, request, response, remember=False):
-        return await _issue_session_for_user(user, request, response, remember=remember)
+        return await _issue_session_for_user(
+            user, request, response, remember=remember, client="web",
+        )
 
     return await qr_login.poll_status(
         db, request, response, req.code, req.poll_secret, issue_session=_issue,
@@ -826,6 +828,7 @@ async def auth_qr_login_preview(req: QrLoginCodeRequest, request: Request, user:
 
 @api_router.post("/auth/qr-login/approve")
 async def auth_qr_login_approve(req: QrLoginCodeRequest, request: Request, user: dict = Depends(get_current_user)):
+    """Yalnız cli=mobile bearer onaylar. Web oturumu ve taklit oturumu onaylayamaz."""
     return await qr_login.approve(db, request, user, req.code)
 
 
@@ -920,8 +923,12 @@ async def _issue_session_for_user(
     response: Response,
     *,
     remember: bool = False,
+    client: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Ortak oturum çerezi + yanıt gövdesi (login / 2FA doğrulama)."""
+    """Ortak oturum çerezi + yanıt gövdesi (login / 2FA doğrulama).
+
+    client verilirse o kuşak yazılır (QR web girişi cli=web). Yoksa istek başlığı.
+    """
     import host_audience as _ha
     import public_url as pu
 
@@ -968,7 +975,8 @@ async def _issue_session_for_user(
 
     # SA oturumları MFA bayrağı taşır (2FA sonrası veya 2FA kapalı SA girişi).
     # Web çıkışı mobile kuşağını, mobil çıkış web kuşağını düşürmez.
-    cli = request_client_kind(request)
+    forced = str(client or "").strip().lower()
+    cli = forced if forced in ("web", "mobile") else request_client_kind(request)
     tv = client_token_version(user, cli)
     sid = new_session_id()
     token = create_access_token(

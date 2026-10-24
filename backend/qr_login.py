@@ -128,8 +128,35 @@ def _secret_matches(doc: dict, secret: str) -> bool:
     return hmac.compare_digest(expect, got)
 
 
+def _token_payload(user: Optional[dict]) -> dict:
+    if not isinstance(user, dict):
+        return {}
+    payload = user.get("_token_payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_impersonation(payload: Optional[dict]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("imp_session") or payload.get("imp_by"))
+
+
+def _request_access_payload(request) -> dict:
+    """İstek çerezindeki veya bearer'daki access JWT. Yoksa veya bozuksa boş."""
+    from auth_utils import decode_access_payload, session_token
+
+    token = session_token(request)
+    if not token:
+        return {}
+    try:
+        payload = decode_access_payload(token)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _assert_human_session(user: Optional[dict]) -> dict:
-    """Mobil oturum QR'ı onaylayabilir. Süper yönetici ve atölye cihazı onaylayamaz."""
+    """İnsan oturumu. Süper yönetici, atölye cihazı ve taklit (imp_session) reddedilir."""
     if not isinstance(user, dict) or not str(user.get("_id") or user.get("id") or "").strip():
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     if user.get("is_super_admin"):
@@ -139,7 +166,17 @@ def _assert_human_session(user: Optional[dict]) -> dict:
     from shopfloor_accounts import is_device_user
     if is_device_user(user):
         raise HTTPException(status_code=403, detail="Atölye cihaz hesabı QR ile web girişi onaylayamaz.")
+    payload = _token_payload(user)
+    if _is_impersonation(payload) or user.get("imp_session"):
+        raise HTTPException(status_code=403, detail="Taklit oturumu QR ile web girişi onaylayamaz.")
     return user
+
+
+def _assert_mobile_approver(user: dict) -> None:
+    """Onay yalnız mobil uygulamanın bearer oturumunda. Web oturumu onaylayamaz."""
+    cli = str(_token_payload(user).get("cli") or "").strip().lower()
+    if cli != "mobile":
+        raise HTTPException(status_code=403, detail="QR girişi yalnızca mobil uygulama oturumuyla onaylanır.")
 
 
 def _user_id(user: dict) -> str:
@@ -192,7 +229,9 @@ async def _reload(db, doc_id: str) -> Optional[dict]:
     return await db.web_login_qr.find_one({"_id": doc_id})
 
 
-async def start_session(db, request, *, remember: bool = True) -> dict:
+async def start_session(db, request, *, remember: bool = False) -> dict:
+    if _is_impersonation(_request_access_payload(request)):
+        raise HTTPException(status_code=403, detail="Taklit oturumu QR ile web girişi başlatamaz.")
     ip = request_ip(request)
     await _enforce_rate(
         db, ip, "start", QR_START_PER_MINUTE,
@@ -338,7 +377,9 @@ async def preview(db, request, user: Optional[dict], code: str) -> dict:
 
 
 async def approve(db, request, user: Optional[dict], code: str) -> dict:
+    """Yalnız cli=mobile bearer onaylar. Web oturumu ve taklit oturumu onaylayamaz."""
     actor = _assert_human_session(user)
+    _assert_mobile_approver(actor)
     cleaned = clean_code(code)
     if not cleaned:
         raise HTTPException(status_code=400, detail="Geçersiz kod")
