@@ -246,15 +246,23 @@ def collection(db, company_id: str, name: str) -> "DedicatedCollection":
 
 
 def list_collections(company_id: str, dsn: str) -> list[str]:
-    """Firmanın dedicated koleksiyon adları. Yazmaz. DSN loglanmaz."""
+    """Firmanın dedicated koleksiyon adları. Yazmaz. DSN loglanmaz.
+
+    SELECT açık işlemi dondurur. Havuz oturumunda işlem sonunda rollback
+    gerekir; taşımanın verdiği oturum kapatılmaz.
+    """
     cid = str(company_id or "").strip()
     add_secret(dsn)
     with _session(cid, dsn) as session:
-        _assert_schema(session, cid)
-        rows = session.fetchall(
-            "SELECT DISTINCT collection FROM storage_records WHERE company_id = ?",
-            (cid,),
-        )
+        try:
+            _assert_schema(session, cid)
+            rows = session.fetchall(
+                "SELECT DISTINCT collection FROM storage_records WHERE company_id = ?",
+                (cid,),
+            )
+        finally:
+            if read_session(cid) is None:
+                _release_snapshot(session)
     return sorted({str(row[0]) for row in rows if row and row[0]})
 
 
@@ -316,6 +324,38 @@ def _session(company_id: str, dsn: str):
         release(company_id)
 
 
+def _use_read_committed(session) -> None:
+    """Havuz oturumu sonraki işlemlerde son commit'i görsün.
+
+    autocommit kapalı kalır. Banka anahtarı ve belge aynı commit'tedir.
+    SET başarısızsa REPEATABLE READ durur; okuma yine _release_snapshot
+    ile kapanır, yazma yolu değişmez.
+    """
+    if getattr(session, "dialect", None) != "mysql":
+        return
+    try:
+        session.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        session.commit()
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            return
+
+
+def _release_snapshot(session) -> None:
+    """Açık okuma işlemini bitir. Commit edilmiş yazmayı geri almaz.
+
+    Taşımanın verdiği oturumda çağrılmaz; o işlem kendi commit'ini bekler.
+    """
+    if getattr(session, "dialect", None) != "mysql":
+        return
+    try:
+        session.rollback()
+    except Exception:
+        return
+
+
 def _open(company_id: str, dsn: str, key: str) -> _Pool:
     try:
         session = connect(dsn, write=True)
@@ -326,6 +366,10 @@ def _open(company_id: str, dsn: str, key: str) -> _Pool:
     except Exception:
         _log.warning("dedicated havuzu açılamadı company=%s", _safe_id(company_id))
         raise DedicatedStorageError("Dedicated havuzu açılamadı.", company_id=company_id) from None
+    # Her yeni havuz bağlantısı. SESSION izolasyonu rollback ile silinmez.
+    # pymysql burada kendiliğinden yeniden bağlanmaz; kopan havuz kapanıp
+    # _open ile yeniden açılır ve READ COMMITTED yine yazılır.
+    _use_read_committed(session)
     return _Pool(company_id, key, session)
 
 
@@ -897,10 +941,12 @@ class DedicatedCollection(StorageCollection):
             return
 
     def _run(self, fn):
+        # Taşıma use_read_session ile kendi işlemini verir. Onu burada kapatma.
+        pooled = read_session(self.company_id) is None
         with _session(self.company_id, self._dsn) as session:
             try:
                 _assert_schema(session, self.company_id)
-                return fn(session)
+                result = fn(session)
             except DedicatedStorageError:
                 try:
                     session.rollback()
@@ -927,6 +973,9 @@ class DedicatedCollection(StorageCollection):
                 if _duplicate(exc):
                     raise DuplicateKeyError("Kayıt zaten var.") from None
                 raise DedicatedStorageError("Dedicated işlemi kesildi.", company_id=self.company_id) from None
+            if pooled:
+                _release_snapshot(session)
+            return result
 
     def _dialect(self, session) -> str:
         return getattr(session, "dialect", None) or "sqlite"
