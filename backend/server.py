@@ -22902,12 +22902,16 @@ async def update_order_status(order_id: str, req: Dict[str, str], user: dict = D
     ops: Dict[str, Any] = {"$set": update}
     if unset:
         ops["$unset"] = unset
-    await db.orders.update_one({"_id": order_id}, ops)
+    # company_id'siz update dedicated siparişi paylaşılan kataloğa yazar ya da kaçırır.
+    order_q: Dict[str, Any] = {"_id": order_id}
+    if order.get("company_id"):
+        order_q["company_id"] = order["company_id"]
+    await db.orders.update_one(order_q, ops)
     settlement_rev = None
     if should_reverse_settlement_on_status(new_status):
-        fresh = await db.orders.find_one({"_id": order_id})
+        fresh = await db.orders.find_one(order_q)
         settlement_rev = await _reverse_marketplace_settlement(fresh or {**order, "order_status": new_status})
-    await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="status")
+    await _push_order_to_shopphp(await db.orders.find_one(order_q) or order, reason="status")
     out = {"status": "success", "order_status": new_status, "draft_invoice_cleared": draft_cleared}
     if draft_cleared:
         out["message"] = "Sipariş beklemeye alındı; bağlı taslak fatura silindi."

@@ -88,6 +88,27 @@ async def _doc_from_company_store(db: Any, collection: str, doc_id: str, company
     return await db[collection].find_one({"_id": doc_id, "company_id": cid})
 
 
+async def _doc_from_active_company(db: Any, collection: str, doc_id: str, user: dict):
+    """Router açıkken aktif şirketin deposundan {_id, company_id} ile oku.
+
+    Dedicated ve shared_v2 sorguyu router kendi deposuna bırakır. Paylaşılan
+    katalog yalnız legacy kipte bu sorguda okunur. Kayıt yoksa veya şirket
+    çözülemezse None: çağıran mevcut katalog adımına düşer. DSN hatası çıkar.
+    """
+    import storage_router
+
+    if not storage_router.enabled():
+        return None
+    try:
+        cid = resolve_company_id(user)
+    except HTTPException:
+        return None
+    cid = storage_router.canonical_company_id(str(cid or ""))
+    if not cid:
+        return None
+    return await db[collection].find_one({"_id": doc_id, "company_id": cid})
+
+
 async def get_tenant_doc(
     db: Any,
     collection: str,
@@ -98,6 +119,9 @@ async def get_tenant_doc(
     status_on_deny: int = 404,
 ) -> dict:
     """ID ile kayıt getir; şirketi kullanıcının erişiminde değilse 404/403."""
+    routed = await _doc_from_active_company(db, collection, doc_id, user)
+    if routed:
+        return assert_doc_company(user, routed, not_found=not_found, status_on_deny=status_on_deny)
     doc = await db[collection].find_one({"_id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail=not_found)
