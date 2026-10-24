@@ -2090,6 +2090,9 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         # HEAD, GET ile aynı görünürlük dalına girer. OPTIONS (CORS) erken çıkar.
         if not path.startswith("/api") or request.method == "OPTIONS":
             return await call_next(request)
+        # Canlılık ve sürüm probu kullanıcı sorgusu açmaz. Hazırlık (/api/health/ready) DB bakar.
+        if request.method in ("GET", "HEAD") and path in ("/api/health", "/api/version"):
+            return await call_next(request)
 
         token = session_token(request)
         user = None

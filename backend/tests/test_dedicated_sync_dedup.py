@@ -531,6 +531,35 @@ def test_dedicated_same_external_id_inserts_once(monkeypatch, tmp_path):
         _restore(monkeypatch, previous, comm_service)
 
 
+def test_bank_claim_does_not_load_full_documents(monkeypatch, tmp_path):
+    path = tmp_path / "slim.db"
+    dsn = f"sqlite:///{path}"
+    _migrate(dsn)
+    coll = storage_dedicated.DedicatedCollection("comp_a", "bank_transactions", dsn)
+
+    def boom(self, session, query=None):
+        raise AssertionError("tam belge okundu")
+
+    monkeypatch.setattr(storage_dedicated.DedicatedCollection, "_load", boom)
+
+    async def run():
+        await coll.insert_one({
+            "_id": "a1", "company_id": "comp_a", "external_id": "e1", "note": "x" * 8000,
+        })
+        with pytest.raises(DuplicateKeyError):
+            await coll.insert_one({
+                "_id": "a2", "company_id": "comp_a", "external_id": "  e1  ", "note": "y",
+            })
+        found = await coll.find_one({"company_id": "comp_a", "external_id": "e1"})
+        return found
+
+    found = _run(run())
+    assert found["_id"] == "a1"
+    assert found["note"].startswith("x")
+    sql, _args = coll._narrow_sql({"company_id": "comp_a", "external_id": "e1"})
+    assert "JSON_UNQUOTE(JSON_EXTRACT(doc, '$.external_id')) = ?" in sql
+
+
 def test_dedicated_external_id_is_unique_per_company(monkeypatch, tmp_path):
     path = tmp_path / "keys.db"
     dsn = f"sqlite:///{path}"

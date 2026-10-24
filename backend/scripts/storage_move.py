@@ -672,7 +672,9 @@ async def _list_names(db) -> list[str]:
             pass
     settings = getattr(db, "_settings", None)
     if isinstance(settings, dict) and settings.get("host") and settings.get("db"):
-        listed = _sql_collections(settings)
+        import platform_lease
+
+        listed = await platform_lease.call_blocking(_sql_collections, settings)
         if listed is not None:
             return listed
     cols = getattr(db, "_cols", None)
@@ -1450,13 +1452,10 @@ def _ensure_move_index(conn) -> None:
             pass
 
 
-async def _watermark(db):
-    """Legacy SQL saati. Yoksa ön kopya tam farkla kapanır."""
-    if not _sql_catalog(db):
-        return None
+def _watermark_sync(db):
+    """NOW(6) ve taşıma indeksi. Bağlantı bu iş parçacığında açılır."""
     conn = None
     try:
-        await db._ensure()
         conn = _open_catalog_reader(db)
         _ensure_move_index(conn)
         cursor = conn.cursor()
@@ -1474,16 +1473,33 @@ async def _watermark(db):
                 pass
 
 
+async def _watermark(db):
+    """Legacy SQL saati. Yoksa ön kopya tam farkla kapanır."""
+    if not _sql_catalog(db):
+        return None
+    try:
+        await db._ensure()
+    except Exception:
+        return None
+    import platform_lease
+
+    return await platform_lease.call_blocking(_watermark_sync, db)
+
+
 def _query_changed(conn, collection: str, company_id: str, since) -> list:
     from mysql_store import loads
 
     cursor = conn.cursor()
     cursor.execute(_CHANGED_SQL, (collection, company_id, since))
     found = []
-    for row in cursor.fetchall():
-        doc = loads(row[0])
-        if isinstance(doc, dict):
-            found.append(doc)
+    while True:
+        chunk = cursor.fetchmany(200)
+        if not chunk:
+            break
+        for row in chunk:
+            doc = loads(row[0])
+            if isinstance(doc, dict):
+                found.append(doc)
     conn.commit()
     return found
 
@@ -1548,7 +1564,9 @@ async def _drop_docs(coll, company_id: str, name: str, ids, target: str, source:
 
 
 async def _apply_sql_delta(conn, tombs, db, company, company_id, source, target, name, copied, watermark, ignore) -> None:
-    live = _query_changed(conn, name, company_id, watermark)
+    import platform_lease
+
+    live = await platform_lease.call_blocking(_query_changed, conn, name, company_id, watermark)
     live = _without_mover(name, live, ignore)
     pending = [
         doc for doc in live
@@ -1684,7 +1702,11 @@ async def _catch_up(db, company, company_id, source, target, copied, progress, b
     tombs = {}
     if reader is not None:
         try:
-            tombs = _tombstones_since(reader, company_id, watermark, ignore)
+            import platform_lease
+
+            tombs = await platform_lease.call_blocking(
+                _tombstones_since, reader, company_id, watermark, ignore,
+            )
         except Exception:
             try:
                 reader.close()

@@ -116,6 +116,21 @@ class _DB:
         raise KeyError(name)
 
 
+class _Rows:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def fetchmany(self, size):
+        chunk = self._rows[:size]
+        self._rows = self._rows[size:]
+        return chunk
+
+    def fetchall(self):
+        rows = self._rows
+        self._rows = []
+        return rows
+
+
 class _MissingTable(Exception):
     def __init__(self):
         super().__init__(1146, "Table 'tk_comp.storage_bank_external' doesn't exist")
@@ -153,6 +168,17 @@ class _Session:
             raise _MissingTable()
         if "INSERT INTO storage_records" in sql:
             self.docs.append(json.loads(params[2]))
+            return _Rows([])
+        if "FROM storage_records" in sql:
+            if "SELECT doc " in sql:
+                rows = [(json.dumps(doc),) for doc in self.docs]
+            else:
+                rows = [
+                    (doc.get("_id"), doc.get("company_id"), doc.get("external_id"))
+                    for doc in self.docs
+                ]
+            return _Rows(rows)
+        return _Rows([])
 
     def commit(self):
         return None

@@ -21,6 +21,16 @@ def test_ci_get_reads_turkish_aciklama():
     assert bp._ci_get(row, "aciklama", "description") == "SHELL ISTANBUL"
 
 
+def test_ci_cache_does_not_pin_the_payload():
+    bp._ci_cache.slots = {}
+    body = "x" * 4000
+    raw = {"aciklama": body}
+    assert bp._ci_get(raw, "aciklama") == body
+    slot = bp._ci_cache.slots[id(raw)]
+    assert body not in slot[0]
+    assert body not in slot[1].values()
+
+
 def test_ci_get_folds_keys_once_and_reads_live_values(monkeypatch):
     calls = {"n": 0}
     real = bp._norm_key

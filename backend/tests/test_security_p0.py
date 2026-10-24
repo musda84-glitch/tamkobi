@@ -173,6 +173,38 @@ def test_middleware_allowlist_tokensuz_gecer():
     assert resp.status_code == 200
 
 
+def test_health_probe_does_not_lookup_user(monkeypatch):
+    """Canlılık ve sürüm probu kullanıcı sorgusu açmaz. Hazırlık açar."""
+    called = {"n": 0}
+
+    async def lookup(*_args, **_kwargs):
+        called["n"] += 1
+        return None
+
+    monkeypatch.setattr(rbac, "get_user_from_token", lookup)
+
+    class FakeRequest:
+        def __init__(self, path, method="GET"):
+            self.url = MagicMock(path=path)
+            self.method = method
+            self.headers = {"Authorization": "Bearer probe-token"}
+            self.cookies = {}
+            self.query_params = {}
+            self.scope = {"query_string": b""}
+
+    mw = rbac.PermissionAndAuditMiddleware(app=MagicMock())
+
+    async def call_next(_req):
+        return MagicMock(status_code=200)
+
+    for path in ("/api/health", "/api/version"):
+        for method in ("GET", "HEAD"):
+            asyncio.run(mw.dispatch(FakeRequest(path, method), call_next))
+    assert called["n"] == 0
+    asyncio.run(mw.dispatch(FakeRequest("/api/health/ready"), call_next))
+    assert called["n"] == 1
+
+
 # ---------- 3) Tenant company_id / IDOR ----------
 
 def test_user_may_access_company_oturumsuz_false():

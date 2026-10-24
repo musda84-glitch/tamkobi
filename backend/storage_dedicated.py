@@ -993,16 +993,32 @@ class DedicatedCollection(StorageCollection):
         return _mysql_dsn(self._dsn)
 
     async def _run_async(self, fn):
-        """MySQL okuması döngünün dışında. SQLite testi aynı iş parçacığında kalır.
-
-        Yazma çağıran iş parçacığında durur. Draft #1552 aynı
-        platform_lease.call_blocking yardımcısını yazmaya da taşır.
-        """
+        """MySQL okuma ve yazma döngünün dışında. SQLite testi aynı iş parçacığında kalır."""
         if not self._use_thread():
             return self._run(fn)
         import platform_lease
 
         return await platform_lease.call_blocking(self._run, fn)
+
+    def _external_conflict(self, session, ext: str, own: str) -> bool:
+        """Aynı external_id var mı. Belgenin tamamı okunmaz; kırpma Python'daki gibidir."""
+        dialect = self._dialect(session)
+        company = _json_text(dialect, "company_id")
+        external = _json_text(dialect, "external_id")
+        sql = (
+            f"SELECT doc_id, {company}, {external} "
+            "FROM storage_records WHERE collection = ?"
+        )
+        for doc_id, owner_raw, raw_ext in self._fetch_sql(session, sql, (self.name,)):
+            if str(doc_id or "") == own:
+                continue
+            if str(raw_ext or "").strip() != ext:
+                continue
+            owner = str(owner_raw or "")
+            if owner and storage_router.canonical_company_id(owner) != self.company_id:
+                continue
+            return True
+        return False
 
     def _count_exact(self, session, query):
         plan = self._narrow_plan(query, self._dialect(session))
@@ -1161,17 +1177,7 @@ class DedicatedCollection(StorageCollection):
         if not ext:
             return
         own = str(doc.get("_id") or "")
-        conflict = False
-        for existing in self._load(session):
-            if str(existing.get("_id") or "") == own:
-                continue
-            if _external_text(existing) != ext:
-                continue
-            owner = str(existing.get("company_id") or "")
-            if owner and storage_router.canonical_company_id(owner) != self.company_id:
-                continue
-            conflict = True
-            break
+        conflict = self._external_conflict(session, ext, own)
         if conflict:
             if inserting:
                 raise DuplicateKeyError("Kayıt zaten var.")
@@ -1363,7 +1369,7 @@ class DedicatedCollection(StorageCollection):
                     raise DuplicateKeyError("Kayıt zaten var.") from None
                 raise
 
-        self._run(work)
+        await self._run_async(work)
         return InsertOneResult(body["_id"])
 
     async def insert_many(self, docs, ordered: bool = True):
@@ -1409,7 +1415,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return UpdateResult(1, 1, None)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def update_one_atomic(self, query: dict, update: dict):
         _reject_update_lengths(query, update)
@@ -1445,7 +1451,7 @@ class DedicatedCollection(StorageCollection):
                 session.commit()
             return UpdateResult(len(found), changed, None)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def replace_one(self, query: dict, replacement: dict, upsert: bool = False):
         body = copy.deepcopy(replacement or {})
@@ -1469,7 +1475,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return UpdateResult(1, 1, None)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def find_one_and_update(
         self,
@@ -1500,7 +1506,7 @@ class DedicatedCollection(StorageCollection):
             chosen = new_doc if return_document else old
             return project_doc(chosen, projection)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def delete_one(self, query: dict):
         _reject_update_lengths(query, None)
@@ -1515,7 +1521,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return DeleteResult(1)
 
-        return self._run(work)
+        return await self._run_async(work)
 
     async def delete_many(self, query: dict):
         _reject_update_lengths(query, None)
@@ -1530,7 +1536,7 @@ class DedicatedCollection(StorageCollection):
             session.commit()
             return DeleteResult(len(found))
 
-        return self._run(work)
+        return await self._run_async(work)
 
     def _replace_doc(self, session, old: dict, new_doc: dict) -> None:
         old_id = old.get("_id")

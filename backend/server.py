@@ -15768,7 +15768,7 @@ async def test_bank_connection(conn_id: str, user: dict = Depends(get_current_us
     await db.bank_connections.update_one({"_id": conn_id}, {"$set": patch})
     return {**bank_providers.public_test_result(test), "status": status_val}
 
-async def _suggest_contact(company_id: str, counterparty: str, description: str):
+async def _suggest_contact(company_id: str, counterparty: str, description: str, contact_cache=None):
     rule = await _find_rule(company_id, f"{counterparty} {description}")
     if rule and rule.get("contact_id"):
         c = await db.contacts.find_one({"_id": rule["contact_id"]})
@@ -15776,10 +15776,16 @@ async def _suggest_contact(company_id: str, counterparty: str, description: str)
             return c
     if not counterparty and not description:
         return None
-    contacts = await db.contacts.find(
-        {"company_id": company_id},
-        {"name": 1, "company_title": 1, "tax_number_or_id": 1},
-    ).to_list(10000)
+    # Aynı bağlantı turunda cari kümesi bir kez okunur. Kural yolu her harekette taze kalır.
+    if isinstance(contact_cache, dict) and "rows" in contact_cache:
+        contacts = contact_cache["rows"]
+    else:
+        contacts = await db.contacts.find(
+            {"company_id": company_id},
+            {"name": 1, "company_title": 1, "tax_number_or_id": 1},
+        ).to_list(10000)
+        if isinstance(contact_cache, dict):
+            contact_cache["rows"] = contacts
     return pick_bank_contact(contacts, counterparty, description)
 
 async def _sync_bank_connection_core(
@@ -15838,6 +15844,7 @@ async def _sync_bank_connection_core(
     inserted, skipped, balance_delta = 0, 0, 0.0
     new_txs = []
     seen_ext = set()
+    contact_cache: Dict[str, Any] = {}
     for t in result["transactions"]:
         ext = str(t.get("external_id") or "").strip()
         if ext and ext in seen_ext:
@@ -15878,7 +15885,9 @@ async def _sync_bank_connection_core(
                 seen_ext.add(ext)
             skipped += 1
             continue
-        suggestion = await _suggest_contact(cid, t.get("counterparty", ""), t.get("description", ""))
+        suggestion = await _suggest_contact(
+            cid, t.get("counterparty", ""), t.get("description", ""), contact_cache,
+        )
         is_credit = t["direction"] == "credit"
         tx = BankTransaction(
             company_id=cid, account_id=acc["_id"], account_name=acc.get("account_name"),
