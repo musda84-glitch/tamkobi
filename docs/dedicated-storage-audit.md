@@ -17,12 +17,12 @@ bu PR o yolda 0 satırı hata saymaz.
 | --- | --- | --- | --- |
 | Çöp ve hareket silme | backend/trash.py, delete_bank_transaction, delete_partner_transaction | — | #1564 davranışı durur (409, anlık görüntü, geri sarma). |
 | Cari ödeme bakiyesi dedicated depoda | backend/server.py create_bank_transaction ve #1564 silme ucu | P0 yazma | Oluşturma company_id ile gider. Silme #1564 sırasını kullanır: önce çöp, sonra bakiye. |
-| Fatura ve taksit ödemesi telafi silmesi `_id` | backend/server.py _record_invoice_payment_core, pay_installment | P0 yazma | Sorgu ve telafi `company_id` taşır. 0 eşleşme dedicated'de 404. |
-| Cari ortak ödemesi ve virman carisi | backend/server.py _execute_contact_partner_payment, _virman_load_contact | P0 | Aktif company_id ile okunur. company_id'siz yedek okuma kalktı. |
-| Bağlı masraf başka şirketten silinebiliyordu | backend/server.py _linked_expense_related | P0 okuma | Masraf hareketin company_id'si ile okunur. |
-| POS kasa bakiyesi katalogda kalıyordu | backend/server.py _pos_checkout_core | P0 yazma | Ürün, lot ve kasa güncellemesi company_id ile. recalc company_id alır. |
+| Fatura ve taksit ödemesi telafi silmesi `_id` | backend/server.py _record_invoice_payment_core, pay_installment, unpay_installment | P0 yazma | Sorgu ve telafi `company_id` taşır. unpay aynı şirketin taksitini ve fatura sayacını günceller. 0 eşleşme dedicated'de 404. |
+| Cari ortak ödemesi ve virman carisi | backend/server.py _execute_contact_partner_payment, _virman_load_contact | P0 | Aktif company_id ile okunur. Legacy/router kapalıyken company_id'siz eski cari `_id` yedeği durur. |
+| Bağlı masraf başka şirketten silinebiliyordu | backend/server.py _linked_expense_related | P0 okuma | company_id varsa masraf onunla okunur. Legacy/router kapalıyken eski `_id` yedeği durur. |
+| POS kasa bakiyesi katalogda kalıyordu | backend/server.py _pos_checkout_core | P0 yazma | Ürün, lot ve kasa güncellemesi company_id ile. Legacy üründe `_id` yedeği durur. recalc company_id alır. |
 | Prim / bordro telafi silmesi `_id` | backend/server.py create_bonus, bordro _body | P0 yazma | Hesap ve telafi silmesi company_id ile. |
-| POS bakiye hareket toplamından kopuktu | backend/account_balance.py overlay_pos_movement_balances | P0 okuma | Liste cevabı opening dahil hareket toplamı. persist yok. |
+| POS bakiye hareket toplamından kopuktu | backend/account_balance.py overlay_pos_movement_balances | P0 okuma | Liste cevabı opening dahil hareket toplamı. Yalnız gösterim; entegre POS/ÖKC dışarıda. Tavan aşılırsa örtü yok. persist yok. pos_settlement kayıtlı bakiyeye bakar. |
 | Ay giriş/çıkış virmanı saymıyordu | backend/bank_rematch.py attach_month_totals | P0 okuma | Mevcut aggregate durur. type=transfer kaynak çıkış, hedef giriş. POS bloke outflow aggregate'te, ikinci kez eklenmez. |
 | Açılış bakiyesi ve borç/alacak fişi | backend/server.py clear_contact_opening_balance, create_contact_ledger_slip | P0 yazma | Cari güncellemesi company_id ile. |
 
@@ -37,7 +37,8 @@ Veri taşınmadı. `current_balance` diske yazılmadı (POS örtüsü `persist=F
 - `tenant_access.get_tenant_doc` önce şirket deposuna bakar; olmazsa katalog `_id` yedeği durur. `get_tenant_child` hâlâ yalnız `_id`.
 - Ortak hareketi silinirken (#1564) kayıt önce çöpe alınır, sonra kasa etkisi geri sarılır. Etki yarıda kalırsa `_abort_failed_effect` anlık görüntüye döner.
 - `tenant_access.delete_many_company` kısmi silmede (bazı id'ler silindi) hata vermez. Çöp yolu bunu kullanmaz; #1564 bağlı kaydı şirket şirket siler ve 0 satırı loglar.
-- Entegre banka bakiyesi bankanın bildirdiği tutardır; POS örtüsü banka hesabına yazılmaz.
+- Entegre banka ve entegre POS/ÖKC bakiyesi bankanın bildirdiği tutardır; örtü onlara yazılmaz. Örtü yalnız manuel POS/ÖKC cevabını değiştirir. `pos_settlement.apply` brüt eşiği kayıtlı `current_balance` üzerindedir.
+- `_reverse_tx_effects` yetim cari/hesapta susar ve loglar. `matched_count==0` iken belge hâlâ duruyorsa yazılan bakiyeyi geri alır ve 404 verir. Hareket güncelleme ve çöp geri yükleme bu hatada anlık görüntüye döner.
 - Kalan `_id` sorguları aşağıdaki listede ve `dedicated_id_allowlist.py` içindedir. Yeni `_id`-only çağrı CI'da kırmızıya düşer.
 
 ## Kalan yalnız-`_id` çağrıları

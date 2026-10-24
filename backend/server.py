@@ -8752,6 +8752,15 @@ async def product_lots(product_id: str, include_empty: bool = False, user: dict 
     return await _stock_lots_payload(product["company_id"], product_id=product_id, include_empty=include_empty)
 
 
+async def _pos_load_product(company_id: str, product_id: str):
+    """Ürün önce şirketle okunur. Legacy/router kapalıysa company_id'siz eski satır da gelir."""
+    product = await db.products.find_one({"_id": product_id, "company_id": company_id})
+    if product or not await tenant_access.legacy_unscoped_ok(db, company_id):
+        return product
+    # tenant-ok: legacy kip, company_id'siz eski ürün
+    return await db.products.find_one({"_id": product_id})  # id-ok: legacy kip, company_id yazılmaz
+
+
 # ----------------- HIZLI SATIŞ (POS) -----------------
 @api_router.post("/pos/checkout")
 async def pos_checkout(req: Dict[str, Any], request: Request):
@@ -8799,7 +8808,7 @@ async def _pos_checkout_core(req: Dict[str, Any], request: Request, user: Option
     lines = []
     for raw in items_in:
         pid = raw.get("product_id")
-        product = await db.products.find_one({"_id": pid, "company_id": company_id}) if pid else None
+        product = await _pos_load_product(company_id, pid) if pid else None
         if not product:
             raise HTTPException(status_code=404, detail=f"Ürün bulunamadı: {raw.get('name') or pid}")
         qty = float(raw.get("quantity") or 0)
@@ -12682,17 +12691,26 @@ async def unpay_installment(inst_id: str, user: dict = Depends(get_current_user)
     inst = await tenant_access.get_tenant_doc(db, "installments", inst_id, user, not_found="Taksit bulunamadı.")
     if float(inst.get("paid_amount") or 0) <= 0 and inst.get("status") not in ("paid", "partial"):
         raise HTTPException(status_code=400, detail="Bu taksit henüz ödenmemiş.")
+    company_id = inst.get("company_id") or user.get("company_id") or ""
     rev = await linked_moves.reverse_linked(
         db, "installment", inst_id, mode="delete", actor=user, reason="installment_unpay",
-        company_id=inst.get("company_id"),
+        company_id=company_id,
     )
-    await db.installments.update_one(
-        {"_id": inst_id},
+    unpaid = await db.installments.update_one(
+        {"_id": inst_id, "company_id": company_id},
         {"$set": {"paid_amount": 0, "status": "pending", "paid_at": None, "account_id": None}},
     )
+    await tenant_access.raise_if_unmatched(db, unpaid, company_id, detail="Taksit güncellenemedi.")
     if inst.get("invoice_id"):
-        paid_count = await db.installments.count_documents({"invoice_id": inst["invoice_id"], "status": "paid"})
-        await db.invoices.update_one({"_id": inst["invoice_id"]}, {"$set": {"installment_plan.paid_count": paid_count}})
+        paid_count = await db.installments.count_documents({
+            "invoice_id": inst["invoice_id"],
+            "status": "paid",
+            "company_id": company_id,
+        })
+        await db.invoices.update_one(
+            {"_id": inst["invoice_id"], "company_id": company_id},
+            {"$set": {"installment_plan.paid_count": paid_count}},
+        )
     return {
         "status": "success",
         "message": "Taksit ödemesi geri alındı; bağlı hareketler temizlendi.",
@@ -12860,23 +12878,38 @@ async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int =
     accounts = await db.bank_accounts.find({"company_id": cid}).sort("account_name", 1).to_list(2000)
     want_drift = bool(int(with_drift or 0))
     want_month = bool(int(with_month or 0))
+    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": cid}).to_list(2000)}
+    integrated_ids = {str(lid) for lid in conns if lid is not None and str(lid)}
+    for acc in accounts or []:
+        aid = str(acc.get("_id") or acc.get("id") or "")
+        acc["is_integrated"] = aid in integrated_ids
     has_cash = any(str(a.get("type") or "") == "cash_box" for a in (accounts or []))
     has_pos = any(str(a.get("type") or "") in account_balance.POS_DISPLAY_TYPES for a in (accounts or []))
     txs = None
+    company_truncated = False
     if want_drift:
         txs = await account_balance.fetch_company_bank_txs(db, cid or "")
+        company_truncated = len(txs) >= account_balance.COMPANY_TX_LIMIT
     if has_cash:
         accounts = await account_balance.sync_cash_box_balances(db, accounts, txs, persist=False)
+    pos_stored: Dict[str, Any] = {}
     if has_pos:
         pos_txs = txs
+        pos_truncated = company_truncated
         if pos_txs is None:
             pos_ids = [
                 a.get("_id") for a in accounts
                 if str(a.get("type") or "") in account_balance.POS_DISPLAY_TYPES and a.get("_id")
             ]
-            pos_txs = await account_balance.fetch_balance_txs(db, cid or "", pos_ids)
-        accounts = account_balance.overlay_pos_movement_balances(accounts, pos_txs)
-    conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": cid}).to_list(2000)}
+            pos_txs, pos_truncated = await account_balance.fetch_balance_txs_capped(db, cid or "", pos_ids)
+        if not pos_truncated:
+            for acc in accounts or []:
+                if str(acc.get("type") or "") not in account_balance.POS_DISPLAY_TYPES or acc.get("is_integrated"):
+                    continue
+                aid = str(acc.get("_id") or acc.get("id") or "")
+                if aid:
+                    pos_stored[aid] = acc.get("current_balance")
+            accounts = account_balance.overlay_pos_movement_balances(accounts, pos_txs)
     out = []
     for a in clean_docs(accounts):
         conn = conns.get(a["id"]) or conns.get(a.get("_id"))
@@ -12897,7 +12930,17 @@ async def list_bank_accounts(company_id: Optional[str] = None, with_drift: int =
             row["current_balance"] = 0.0
         out.append(row)
     if want_drift:
+        shown: Dict[str, Any] = {}
+        for row in out:
+            aid = str(row.get("id") or row.get("_id") or "")
+            if aid in pos_stored:
+                shown[aid] = row.get("current_balance")
+                row["current_balance"] = pos_stored[aid]
         await account_balance.annotate_listed_accounts(db, cid or "", out, txs if txs is not None else [])
+        for row in out:
+            aid = str(row.get("id") or row.get("_id") or "")
+            if aid in shown:
+                row["current_balance"] = shown[aid]
     if want_month:
         await bank_rematch.attach_month_totals(db, cid or "", out)
     return out
@@ -13726,6 +13769,34 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
         logger.warning("Banka hareketi geri alınamadı.")
         return
     amt = float(tx.get("amount", 0)) * sign
+    applied: List[tuple] = []
+
+    async def _undo_applied() -> None:
+        for collection, doc_id, field, delta in reversed(applied):
+            try:
+                await db[collection].update_one(
+                    {"_id": doc_id, "company_id": cid},
+                    {"$inc": {field: -delta}},
+                )
+            except Exception:
+                logger.exception("Bakiye yazması geri alınamadı")
+
+    async def _apply_inc(collection: str, doc_id, field: str, delta: float, *, detail: str) -> None:
+        if not doc_id:
+            return
+        result = await db[collection].update_one(
+            {"_id": doc_id, "company_id": cid},
+            {"$inc": {field: delta}},
+        )
+        if await tenant_access.unmatched_is_real_miss(db, result, cid, collection, doc_id):
+            await _undo_applied()
+            raise HTTPException(status_code=404, detail=detail)
+        matched = tenant_access._write_count(result, "matched_count")
+        if matched == 0:
+            logger.warning("Yetim bakiye satırı atlandı.")
+            return
+        if matched is not None and matched >= 1:
+            applied.append((collection, doc_id, field, delta))
 
     async def _touch_account(aid: Optional[str], delta: float) -> None:
         if not aid:
@@ -13738,8 +13809,7 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
             if tx.get("customer_card_pool_ledger") or tx.get("via_customer_card") or bank_guard.is_customer_card_pool(acc_meta):
                 await bank_guard.pin_customer_card_pool_balance(db, aid, company_id=cid)
             return
-        touched = await db.bank_accounts.update_one({"_id": aid, "company_id": cid}, {"$inc": {"current_balance": delta}})
-        await tenant_access.raise_if_unmatched(db, touched, cid, detail="Hesap bakiyesi güncellenemedi.")
+        await _apply_inc("bank_accounts", aid, "current_balance", delta, detail="Hesap bakiyesi güncellenemedi.")
 
     if tx.get("type") == "transfer":
         await _touch_account(tx.get("account_id"), -amt)
@@ -13747,8 +13817,7 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
             await _touch_account(tx["target_account_id"], amt)
         if tx.get("owner_contact_id"):
             # Müşteri kartı virmanında create −amount yazmıştı; sign=-1 → geri al.
-            owner_res = await db.contacts.update_one({"_id": tx["owner_contact_id"], "company_id": cid}, {"$inc": {"balance": -amt}})
-            await tenant_access.raise_if_unmatched(db, owner_res, cid, detail="Cari bakiyesi güncellenemedi.")
+            await _apply_inc("contacts", tx["owner_contact_id"], "balance", -amt, detail="Cari bakiyesi güncellenemedi.")
         return
     change = amt if tx.get("type") == "inflow" else -amt
     await _touch_account(tx.get("account_id"), change)
@@ -13757,12 +13826,10 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
     if tx.get("source") in ("virman_card_mirror", "expense"):
         pass
     elif tx.get("contact_id"):
-        contact_res = await db.contacts.update_one({"_id": tx["contact_id"], "company_id": cid}, {"$inc": {"balance": -change}})
-        await tenant_access.raise_if_unmatched(db, contact_res, cid, detail="Cari bakiyesi güncellenemedi.")
+        await _apply_inc("contacts", tx["contact_id"], "balance", -change, detail="Cari bakiyesi güncellenemedi.")
     if tx.get("owner_contact_id"):
         # create'te owner bakiyesine −amount yazılmıştı; sign=-1 → +amount
-        owner_res = await db.contacts.update_one({"_id": tx["owner_contact_id"], "company_id": cid}, {"$inc": {"balance": -amt}})
-        await tenant_access.raise_if_unmatched(db, owner_res, cid, detail="Cari bakiyesi güncellenemedi.")
+        await _apply_inc("contacts", tx["owner_contact_id"], "balance", -amt, detail="Cari bakiyesi güncellenemedi.")
     if tx.get("related_invoice_id"):
         inv = await db.invoices.find_one({"_id": tx["related_invoice_id"], "company_id": cid})
         if inv:
@@ -13991,19 +14058,30 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any], user: dict = 
     new_acc = allowed.get("account_id", tx.get("account_id"))
     if new_type == "inflow" and new_acc and tx.get("source") != "ledger":
         await bank_guard.assert_collection_allowed(db, new_acc)
-    await _reverse_tx_effects(tx, -1)
-    new_tx = {**tx, **allowed}
-    await _reverse_tx_effects(new_tx, +1)
-    await db.bank_transactions.update_one({"_id": tx_id, "company_id": tx["company_id"]}, {"$set": allowed})
+    snap = await _snapshot_tx_balances([tx])
+    try:
+        await _reverse_tx_effects(tx, -1)
+        new_tx = {**tx, **allowed}
+        await _reverse_tx_effects(new_tx, +1)
+        await db.bank_transactions.update_one({"_id": tx_id, "company_id": tx["company_id"]}, {"$set": allowed})
+    except Exception:
+        try:
+            await _restore_balance_snapshot(snap)
+        except Exception:
+            logger.exception("Bakiye anlık görüntüsü yazılamadı")
+        raise
     return clean_doc(await db.bank_transactions.find_one({"_id": tx_id, "company_id": tx["company_id"]}))
 
 async def _linked_expense_related(tx: Dict[str, Any]) -> list:
     """Masrafa bağlı hareket silinince masrafı da aynı çöp kaydına taşı (çift reverse yok)."""
     eid = tx.get("expense_id")
-    cid = str((tx or {}).get("company_id") or "").strip()
-    if not eid or not cid:
+    if not eid:
         return []
-    exp = await db.expenses.find_one({"_id": eid, "company_id": cid})
+    cid = str((tx or {}).get("company_id") or "").strip()
+    exp = await db.expenses.find_one({"_id": eid, "company_id": cid}) if cid else None
+    if not exp and await tenant_access.legacy_unscoped_ok(db, cid):
+        # tenant-ok: legacy kip, company_id'siz eski masraf
+        exp = await db.expenses.find_one({"_id": eid})  # id-ok: legacy kip, company_id yazılmaz
     if not exp or expenses._from_statement(exp):
         return []
     return [{"collection": "expenses", "docs": [exp]}]
@@ -14109,6 +14187,9 @@ def _contact_display_name(contact: Optional[Dict[str, Any]]) -> str:
 
 async def _virman_load_contact(company_id: str, contact_id: str) -> Dict[str, Any]:
     contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+    if not contact and await tenant_access.legacy_unscoped_ok(db, company_id):
+        # tenant-ok: legacy kip, company_id'siz eski cari
+        contact = await db.contacts.find_one({"_id": contact_id})  # id-ok: legacy kip, company_id yazılmaz
     if not contact:
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
     return contact
@@ -28420,16 +28501,24 @@ offline_admin.init(db)
 trade.init(db, _create_invoice_core, get_current_user)
 
 async def _restore_bank_tx(doc, _related):
-    await _reverse_tx_effects(doc, +1)
-    # Kasa kartı bakiyesini hareket toplamına sabitle (orphan / kayma yok).
-    aid = doc.get("account_id")
-    if aid:
-        acc = await db.bank_accounts.find_one({"_id": aid}, {"type": 1, "current_balance": 1, "company_id": 1, "is_customer_card_pool": 1})
-        if acc and str(acc.get("type") or "") == "cash_box":
-            await account_balance.sync_cash_box_balances(db, [{**acc, "_id": aid}])
-    for cid in {doc.get("contact_id"), doc.get("owner_contact_id")}:
-        if cid:
-            await contact_balance.sync_contact_balance(db, cid, company_id=doc.get("company_id") or "")
+    snap = await _snapshot_tx_balances([doc])
+    try:
+        await _reverse_tx_effects(doc, +1)
+        # Kasa kartı bakiyesini hareket toplamına sabitle (orphan / kayma yok).
+        aid = doc.get("account_id")
+        if aid:
+            acc = await db.bank_accounts.find_one({"_id": aid}, {"type": 1, "current_balance": 1, "company_id": 1, "is_customer_card_pool": 1})
+            if acc and str(acc.get("type") or "") == "cash_box":
+                await account_balance.sync_cash_box_balances(db, [{**acc, "_id": aid}])
+        for cid in {doc.get("contact_id"), doc.get("owner_contact_id")}:
+            if cid:
+                await contact_balance.sync_contact_balance(db, cid, company_id=doc.get("company_id") or "")
+    except Exception:
+        try:
+            await _restore_balance_snapshot(snap)
+        except Exception:
+            logger.exception("Bakiye anlık görüntüsü yazılamadı")
+        raise
 
 async def _restore_partner_tx(doc, _related):
     amount = float(doc.get("amount") or 0)
