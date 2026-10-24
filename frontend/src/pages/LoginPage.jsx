@@ -10,6 +10,7 @@ import { LOGIN } from "../constants/testIds/auth";
 import { REMEMBER_ERP_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 import { getHostKind, hostUrl } from "../utils/hosts";
 import { GoogleContinueButton, GOOGLE_CLIENT_ID } from "../components/GoogleContinueButton";
+import QrLoginPanel from "../components/QrLoginPanel";
 
 function LoginBrand({ subtitle }) {
   return (
@@ -121,8 +122,10 @@ export default function LoginPage() {
   const smsMode = channel === "sms";
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-      {mode === "forgot" ? (
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 sm:p-6">
+      {mode === "qr" && getHostKind() !== "ynt" ? (
+        <QrLoginPanel remember={remember} onSuccess={finishAuth} onBack={() => { setMode("login"); setErr(""); }} />
+      ) : mode === "forgot" ? (
         <form onSubmit={forgot} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-forgot-form">
           <LoginBrand subtitle="Şifre Sıfırlama" />
           <p className="text-xs text-slate-500">ERP veya personel hesabınız için sıfırlama bağlantısı alın. Kayıtlı bir hesap varsa seçtiğiniz kanala gönderilir.</p>
@@ -212,6 +215,11 @@ export default function LoginPage() {
           <button disabled={busy} className="w-full py-2.5 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2" data-testid="login-submit">
             <LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Giriş Yap"}
           </button>
+          {getHostKind() !== "ynt" ? (
+            <button type="button" onClick={() => setMode("qr")} className="w-full py-2.5 border border-slate-300 rounded-xl text-sm font-bold text-slate-800" data-testid="login-qr-open">
+              QR ile giriş
+            </button>
+          ) : null}
           {GOOGLE_CLIENT_ID ? (
             <>
               <div className="relative py-1">

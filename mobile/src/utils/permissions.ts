@@ -208,7 +208,7 @@ export function canSevkDraftInvoice(user: SessionUser): boolean {
 
 /** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro yalnız /personnel yetkisinde. */
 export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
-  if (link.path === "/" || link.path === "/settings") return true;
+  if (link.path === "/" || link.path === "/settings" || link.path === "/qr-web-login") return true;
   if (link.path === "/personnel") return hasPersonnelAccess(user) && moduleOn(license, link.path);
   if (link.path === "/personelim" && !hasSelfPersonnelRecord(user)) return false;
   if ((link.path === "/banking" || link.path === "/contacts") && showFinanceSubstituteTabs(user)) return false;

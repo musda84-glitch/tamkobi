@@ -284,6 +284,11 @@ describe("permissions", () => {
     expect(isOrderStaffMode(sales)).toBe(false);
   });
 
+  it("shows QR web login to every signed-in role", () => {
+    expect(isMoreLinkVisible({ path: "/qr-web-login" }, { role: "personel", permissions: {} }, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/qr-web-login" }, { role: "sales", permissions: { "/settings": "none" } }, null)).toBe(true);
+  });
+
   it("hides production AI advisor from personnel logins", () => {
     expect(showProductionAiAdvisor({ role: "admin" })).toBe(true);
     expect(showProductionAiAdvisor({ role: "manager" })).toBe(true);

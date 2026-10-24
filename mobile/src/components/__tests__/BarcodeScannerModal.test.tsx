@@ -354,7 +354,7 @@ describe("screen scan wiring", () => {
     const app = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../app.json"), "utf8")) as {
       expo: { version: string; android: { versionCode: number } };
     };
-    expect(app.expo.version).toBe("1.0.137");
-    expect(app.expo.android.versionCode).toBe(139);
+    expect(app.expo.version).toBe("1.0.138");
+    expect(app.expo.android.versionCode).toBe(140);
   });
 });
