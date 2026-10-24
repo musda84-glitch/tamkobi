@@ -29,6 +29,31 @@ MYSQL_THREADS = _f("PERF_MYSQL_THREADS", 25)
 CONN_PCT = _f("PERF_CONN_PCT", 80)
 POOL_HIT_MIN = _f("PERF_BUFFER_HIT_MIN", 99.0)
 INTERVAL_SEC = int(_f("PERF_INTERVAL_SEC", 120))
+# docs GROUP BY collection 244 bin satırı okur. 120 sn'de bir tüm kullanıcıları yavaşlatır.
+COLLECTION_STATS_TTL = int(_f("PERF_COLLECTION_STATS_TTL", 600))
+_collection_stats_cache: Dict[str, Any] = {"at": 0.0, "rows": None}
+
+
+def _reset_collection_stats_cache() -> None:
+    _collection_stats_cache["at"] = 0.0
+    _collection_stats_cache["rows"] = None
+
+
+def _docs_collection_stats(cur):
+    """Koleksiyon sayımı. Süre dolmadan aynı süreç ikinci kez docs taramaz."""
+    now = time.monotonic()
+    cached = _collection_stats_cache.get("rows")
+    age = now - float(_collection_stats_cache.get("at") or 0.0)
+    if COLLECTION_STATS_TTL > 0 and cached is not None and age < COLLECTION_STATS_TTL:
+        return cached
+    cur.execute(
+        "SELECT collection, COUNT(*) AS n, ROUND(SUM(LENGTH(doc))/1024,1) AS kb "
+        "FROM docs GROUP BY collection ORDER BY n DESC"
+    )
+    rows = list(cur.fetchall() or [])
+    _collection_stats_cache["at"] = now
+    _collection_stats_cache["rows"] = rows
+    return rows
 
 
 def log_dir() -> Path:
@@ -124,11 +149,7 @@ def _mysql_snapshot() -> Dict[str, Any]:
                 "data_length": int(lower.get("data_length") or 0),
                 "index_length": int(lower.get("index_length") or 0),
             })
-        cur.execute(
-            "SELECT collection, COUNT(*) AS n, ROUND(SUM(LENGTH(doc))/1024,1) AS kb "
-            "FROM docs GROUP BY collection ORDER BY n DESC"
-        )
-        collections = cur.fetchall()
+        collections = _docs_collection_stats(cur)
         reads = float(st.get("Innodb_buffer_pool_read_requests") or 0)
         disk = float(st.get("Innodb_buffer_pool_reads") or 0)
         hit = round(100.0 * (reads - disk) / reads, 3) if reads else 100.0

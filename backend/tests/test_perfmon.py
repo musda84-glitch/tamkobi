@@ -75,6 +75,28 @@ def test_persist_and_report(tmp_path, monkeypatch):
     assert "`users`" in text
 
 
+def test_docs_group_by_is_cached():
+    perfmon._reset_collection_stats_cache()
+    calls = {"n": 0}
+
+    class Cur:
+        def execute(self, sql):
+            assert "GROUP BY collection" in sql
+            calls["n"] += 1
+
+        def fetchall(self):
+            return [{"collection": "invoices", "n": 4, "kb": 1.5}]
+
+    cur = Cur()
+    first = perfmon._docs_collection_stats(cur)
+    second = perfmon._docs_collection_stats(cur)
+    assert first == second
+    assert calls["n"] == 1
+    perfmon._reset_collection_stats_cache()
+    perfmon._docs_collection_stats(cur)
+    assert calls["n"] == 2
+
+
 def test_collect_has_host_keys():
     snap = perfmon.collect()
     assert "host" in snap and "mysql" in snap and "alerts" in snap
