@@ -161,7 +161,6 @@ export default function LoginPage() {
       ) : (
         <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-page" autoComplete="on">
           <LoginBrand subtitle="KOBİ'LER İÇİN TAM ERP" />
-          <p className="text-xs text-slate-500">Hesabınızla giriş yapın. Personel ve yönetici aynı ekranı kullanır.</p>
           <div>
             <label className="block text-xs font-semibold mb-1">E-posta</label>
             <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-email" autoComplete="username" />

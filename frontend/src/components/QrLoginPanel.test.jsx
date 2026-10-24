@@ -75,6 +75,12 @@ test("giriş sayfası QR seçeneğini açar ve kodu yalnız karekodda gösterir"
   const view = await render(<LoginPage />);
   expect(view.host.querySelector('[data-testid="login-qr-open"]')).toBeTruthy();
   expect(view.host.querySelector('[data-testid="tamkobi-mark"]')).toBeTruthy();
+  expect(view.host.textContent).not.toContain("Hesabınızla giriş yapın");
+  expect(view.host.textContent).not.toContain("Personel ve yönetici aynı ekranı kullanır");
+  expect(view.host.textContent).toContain("KOBİ'LER İÇİN TAM ERP");
+  expect(view.host.textContent).toContain("Giriş Yap");
+  expect(view.host.textContent).toContain("Şifremi unuttum");
+  expect(view.host.textContent).toContain("QR ile giriş");
   await act(async () => {
     view.host.querySelector('[data-testid="login-qr-open"]').click();
   });
